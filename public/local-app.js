@@ -13,9 +13,10 @@ const WEATHER_CACHE_MS = 3 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10000;
 const MODEL_IDLE_TIMEOUT_MS = 90000;
 const AI_PREFLIGHT_URLS = [
-  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js",
-  "https://huggingface.co/BritishWerewolf/U-2-Netp/resolve/main/config.json",
-  "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/config.json",
+  "./vendor/transformers.min.js",
+  "./vendor/ort.wasm.min.mjs",
+  "./models/u2netp/config.json",
+  "./models/mobileclip-s0/config.json",
 ];
 let database;
 let draft;
@@ -113,7 +114,7 @@ async function safeAnalyzeCutout(blob) {
 
 let worker;
 function createAiWorker() {
-  worker = new Worker("./local-ai-worker.js?v=7", { type: "module" });
+  worker = new Worker("./local-ai-worker.js?v=8", { type: "module" });
   return worker;
 }
 createAiWorker();
@@ -122,7 +123,7 @@ async function ensureAiResourcesReachable() {
   aiPreflight = (async () => {
     message("正在检查本地 AI 模型资源连接…");
     for (const url of AI_PREFLIGHT_URLS) {
-      const response = await timedFetch(url, { cache: "force-cache" }, 15000);
+      const response = await timedFetch(url, { cache: "force-cache" }, 30000);
       if (!response.ok) throw new Error(`模型资源返回 ${response.status}`);
       await response.arrayBuffer();
     }
@@ -131,7 +132,7 @@ async function ensureAiResourcesReachable() {
     await aiPreflight;
   } catch (error) {
     aiPreflight = null;
-    throw new Error(`微信无法连接本地 AI 模型资源：${error.message || "网络超时"}。请复制链接到 Safari 重试。`);
+    throw new Error(`本站 AI 静态资源加载失败：${error.message || "网络超时"}。请检查网络并刷新页面后重试。`);
   }
 }
 const recognize = async (file) => {

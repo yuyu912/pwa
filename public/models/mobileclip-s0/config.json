@@ -1,0 +1,21 @@
+{
+  "model_type": "clip",
+  "transformers.js_config": {
+    "dtype": {
+      "text_model": "q8",
+      "vision_model": "q8"
+    },
+    "device_config": {
+      "webnn": {
+        "free_dimension_overrides": {
+          "batch_size": 1
+        }
+      },
+      "webnn-gpu": {
+        "free_dimension_overrides": {
+          "batch_size": 1
+        }
+      }
+    }
+  }
+}

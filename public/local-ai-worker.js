@@ -1,7 +1,10 @@
-const LIBRARY_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js";
+const LIBRARY_URL = new URL("./vendor/transformers.min.js", self.location.href).href;
+const ORT_URL = new URL("./vendor/ort.wasm.min.mjs", self.location.href).href;
+const VENDOR_PATH = new URL("./vendor/", self.location.href).href;
+const MODEL_PATH = new URL("./models/", self.location.href).href;
 const MODELS = {
-  matting: "BritishWerewolf/U-2-Netp",
-  vision: "Xenova/clip-vit-base-patch32",
+  matting: new URL("./models/u2netp/onnx/model.onnx", self.location.href).href,
+  vision: "mobileclip-s0",
 };
 const LABELS = {
   categories: [
@@ -59,8 +62,8 @@ const LABELS = {
 };
 
 let transformers;
+let ort;
 let remover;
-let removerProcessor;
 let classifier;
 let libraryLoading;
 let removerLoading;
@@ -78,6 +81,10 @@ async function loadLibrary() {
     send("progress", { text: "正在连接本地 AI 资源…", percent: 1, state: "pending" });
     try {
       transformers = await import(LIBRARY_URL);
+      transformers.env.allowRemoteModels = false;
+      transformers.env.localModelPath = MODEL_PATH;
+      transformers.env.backends.onnx.wasm.wasmPaths = VENDOR_PATH;
+      transformers.env.backends.onnx.wasm.numThreads = 1;
     } catch (error) {
       throw Object.assign(new Error(error.message || "Transformers.js 资源无法连接"), { stage: "资源连接" });
     }
@@ -101,22 +108,18 @@ const modelProgress = (item) => {
 };
 
 async function loadRemover() {
-  if (remover && removerProcessor) return;
+  if (remover) return;
   if (removerLoading) return removerLoading;
   removerLoading = (async () => {
-    await loadLibrary();
-    send("progress", { text: "正在下载或加载通用衣物抠图模型…", percent: 2, state: "removing-background" });
+    send("progress", { text: "正在从本站加载轻量衣物抠图模型…", percent: 2, state: "removing-background" });
     try {
-      remover = await transformers.AutoModel.from_pretrained(MODELS.matting, {
-        device: "wasm",
-        dtype: "fp32",
-        progress_callback: modelProgress,
-      });
-      removerProcessor = await transformers.AutoProcessor.from_pretrained(MODELS.matting, { progress_callback: modelProgress });
+      ort ||= await import(ORT_URL);
+      ort.env.wasm.wasmPaths = VENDOR_PATH;
+      ort.env.wasm.numThreads = 1;
+      remover = await ort.InferenceSession.create(MODELS.matting, { executionProviders: ["wasm"] });
     } catch (error) {
       remover = null;
-      removerProcessor = null;
-      throw Object.assign(new Error(error.message || "U-2-Netp 模型加载失败"), { stage: "抠图模型下载" });
+      throw Object.assign(new Error(error.message || "同域 U-2-Netp 模型加载失败"), { stage: "抠图模型加载" });
     }
   })();
   try {
@@ -131,12 +134,12 @@ async function loadClassifier() {
   if (classifierLoading) return classifierLoading;
   classifierLoading = (async () => {
     await loadLibrary();
-    const device = self.navigator.gpu ? "webgpu" : "wasm";
-    send("progress", { text: "正在下载或加载衣物理解模型…", percent: 45, state: "recognizing" });
+    const device = "wasm";
+    send("progress", { text: "正在从本站加载衣物理解模型…", percent: 45, state: "recognizing" });
     try {
       classifier = await transformers.pipeline("zero-shot-image-classification", MODELS.vision, {
         device,
-        dtype: device === "webgpu" ? "q4f16" : "q8",
+        dtype: "q8",
         progress_callback: modelProgress,
       });
     } catch (error) {
@@ -152,22 +155,50 @@ async function loadClassifier() {
   }
 }
 
-async function cutoutWithMask(file, sourceUrl) {
+async function cutoutWithMask(file) {
   if (typeof OffscreenCanvas === "undefined" || typeof ImageData === "undefined") {
     throw new Error("当前浏览器 Worker 不支持透明蒙版合成，请使用最新版 Safari 或 Chrome");
   }
-  const image = await transformers.RawImage.fromURL(sourceUrl);
-  const processed = await removerProcessor(image);
-  const output = await remover({ input: processed.pixel_values });
-  const mask = output.mask || Object.values(output)[0];
-  if (!mask?.data?.length || !Array.isArray(mask.dims)) throw new Error("抠图模型没有返回有效蒙版");
-  const maskHeight = mask.dims.at(-2);
-  const maskWidth = mask.dims.at(-1);
+  const bitmap = await createImageBitmap(file);
+  const inputSize = 320;
+  const scale = Math.min(inputSize / bitmap.width, inputSize / bitmap.height);
+  const contentWidth = Math.max(1, Math.round(bitmap.width * scale));
+  const contentHeight = Math.max(1, Math.round(bitmap.height * scale));
+  const offsetX = Math.floor((inputSize - contentWidth) / 2);
+  const offsetY = Math.floor((inputSize - contentHeight) / 2);
+  const inputCanvas = new OffscreenCanvas(inputSize, inputSize);
+  const inputContext = inputCanvas.getContext("2d", { willReadFrequently: true });
+  inputContext.clearRect(0, 0, inputSize, inputSize);
+  inputContext.drawImage(bitmap, offsetX, offsetY, contentWidth, contentHeight);
+  const inputPixels = inputContext.getImageData(0, 0, inputSize, inputSize).data;
+  const input = new Float32Array(3 * inputSize * inputSize);
+  const mean = [0.485, 0.456, 0.406];
+  const std = [0.229, 0.224, 0.225];
+  for (let index = 0; index < inputSize * inputSize; index += 1) {
+    for (let channel = 0; channel < 3; channel += 1) {
+      input[channel * inputSize * inputSize + index] = (inputPixels[index * 4 + channel] / 255 - mean[channel]) / std[channel];
+    }
+  }
+  const inputName = remover.inputNames[0];
+  const output = await remover.run({ [inputName]: new ort.Tensor("float32", input, [1, 3, inputSize, inputSize]) });
+  const mask = output[remover.outputNames[0]] || Object.values(output)[0];
+  if (!mask?.data?.length) throw new Error("抠图模型没有返回有效蒙版");
+  const maskHeight = mask.dims.at(-2) || inputSize;
+  const maskWidth = mask.dims.at(-1) || inputSize;
+  let minimum = Infinity;
+  let maximum = -Infinity;
+  for (const value of mask.data) {
+    minimum = Math.min(minimum, value);
+    maximum = Math.max(maximum, value);
+  }
+  const needsSigmoid = minimum < 0 || maximum > 1;
   const maskCanvas = new OffscreenCanvas(maskWidth, maskHeight);
   const maskContext = maskCanvas.getContext("2d");
   const maskFrame = maskContext.createImageData(maskWidth, maskHeight);
   for (let index = 0; index < maskWidth * maskHeight; index += 1) {
-    const value = mask.data[index];
+    const raw = mask.data[index];
+    const probability = needsSigmoid ? 1 / (1 + Math.exp(-raw)) : raw;
+    const value = Math.max(0, Math.min(255, Math.round(probability * 255)));
     const offset = index * 4;
     maskFrame.data[offset] = value;
     maskFrame.data[offset + 1] = value;
@@ -175,19 +206,25 @@ async function cutoutWithMask(file, sourceUrl) {
     maskFrame.data[offset + 3] = 255;
   }
   maskContext.putImageData(maskFrame, 0, 0);
-  const bitmap = await createImageBitmap(file);
   const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
   const context = canvas.getContext("2d", { willReadFrequently: true });
   context.drawImage(bitmap, 0, 0);
   bitmap.close();
   const frame = context.getImageData(0, 0, canvas.width, canvas.height);
-  const scale = Math.min(maskWidth / canvas.width, maskHeight / canvas.height);
-  const contentWidth = Math.max(1, Math.round(canvas.width * scale));
-  const contentHeight = Math.max(1, Math.round(canvas.height * scale));
-  const cropX = Math.max(0, Math.floor((maskWidth - contentWidth) / 2));
-  const cropY = Math.max(0, Math.floor((maskHeight - contentHeight) / 2));
   const alphaCanvas = new OffscreenCanvas(canvas.width, canvas.height);
-  alphaCanvas.getContext("2d").drawImage(maskCanvas, cropX, cropY, contentWidth, contentHeight, 0, 0, canvas.width, canvas.height);
+  const maskScaleX = maskWidth / inputSize;
+  const maskScaleY = maskHeight / inputSize;
+  alphaCanvas.getContext("2d").drawImage(
+    maskCanvas,
+    offsetX * maskScaleX,
+    offsetY * maskScaleY,
+    contentWidth * maskScaleX,
+    contentHeight * maskScaleY,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
   const alpha = alphaCanvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height).data;
   for (let index = 0; index < canvas.width * canvas.height; index += 1) {
     const matte = alpha[index * 4];
