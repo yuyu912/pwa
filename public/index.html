@@ -3,50 +3,209 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-    <meta name="theme-color" content="#b8a1cf">
+    <meta name="theme-color" content="#f5f0f8">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <link rel="manifest" href="./manifest.webmanifest">
-    <link rel="stylesheet" href="./app.css">
+    <link rel="stylesheet" href="./app.css?v=10">
     <title>衣橱关系 · 本地衣橱</title>
   </head>
   <body>
     <main class="app-shell">
-      <header class="brand"><span class="brand-mark">衣</span><div><strong>衣橱关系</strong><small>只在这台设备保存</small></div></header>
-      <p id="privacy-note" class="privacy-note">照片、衣橱与 AI 结果只保存在本机浏览器；首次 AI 识别需要联网下载模型。</p>
-      <nav class="main-nav" aria-label="主导航">
-        <button class="nav-button active" data-page="closet">衣橱</button><button class="nav-button" data-page="add">添加衣物</button><button class="nav-button" data-page="analysis">新衣分析</button><button class="nav-button" data-page="data">数据</button>
-      </nav>
+      <section id="home-page" class="page active home-page">
+        <header class="home-header">
+          <h1>衣橱关系<small aria-hidden="true">♡</small></h1>
+        </header>
 
-      <section id="closet-page" class="page active">
-        <div class="section-heading"><div><p class="eyebrow">本地衣橱</p><h1>我的衣物</h1></div><span id="item-count" class="count">0 件</span></div>
+        <article class="home-hero">
+          <img src="./wardrobe-home-hero-v2.png" alt="小猫在阳光下整理衣橱的水彩插画">
+          <div class="hero-copy">
+            <span id="hero-weather-icon" class="weather-mark weather-dynamic weather-partly" aria-hidden="true"></span>
+            <p>今天也和</p>
+            <strong>衣橱好好相处</strong>
+            <span class="copy-underline" aria-hidden="true"></span>
+          </div>
+          <button id="weather-open" class="weather-card" type="button">
+            <span id="home-weather-icon" class="weather-card-icon weather-dynamic weather-partly" aria-hidden="true"></span>
+            <span><strong id="home-weather-title">选择城市</strong><small id="home-weather-detail">查看真实天气与穿搭</small></span>
+          </button>
+        </article>
+
+        <button id="today-recommendation-open" class="today-card" type="button">
+          <span class="today-copy"><svg class="hanger-icon" viewBox="0 0 52 34" aria-hidden="true"><path d="M23 9c0-5 7-6 7-1 0 3-4 4-4 7v2M26 17 8 30h36L26 17Z"/></svg><strong>今天穿什么</strong><span class="copy-underline" aria-hidden="true"></span><small id="today-recommendation-copy">选择城市后，从真实衣橱推荐</small></span>
+          <img class="today-outfit" src="./today-outfit-v2.png" alt="">
+          <span class="arrow" aria-hidden="true">→</span>
+        </button>
+
+        <div class="quick-grid" aria-label="快捷入口">
+          <button type="button" data-page="add"><span class="quick-art art-add" aria-hidden="true"></span><strong>添加衣物</strong></button>
+          <button type="button" data-page="analysis"><span class="quick-art art-analysis" aria-hidden="true"></span><strong>新衣分析</strong></button>
+          <button type="button" data-page="data"><span class="quick-art art-data" aria-hidden="true"></span><strong>我的数据</strong></button>
+        </div>
+
+        <button class="progress-strip" type="button" data-page="closet">
+          <span class="closet-mini" aria-hidden="true"></span>
+          <span>已录入 <strong id="home-item-count">0</strong> 件 · <span id="home-progress-hint">再添 <strong id="home-more-count">5</strong> 件分析更完整</span></span>
+          <span class="arrow" aria-hidden="true">›</span>
+        </button>
+      </section>
+
+      <section id="closet-page" class="page">
+        <header class="page-header">
+          <button class="back-button" type="button" data-page="home" aria-label="返回首页">←</button>
+          <div><p>真实衣橱</p><h1>我的衣橱</h1><span class="hand-underline" aria-hidden="true"></span></div>
+          <span id="item-count" class="count">0 件</span>
+        </header>
+        <div class="closet-tools" aria-label="衣橱搜索筛选">
+          <label class="closet-search"><span aria-hidden="true">⌕</span><input id="closet-search" type="search" placeholder="搜索名称、颜色、风格或场景" aria-label="搜索衣物"></label>
+          <div class="closet-filters">
+            <label><span>品类</span><select id="closet-category"><option value="">全部</option><option>上衣</option><option>裤子</option><option>半身裙</option><option>外套</option><option>连衣裙</option><option>鞋子</option></select></label>
+            <label><span>颜色</span><select id="closet-color"><option value="">全部</option><option>红色系</option><option>蓝色系</option><option>绿色系</option><option>黄色/棕色系</option><option>深色系</option><option>中性色</option></select></label>
+            <label><span>季节</span><select id="closet-season"><option value="">全部</option><option>四季</option><option>春秋</option><option>夏季</option><option>冬季</option></select></label>
+            <label><span>场景</span><select id="closet-scene"><option value="">全部</option><option>日常</option><option>通勤</option><option>约会</option><option>旅行</option><option>聚会</option><option>运动</option></select></label>
+            <label><span>排序</span><select id="closet-sort"><option value="recent">最近录入</option><option value="worn">最近穿过</option><option value="frequency">穿着次数</option><option value="name">名称</option></select></label>
+            <label><span>视图</span><select id="closet-view"><option value="grid">卡片</option><option value="grouped">衣橱分组</option></select></label>
+          </div>
+          <p id="filter-result" class="filter-result"></p>
+        </div>
         <div id="item-list" class="item-list"></div>
         <article id="item-detail" class="panel item-detail" hidden></article>
       </section>
 
-      <section id="add-page" class="page">
-        <div class="section-heading"><div><p class="eyebrow">本地 AI 识别后确认</p><h1>添加真实衣物</h1></div></div>
-        <form id="item-form" class="form panel"><label>衣物图片<input name="image" type="file" accept="image/*" capture="environment" required></label><p class="hint">建议使用单件平铺或挂拍图。照片不会上传。</p><button class="primary" type="submit">本地 AI 识别衣物</button></form>
-        <form id="item-confirmation" class="form panel" hidden>
-          <img class="cutout-preview" alt="本地 AI 生成的衣物主体图">
-          <p class="ai-intro">AI 结果只供参考，请按实物修改后再保存。</p>
-          <label>名称<input name="name" required></label><label>品类<select name="category" required><option>上衣</option><option>裤子</option><option>半身裙</option><option>外套</option><option>连衣裙</option><option>鞋子</option></select></label><label>颜色<input name="color"></label><label>风格（用逗号分隔）<input name="styles"></label><label>适用场景（用逗号分隔）<input name="scenes"></label><label>价格（可选）<input name="price" type="number" min="0" step="0.01"></label>
-          <div class="decision-row"><button class="primary" type="submit">保存到本地衣橱</button><button class="secondary" type="button" data-cancel-draft>重新选择</button></div>
+      <section id="add-page" class="page flow-page">
+        <header class="page-header centered">
+          <button class="back-button" type="button" data-page="home" aria-label="返回首页">←</button>
+          <div><p>让衣橱更懂你</p><h1>添加衣物</h1><span class="hand-underline" aria-hidden="true"></span></div>
+        </header>
+        <div class="intro-row"><span aria-hidden="true">🐱</span><p>把衣物交给我看看<br><strong>识别后由你确认</strong></p></div>
+        <form id="item-form" class="form">
+          <label class="upload-card">
+            <input name="image" type="file" accept="image/*" multiple required>
+            <span class="upload-art" aria-hidden="true">👗</span>
+            <strong>上传一件或多件衣物</strong>
+            <small>批量选择后会逐张识别、逐张确认，不会同时占用手机内存</small>
+          </label>
+          <button class="primary" type="submit">本地 AI 识别衣物 ♡</button>
+          <p id="batch-status" class="batch-status"></p>
+          <div id="batch-error" class="batch-error" hidden>
+            <p id="batch-error-copy"></p>
+            <div class="decision-row"><button class="primary" type="button" data-manual-batch>转手动确认</button><button class="secondary" type="button" data-retry-batch>重试 AI</button><button class="secondary" type="button" data-skip-batch>跳过当前</button><button class="text-button" type="button" data-abort-batch>取消批次</button></div>
+          </div>
+          <p class="privacy-banner"><span aria-hidden="true">🐾 🔒</span> 原图仅用于本次本地处理，不会上传</p>
+          <p id="runtime-mode" class="runtime-mode"></p>
         </form>
+
+        <form id="item-confirmation" class="form confirmation-panel" hidden>
+          <div class="preview-card">
+            <img class="cutout-preview" alt="本地 AI 生成的衣物主体图">
+            <span class="success-chip">✓ 背景已去除</span>
+          </div>
+          <p class="ai-intro">AI 结果只供参考，请按实物修改后再保存。</p>
+          <p class="recognition-summary" aria-live="polite"></p>
+          <label><span>名称</span><input name="name" required></label>
+          <label><span>品类</span><select name="category" required><option value="">请选择</option><option>上衣</option><option>裤子</option><option>半身裙</option><option>外套</option><option>连衣裙</option><option>鞋子</option></select></label>
+          <label><span>颜色</span><input name="color"></label>
+          <label><span>季节</span><select name="season" required><option value="">请选择</option><option>四季</option><option>春秋</option><option>夏季</option><option>冬季</option></select></label>
+          <label><span>花纹</span><input name="pattern" placeholder="如：纯色、条纹、碎花"></label>
+          <label><span>材质</span><input name="material" placeholder="如：棉、针织、牛仔"></label>
+          <label><span>风格</span><input name="styles" placeholder="用逗号分隔"></label>
+          <label><span>适用场景</span><input name="scenes" placeholder="用逗号分隔"></label>
+          <label><span>品牌（选填）</span><input name="brand"></label>
+          <label><span>购买日期（选填）</span><input name="purchaseDate" type="date"></label>
+          <label><span>购买渠道（选填）</span><input name="purchaseChannel" placeholder="如：线下门店、淘宝"></label>
+          <label><span>自定义标签</span><input name="customTags" placeholder="用逗号分隔"></label>
+          <label><span>价格（选填）</span><input name="price" type="number" min="0" step="0.01"></label>
+          <div class="decision-row"><button class="primary" type="submit">保存到本地衣橱 ♡</button><button class="secondary" type="button" data-retry-draft hidden>重新抠图</button><button class="secondary" type="button" data-cancel-draft>重新选择</button></div>
+        </form>
+        <ol class="stepper" aria-label="添加衣物步骤"><li class="active"><b>1</b><span>上传</span></li><li><b>2</b><span>确认</span></li><li><b>3</b><span>保存</span></li></ol>
       </section>
 
-      <section id="analysis-page" class="page">
-        <div class="section-heading"><div><p class="eyebrow">基于真实衣橱的本地规则</p><h1>新衣分析</h1></div></div>
-        <form id="candidate-form" class="form panel"><label>候选新衣图片<input name="image" type="file" accept="image/*" capture="environment" required></label><p class="hint">AI 只在本机生成标签和相似度。</p><button class="primary" type="submit">本地 AI 分析候选新衣</button></form>
-        <article id="analysis-result" class="panel analysis" hidden></article>
+      <section id="analysis-page" class="page flow-page">
+        <header class="page-header centered">
+          <button class="back-button" type="button" data-page="home" aria-label="返回首页">←</button>
+          <div><p>购前衣橱关系判断</p><h1>新衣分析</h1><span class="hand-underline" aria-hidden="true"></span></div>
+        </header>
+        <div class="intro-row"><span aria-hidden="true">🐱🔎</span><p>把想买的新衣<br><strong>交给我看看</strong></p></div>
+        <form id="candidate-form" class="form">
+          <label class="upload-card candidate-upload">
+            <input name="image" type="file" accept="image/*" required>
+            <span class="upload-art" aria-hidden="true">👗</span>
+            <strong>上传新衣图片</strong>
+            <small>可从相册选择或拍照，原图不会上传</small>
+          </label>
+          <button class="primary" type="submit">开始本地分析 ♡</button>
+          <p class="privacy-banner"><span aria-hidden="true">🐾 🔒</span> AI 只在本机生成标签和相似度</p>
+        </form>
+        <form id="candidate-manual-form" class="form confirmation-panel" hidden>
+          <div class="preview-card">
+            <img class="cutout-preview" alt="等待手动确认的新衣原图">
+            <span class="success-chip">手动确认模式 · 相似度未计算</span>
+          </div>
+          <p class="ai-intro">本地 AI 未完成，但图片没有丢失。请先确认基础标签，搭配和缺口规则仍可继续运行。</p>
+          <label><span>品类</span><select name="category" required><option value="">请选择</option><option>上衣</option><option>裤子</option><option>半身裙</option><option>外套</option><option>连衣裙</option><option>鞋子</option></select></label>
+          <label><span>颜色</span><input name="color"></label>
+          <label><span>季节</span><select name="season" required><option value="">请选择</option><option>四季</option><option>春秋</option><option>夏季</option><option>冬季</option></select></label>
+          <label><span>花纹</span><input name="pattern" placeholder="如：纯色、条纹、碎花"></label>
+          <label><span>材质</span><input name="material" placeholder="如：棉、针织、牛仔"></label>
+          <label><span>风格</span><input name="styles" placeholder="用逗号分隔"></label>
+          <label><span>适用场景</span><input name="scenes" placeholder="用逗号分隔"></label>
+          <div class="decision-row"><button class="primary" type="submit">继续规则分析</button><button class="secondary" type="button" data-cancel-manual-analysis>重新选择</button></div>
+        </form>
+        <article id="analysis-result" class="analysis-result" hidden></article>
+        <section class="analysis-history">
+          <h2>最近的购衣决定</h2>
+          <div id="analysis-history-list"><p class="hint">还没有保存过购衣决定。</p></div>
+        </section>
+        <ol class="stepper analysis-stepper" aria-label="新衣分析步骤"><li class="active"><b>1</b><span>上传</span></li><li><b>2</b><span>确认</span></li><li><b>3</b><span>分析</span></li></ol>
       </section>
 
       <section id="data-page" class="page">
-        <div class="section-heading"><div><p class="eyebrow">只由你掌控</p><h1>本地数据</h1></div></div>
-        <article class="panel data-panel"><h2>备份与恢复</h2><p>导出的备份含衣物照片和记录，请自行妥善保存。导入会用备份内容覆盖当前衣橱。</p><button id="export-data" class="primary" type="button">导出本地备份</button><label class="file-action">导入本地备份<input id="import-data" type="file" accept="application/json"></label></article>
-        <article class="panel data-panel"><h2>模型与隐私</h2><p id="model-status">模型尚未下载。首次识别将在 Wi-Fi 下下载本地模型。</p><p>本页不会上传照片、衣橱数据或备份文件。清除浏览器网站数据会删除本地衣橱，请先导出备份。</p></article>
+        <header class="page-header centered">
+          <button class="back-button" type="button" data-page="home" aria-label="返回首页">←</button>
+          <div><p>只由你掌控</p><h1>我的数据</h1><span class="hand-underline" aria-hidden="true"></span></div>
+        </header>
+        <article class="panel data-panel"><span class="panel-illustration" aria-hidden="true">📦🌿</span><h2>备份与恢复</h2><p>导出的备份含衣物照片和记录，请妥善保存。导入会覆盖当前衣橱。</p><button id="export-data" class="primary" type="button">导出本地备份</button><label class="file-action">导入本地备份<input id="import-data" type="file" accept="application/json"></label></article>
+        <article class="panel data-panel"><span class="panel-illustration" aria-hidden="true">🐱🔒</span><h2>模型与隐私</h2><p id="model-status">模型尚未下载。首次识别将在 Wi-Fi 下下载本地模型。</p><p>清除浏览器网站数据会删除本地衣橱，请先导出备份。</p></article>
       </section>
+
       <p id="app-message" class="message" aria-live="polite"></p>
+      <dialog id="item-edit-dialog" class="edit-dialog">
+        <form id="item-edit-form" class="form confirmation-panel">
+          <header class="edit-dialog-header"><div><p>只修改衣物信息</p><h2>编辑衣物</h2></div><button type="button" data-close-edit aria-label="关闭编辑">×</button></header>
+          <label><span>名称</span><input name="name" required></label>
+          <label><span>品类</span><select name="category" required><option>上衣</option><option>裤子</option><option>半身裙</option><option>外套</option><option>连衣裙</option><option>鞋子</option></select></label>
+          <label><span>颜色</span><input name="color"></label>
+          <label><span>季节</span><select name="season"><option>四季</option><option>春秋</option><option>夏季</option><option>冬季</option></select></label>
+          <label><span>花纹</span><input name="pattern" placeholder="如：纯色、条纹、碎花"></label>
+          <label><span>材质</span><input name="material" placeholder="如：棉、针织、牛仔"></label>
+          <label><span>风格</span><input name="styles" placeholder="用逗号分隔"></label>
+          <label><span>适用场景</span><input name="scenes" placeholder="用逗号分隔"></label>
+          <label><span>品牌（选填）</span><input name="brand"></label>
+          <label><span>购买日期（选填）</span><input name="purchaseDate" type="date"></label>
+          <label><span>购买渠道（选填）</span><input name="purchaseChannel" placeholder="如：线下门店、淘宝"></label>
+          <label><span>自定义标签</span><input name="customTags" placeholder="用逗号分隔"></label>
+          <label><span>价格（选填）</span><input name="price" type="number" min="0" step="0.01"></label>
+          <div class="decision-row"><button class="primary" type="submit">保存修改</button><button class="secondary" type="button" data-close-edit>取消</button></div>
+        </form>
+      </dialog>
+      <dialog id="weather-dialog" class="weather-dialog">
+        <section>
+          <header class="edit-dialog-header"><div><p>真实天气 · 本地衣橱</p><h2>今天穿什么</h2></div><button type="button" data-close-weather aria-label="关闭天气与穿搭">×</button></header>
+          <form id="city-search-form" class="city-search-form">
+            <label><span>选择所在城市或区县</span><span class="city-search-row"><input name="city" type="search" minlength="2" required placeholder="例如：天津、天津市河西区"><button class="secondary" type="submit">搜索</button></span></label>
+          </form>
+          <div id="city-search-results" class="city-search-results"></div>
+          <article id="weather-summary" class="weather-summary"><p>选择城市后，显示当天真实天气和本机衣橱推荐。</p></article>
+          <section id="outfit-recommendation" class="outfit-recommendation"></section>
+          <p class="weather-attribution">天气数据：<a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>；中国区划坐标：<a href="https://pypi.org/project/geotool-cn/2.0.1/" target="_blank" rel="noreferrer">geotool-cn 2.0.1</a> 本地离线数据。位置和天气缓存只保存在这台设备。</p>
+        </section>
+      </dialog>
+      <nav class="bottom-nav" aria-label="主导航">
+        <button class="nav-button active" data-page="home"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M5 17.5 18 6l13 11.5v13H21v-8h-6v8H5Z"/></svg><small>首页</small></button>
+        <button class="nav-button" data-page="closet"><svg viewBox="0 0 36 36" aria-hidden="true"><rect x="6" y="5" width="24" height="26" rx="2"/><path d="M18 5v26M14 18h1M21 18h1M8 33h3M25 33h3"/></svg><small>衣橱</small></button>
+        <button class="nav-button" data-page="analysis"><svg viewBox="0 0 36 36" aria-hidden="true"><rect x="5" y="5" width="26" height="26" rx="4"/><path d="m10 25 6-8 5 4 6-10M23 11h4v4"/></svg><small>新衣分析</small></button>
+        <button class="nav-button" data-page="data"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="11" r="6"/><path d="M7 31c1-8 5-12 11-12s10 4 11 12Z"/></svg><small>我的</small></button>
+      </nav>
     </main>
-    <script type="module" src="./local-app.js?v=1"></script>
+    <script type="module" src="./local-app.js?v=12"></script>
   </body>
 </html>
