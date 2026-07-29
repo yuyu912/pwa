@@ -1,5 +1,0 @@
-# 将 example.com 替换为完成备案并解析到腾讯云轻量服务器的域名。
-example.com {
-  encode zstd gzip
-  reverse_proxy 127.0.0.1:3000
-}

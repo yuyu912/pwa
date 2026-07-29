@@ -1,5 +1,9 @@
-node_modules/
-.env
-data/
-uploads/
-*.log
+# 公开 GitHub Pages 仓库只保留静态 PWA 与发布工作流。
+*
+!.gitignore
+!.gitattributes
+!.github/
+!.github/workflows/
+!.github/workflows/deploy-pages.yml
+!public/
+!public/**
