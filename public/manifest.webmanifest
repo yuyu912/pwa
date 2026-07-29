@@ -1,0 +1,9 @@
+{
+  "name": "衣橱关系",
+  "short_name": "衣橱关系",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#fbf7fc",
+  "theme_color": "#b8a1cf",
+  "icons": [{ "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

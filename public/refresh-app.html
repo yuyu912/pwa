@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>正在更新衣橱关系</title>
+  <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f8f4fb;color:#5b4c66;font:18px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}p{padding:24px;text-align:center}</style>
+  <p>正在更新衣橱关系，请稍候…</p>
+  <script>
+    let moved = false;
+    const go = () => { if (!moved) { moved = true; location.replace("/?v=11"); } };
+    setTimeout(go, 800);
+    Promise.all([navigator.serviceWorker?.getRegistrations().then((items) => Promise.all(items.map((item) => item.unregister()))), caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key))))]).finally(go);
+  </script>
+</html>

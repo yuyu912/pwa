@@ -1,0 +1,21 @@
+{
+  "name": "wardrobe-api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cos-nodejs-sdk-v5": "^3.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "tencentcloud-sdk-nodejs-tiia": "^4.1.71"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
+  },
+  "cloudfunction-config": {
+    "concurrency": 1,
+    "memorySize": 512,
+    "path": "/wardrobe-api",
+    "timeout": 120
+  }
+}

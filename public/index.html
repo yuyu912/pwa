@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="theme-color" content="#b8a1cf">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="stylesheet" href="./app.css">
+    <title>衣橱关系 · 本地衣橱</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="brand"><span class="brand-mark">衣</span><div><strong>衣橱关系</strong><small>只在这台设备保存</small></div></header>
+      <p id="privacy-note" class="privacy-note">照片、衣橱与 AI 结果只保存在本机浏览器；首次 AI 识别需要联网下载模型。</p>
+      <nav class="main-nav" aria-label="主导航">
+        <button class="nav-button active" data-page="closet">衣橱</button><button class="nav-button" data-page="add">添加衣物</button><button class="nav-button" data-page="analysis">新衣分析</button><button class="nav-button" data-page="data">数据</button>
+      </nav>
+
+      <section id="closet-page" class="page active">
+        <div class="section-heading"><div><p class="eyebrow">本地衣橱</p><h1>我的衣物</h1></div><span id="item-count" class="count">0 件</span></div>
+        <div id="item-list" class="item-list"></div>
+        <article id="item-detail" class="panel item-detail" hidden></article>
+      </section>
+
+      <section id="add-page" class="page">
+        <div class="section-heading"><div><p class="eyebrow">本地 AI 识别后确认</p><h1>添加真实衣物</h1></div></div>
+        <form id="item-form" class="form panel"><label>衣物图片<input name="image" type="file" accept="image/*" capture="environment" required></label><p class="hint">建议使用单件平铺或挂拍图。照片不会上传。</p><button class="primary" type="submit">本地 AI 识别衣物</button></form>
+        <form id="item-confirmation" class="form panel" hidden>
+          <img class="cutout-preview" alt="本地 AI 生成的衣物主体图">
+          <p class="ai-intro">AI 结果只供参考，请按实物修改后再保存。</p>
+          <label>名称<input name="name" required></label><label>品类<select name="category" required><option>上衣</option><option>裤子</option><option>半身裙</option><option>外套</option><option>连衣裙</option><option>鞋子</option></select></label><label>颜色<input name="color"></label><label>风格（用逗号分隔）<input name="styles"></label><label>适用场景（用逗号分隔）<input name="scenes"></label><label>价格（可选）<input name="price" type="number" min="0" step="0.01"></label>
+          <div class="decision-row"><button class="primary" type="submit">保存到本地衣橱</button><button class="secondary" type="button" data-cancel-draft>重新选择</button></div>
+        </form>
+      </section>
+
+      <section id="analysis-page" class="page">
+        <div class="section-heading"><div><p class="eyebrow">基于真实衣橱的本地规则</p><h1>新衣分析</h1></div></div>
+        <form id="candidate-form" class="form panel"><label>候选新衣图片<input name="image" type="file" accept="image/*" capture="environment" required></label><p class="hint">AI 只在本机生成标签和相似度。</p><button class="primary" type="submit">本地 AI 分析候选新衣</button></form>
+        <article id="analysis-result" class="panel analysis" hidden></article>
+      </section>
+
+      <section id="data-page" class="page">
+        <div class="section-heading"><div><p class="eyebrow">只由你掌控</p><h1>本地数据</h1></div></div>
+        <article class="panel data-panel"><h2>备份与恢复</h2><p>导出的备份含衣物照片和记录，请自行妥善保存。导入会用备份内容覆盖当前衣橱。</p><button id="export-data" class="primary" type="button">导出本地备份</button><label class="file-action">导入本地备份<input id="import-data" type="file" accept="application/json"></label></article>
+        <article class="panel data-panel"><h2>模型与隐私</h2><p id="model-status">模型尚未下载。首次识别将在 Wi-Fi 下下载本地模型。</p><p>本页不会上传照片、衣橱数据或备份文件。清除浏览器网站数据会删除本地衣橱，请先导出备份。</p></article>
+      </section>
+      <p id="app-message" class="message" aria-live="polite"></p>
+    </main>
+    <script type="module" src="./local-app.js?v=1"></script>
+  </body>
+</html>

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="theme-color" content="#b8a1cf">
+    <title>衣橱关系 · 本地处理验证</title>
+    <style>
+      :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; color: #332a35; background: #f7f3f8; }
+      body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 88% 8%, #eadcf1 0 10%, transparent 31%), #f7f3f8; }
+      main { box-sizing: border-box; width: min(100%, 620px); margin: auto; padding: max(28px, env(safe-area-inset-top)) 20px 36px; }
+      .eyebrow { margin: 0; color: #84648f; font-size: 13px; letter-spacing: .08em; }
+      h1 { margin: 8px 0; font-size: clamp(27px, 7vw, 38px); line-height: 1.16; }
+      .intro { margin: 0 0 24px; color: #6f626d; line-height: 1.7; }
+      .card { margin: 14px 0; padding: 18px; border: 1px solid #e4dbe7; border-radius: 20px; background: rgba(255,255,255,.83); box-shadow: 0 14px 34px rgba(91, 65, 99, .08); }
+      h2 { margin: 0 0 8px; font-size: 18px; }
+      .notice { border-left: 4px solid #aa86bd; background: #f5eff7; }
+      label { display: grid; gap: 9px; font-weight: 600; }
+      input[type=file] { box-sizing: border-box; width: 100%; padding: 10px; border: 1px dashed #bda9c5; border-radius: 12px; background: #fff; font: inherit; }
+      button { width: 100%; margin-top: 14px; padding: 13px 16px; border: 0; border-radius: 13px; background: #8a6798; color: white; font: inherit; font-weight: 700; }
+      button:disabled { opacity: .56; }
+      .status { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 11px 0; border-top: 1px solid #eee7ef; }
+      .status:first-of-type { border-top: 0; }
+      .status span { color: #756a74; font-size: 14px; }
+      .status strong { font-size: 14px; color: #654e6e; }
+      #result[hidden], #preview[hidden] { display: none; }
+      #preview { display: block; width: min(100%, 260px); max-height: 300px; margin: 16px auto 0; object-fit: contain; border-radius: 13px; background: #f2edf3; }
+      .result-row { display: grid; grid-template-columns: 90px 1fr; gap: 12px; padding: 11px 0; border-top: 1px solid #eee7ef; }
+      .result-row dt { color: #776a76; }
+      .result-row dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+      .muted { color: #766b74; font-size: 13px; line-height: 1.65; }
+      .error { color: #a43d4b; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">衣橱关系 · 第一阶段</p>
+      <h1>手机本地处理验证</h1>
+      <p class="intro">这不是正式录衣入口。它只验证图片能否在当前浏览器中本地处理，全程不登录、不上传、不保存图片，也不调用腾讯云或其他 AI 接口。</p>
+
+      <section class="card notice">
+        <h2>费用边界</h2>
+        <p class="muted">本页没有网络请求代码。请选择一张不含隐私信息的测试衣物图；图片只在本页关闭前留在内存中。</p>
+      </section>
+
+      <section class="card" aria-labelledby="device-title">
+        <h2 id="device-title">设备能力</h2>
+        <div class="status"><span>WebGPU</span><strong id="webgpu-status">检测中</strong></div>
+        <div class="status"><span>本地哈希（Web Crypto）</span><strong id="crypto-status">检测中</strong></div>
+        <div class="status"><span>图片 Canvas 处理</span><strong id="canvas-status">检测中</strong></div>
+      </section>
+
+      <section class="card" aria-labelledby="image-title">
+        <h2 id="image-title">选一张测试衣物图</h2>
+        <label>图片文件<input id="image-input" type="file" accept="image/*"></label>
+        <button id="run-button" type="button" disabled>开始本地验证</button>
+        <img id="preview" alt="所选测试图片预览" hidden>
+        <p id="message" class="muted" aria-live="polite">选择图片后即可开始。</p>
+      </section>
+
+      <section id="result" class="card" hidden aria-labelledby="result-title">
+        <h2 id="result-title">本地结果</h2>
+        <dl>
+          <div class="result-row"><dt>文件 SHA-256</dt><dd id="hash-result"></dd></div>
+          <div class="result-row"><dt>整图主色估算</dt><dd id="color-result"></dd></div>
+          <div class="result-row"><dt>本次耗时</dt><dd id="time-result"></dd></div>
+        </dl>
+        <p class="muted">主色目前按整张图像素估算，尚未抠出衣物主体；分割、品类标签和相似度模型将只在这项基础验证通过后再加入。</p>
+      </section>
+    </main>
+    <script type="module" src="/local-ai-prototype.js"></script>
+  </body>
+</html>
