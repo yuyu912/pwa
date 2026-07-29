@@ -14,7 +14,7 @@ const REQUEST_TIMEOUT_MS = 10000;
 const MODEL_IDLE_TIMEOUT_MS = 90000;
 const AI_PREFLIGHT_URLS = [
   "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js",
-  "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/config.json",
+  "https://huggingface.co/BritishWerewolf/U-2-Netp/resolve/main/config.json",
   "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/config.json",
 ];
 let database;
@@ -113,7 +113,7 @@ async function safeAnalyzeCutout(blob) {
 
 let worker;
 function createAiWorker() {
-  worker = new Worker("./local-ai-worker.js?v=6", { type: "module" });
+  worker = new Worker("./local-ai-worker.js?v=7", { type: "module" });
   return worker;
 }
 createAiWorker();
@@ -325,6 +325,8 @@ function showDraftConfirmation(candidateDraft) {
   draft = candidateDraft;
   const form = $("#item-confirmation");
   const manualFallback = draft.recognitionMode === "manual-fallback";
+  const cutoutReady = draft.cutoutState === "ready";
+  const classificationReady = draft.embeddingState === "ready";
   const colorName = String(draft.tags.color || "").split("（")[0];
   form.elements.name.value = `${colorName}${draft.tags.category || "衣物"}`;
   form.elements.category.value = draft.tags.category || "";
@@ -340,12 +342,16 @@ function showDraftConfirmation(candidateDraft) {
   form.elements.customTags.value = "";
   form.elements.price.value = "";
   form.querySelector("img").src = blobUrl(draft.cutout);
-  form.querySelector(".preview-card").classList.toggle("transparent-preview", !manualFallback);
-  form.querySelector(".cutout-preview").alt = manualFallback ? "等待手动确认的衣物原图" : "本地 AI 生成的衣物主体图";
-  form.querySelector(".success-chip").textContent = manualFallback ? "待抠图 · 图片已保留" : "✓ 背景已去除";
+  form.querySelector(".preview-card").classList.toggle("transparent-preview", cutoutReady);
+  form.querySelector(".cutout-preview").alt = cutoutReady ? "本地 AI 生成的衣物主体图" : "等待重新抠图的衣物原图";
+  form.querySelector(".success-chip").textContent = cutoutReady && classificationReady ? "✓ 抠图与分类已完成" : cutoutReady ? "抠图已完成 · 分类待重试" : classificationReady ? "分类已完成 · 抠图待重试" : "待抠图 · 图片已保留";
   form.querySelector(".ai-intro").textContent = manualFallback
     ? "本地 AI 未完成，当前显示原图且不会伪装成抠图结果。请稍后重试，或手动填写后保存为待抠图衣物。"
-    : "AI 结果只供参考。标有“待确认”的字段可信度较低，请按实物修改。";
+    : cutoutReady && classificationReady
+      ? "AI 结果只供参考。标有“待确认”的字段可信度较低，请按实物修改。"
+      : classificationReady
+        ? "衣物标签已经识别，但本次抠图未通过。当前显示原图，可确认标签后保存或重新抠图。"
+        : "透明抠图已经保留，但标签模型未完成。可重新识别，或手动确认空白字段。";
   const confidence = draft.recognitionConfidence || {};
   const lowFields = Object.entries({
     categories: "品类",
@@ -356,16 +362,18 @@ function showDraftConfirmation(candidateDraft) {
     scenes: "场景",
   }).filter(([field]) => confidence[field] === "low").map(([, label]) => label);
   form.querySelector(".recognition-summary").textContent = manualFallback
-    ? "未生成 AI 标签：所有字段需要手动确认。"
-    : lowFields.length
+    ? `未生成 AI 标签：${draft.recognitionError || "本地模型未完成"}。所有字段需要手动确认。`
+    : !classificationReady
+      ? `标签未生成：${draft.recognitionError || "本地分类模型未完成"}。`
+      : lowFields.length
       ? `待确认：${lowFields.join("、")}。材质仅为图片外观推测。`
       : "识别候选已填写；材质仍建议按衣物水洗标确认。";
-  form.querySelector("[data-retry-draft]").hidden = !manualFallback;
+  form.querySelector("[data-retry-draft]").hidden = cutoutReady && classificationReady;
   $("#item-form").hidden = true;
   form.hidden = false;
   document.querySelectorAll("#add-page .stepper li").forEach((step, index) => step.classList.toggle("active", index === 1));
   $("#batch-status").textContent = batchTotal > 1 ? `正在确认第 ${batchTotal - batchQueue.length + 1} / ${batchTotal} 件，已保存 ${batchSaved} 件。` : "";
-  message(manualFallback ? "已保留原图并转为手动确认；保存后不会伪装成 AI 识别结果。" : "本地 AI 已完成，请按实物确认标签后再保存。", manualFallback);
+  message(manualFallback ? "已保留原图并转为手动确认；保存后不会伪装成 AI 识别结果。" : cutoutReady && classificationReady ? "本地 AI 已完成，请按实物确认标签后再保存。" : classificationReady ? "分类已完成，但抠图待重试；标签不会再一起丢失。" : "抠图结果已保留，但分类待重试。", !(cutoutReady && classificationReady));
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -378,23 +386,25 @@ async function makeDraft(file) {
     throw error;
   }
   const result = await recognize(file);
-  const analysis = await safeAnalyzeCutout(result.cutout);
-  if (!analysis.quality.valid) {
-    const error = new Error("抠图蒙版质量检查未通过，未把原图伪装成成功结果。");
-    error.stage = "抠图质量";
-    throw error;
+  let color = "";
+  let cutoutState = result.cutoutState || "pending";
+  if (cutoutState === "ready") {
+    const analysis = await safeAnalyzeCutout(result.cutout);
+    if (analysis.quality.valid) color = analysis.color;
+    else cutoutState = "pending";
   }
   showDraftConfirmation({
     source: file,
     cutout: result.cutout,
     sourceHash,
     embedding: result.embedding,
-    recognitionMode: "ai",
-    embeddingState: "ready",
-    cutoutState: "ready",
+    recognitionMode: cutoutState === "ready" && result.embeddingState === "ready" ? "ai" : "ai-partial",
+    embeddingState: result.embeddingState || (hasValidEmbedding(result.embedding) ? "ready" : "unavailable"),
+    cutoutState,
     recognitionCandidates: result.recognitionCandidates || {},
     recognitionConfidence: result.recognitionConfidence || {},
-    tags: { ...result.tags, color: analysis.color },
+    recognitionError: result.recognitionError || (cutoutState === "ready" ? "" : result.cutoutError || "抠图质量检查未通过"),
+    tags: { ...result.tags, color },
   });
 }
 
@@ -539,7 +549,7 @@ $("#item-confirmation").addEventListener("submit", async (event) => {
     recognitionError: draft.recognitionError || "",
     wearCount: 0,
     createdAt: Date.now(),
-    modelVersion: draft.recognitionMode === "manual-fallback" ? "manual-fallback-v2" : "birefnet-lite+clip-local-v1",
+    modelVersion: draft.recognitionMode === "manual-fallback" ? "manual-fallback-v2" : "u2netp+clip-local-v1",
   };
   await put("items", item);
   batchSaved += 1;
@@ -793,10 +803,16 @@ async function prepareManualCandidate(file, sourceHash, error) {
 
 function showAiCandidateConfirmation() {
   const form = $("#candidate-manual-form");
+  const cutoutReady = analysisCandidate.cutoutState === "ready";
+  const classificationReady = analysisCandidate.embeddingState === "ready";
   form.querySelector("img").src = blobUrl(analysisCandidate.cutout);
-  form.querySelector(".preview-card").classList.add("transparent-preview");
-  form.querySelector(".success-chip").textContent = "✓ 已抠图 · 请确认标签";
-  form.querySelector(".ai-intro").textContent = "图片已在本机完成抠图与识别。候选标签不是事实，请确认后再运行五步分析。";
+  form.querySelector(".preview-card").classList.toggle("transparent-preview", cutoutReady);
+  form.querySelector(".success-chip").textContent = cutoutReady && classificationReady ? "✓ 抠图与分类已完成" : cutoutReady ? "抠图已完成 · 分类待重试" : classificationReady ? "分类已完成 · 抠图待重试" : "本地 AI 待重试";
+  form.querySelector(".ai-intro").textContent = cutoutReady && classificationReady
+    ? "图片已在本机完成抠图与识别。候选标签不是事实，请确认后再运行五步分析。"
+    : classificationReady
+      ? "标签识别已完成，但本次抠图未通过。当前保留原图，确认标签后仍可继续分析。"
+      : "抠图已经保留，但标签模型未完成。请手动确认空白字段后继续，或返回后重新识别。";
   form.elements.category.value = analysisCandidate.tags.category || "";
   form.elements.color.value = analysisCandidate.tags.color || "";
   form.elements.season.value = analysisCandidate.tags.season || "";
@@ -807,7 +823,7 @@ function showAiCandidateConfirmation() {
   $("#candidate-form").hidden = true;
   form.hidden = false;
   document.querySelectorAll("#analysis-page .stepper li").forEach((step, index) => step.classList.toggle("active", index === 1));
-  message("本地抠图与标签候选已生成，请先确认；低可信结果可直接修改。");
+  message(cutoutReady && classificationReady ? "本地抠图与标签候选已生成，请先确认；低可信结果可直接修改。" : classificationReady ? "标签候选已生成，抠图未通过但不再影响分类。" : "抠图已保留，但标签识别未完成。", !(cutoutReady && classificationReady));
 }
 
 $("#candidate-form").addEventListener("submit", async (event) => {
@@ -820,13 +836,13 @@ $("#candidate-form").addEventListener("submit", async (event) => {
   try {
     sourceHash = await hashFile(file);
     const result = await recognize(file);
-    const cutoutAnalysis = await safeAnalyzeCutout(result.cutout);
-    if (!cutoutAnalysis.quality.valid) {
-      const qualityError = new Error("抠图蒙版质量检查未通过，候选图已保留为待重试。");
-      qualityError.stage = "抠图质量";
-      throw qualityError;
+    let color = "";
+    let cutoutState = result.cutoutState || "pending";
+    if (cutoutState === "ready") {
+      const cutoutAnalysis = await safeAnalyzeCutout(result.cutout);
+      if (cutoutAnalysis.quality.valid) color = cutoutAnalysis.color;
+      else cutoutState = "pending";
     }
-    const color = cutoutAnalysis.color;
     analysisCandidate = {
       id: "candidate",
       name: `${color.split("（")[0]}${result.tags.category}`,
@@ -834,11 +850,12 @@ $("#candidate-form").addEventListener("submit", async (event) => {
       cutout: result.cutout,
       sourceHash,
       embedding: result.embedding,
-      recognitionMode: "ai",
-      embeddingState: "ready",
-      cutoutState: "ready",
+      recognitionMode: cutoutState === "ready" && result.embeddingState === "ready" ? "ai" : "ai-partial",
+      embeddingState: result.embeddingState || (hasValidEmbedding(result.embedding) ? "ready" : "unavailable"),
+      cutoutState,
       recognitionCandidates: result.recognitionCandidates || {},
       recognitionConfidence: result.recognitionConfidence || {},
+      recognitionError: result.recognitionError || (cutoutState === "ready" ? "" : result.cutoutError || "抠图质量检查未通过"),
       tags: { ...result.tags, color },
       category: result.tags.category,
       color,

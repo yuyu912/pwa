@@ -1,6 +1,6 @@
 const LIBRARY_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js";
 const MODELS = {
-  matting: "onnx-community/BiRefNet_lite-ONNX",
+  matting: "BritishWerewolf/U-2-Netp",
   vision: "Xenova/clip-vit-base-patch32",
 };
 const LABELS = {
@@ -62,14 +62,16 @@ let transformers;
 let remover;
 let removerProcessor;
 let classifier;
-let loading;
+let libraryLoading;
+let removerLoading;
+let classifierLoading;
 
 const send = (type, payload = {}, transfer = []) => postMessage({ type, ...payload }, transfer);
 
-async function loadModels() {
-  if (remover && removerProcessor && classifier) return;
-  if (loading) return loading;
-  loading = (async () => {
+async function loadLibrary() {
+  if (transformers) return transformers;
+  if (libraryLoading) return libraryLoading;
+  libraryLoading = (async () => {
     if (!self.isSecureContext) {
       throw Object.assign(new Error("完整本地 AI 需要 HTTPS，请复制线上链接到 Safari 或 Chrome 打开"), { stage: "运行环境" });
     }
@@ -79,8 +81,16 @@ async function loadModels() {
     } catch (error) {
       throw Object.assign(new Error(error.message || "Transformers.js 资源无法连接"), { stage: "资源连接" });
     }
-    const device = self.navigator.gpu ? "webgpu" : "wasm";
-    const progress = (item) => {
+    return transformers;
+  })();
+  try {
+    return await libraryLoading;
+  } finally {
+    libraryLoading = null;
+  }
+}
+
+const modelProgress = (item) => {
       if (item.status === "progress" && item.progress != null) {
         send("progress", {
           text: `正在下载本地模型：${item.file || "组件"}`,
@@ -88,34 +98,57 @@ async function loadModels() {
           state: "pending",
         });
       }
-    };
+};
+
+async function loadRemover() {
+  if (remover && removerProcessor) return;
+  if (removerLoading) return removerLoading;
+  removerLoading = (async () => {
+    await loadLibrary();
     send("progress", { text: "正在下载或加载通用衣物抠图模型…", percent: 2, state: "removing-background" });
     try {
       remover = await transformers.AutoModel.from_pretrained(MODELS.matting, {
-        device,
-        dtype: device === "webgpu" ? "fp16" : "fp32",
-        progress_callback: progress,
+        device: "wasm",
+        dtype: "fp32",
+        progress_callback: modelProgress,
       });
-      removerProcessor = await transformers.AutoProcessor.from_pretrained(MODELS.matting, { progress_callback: progress });
+      removerProcessor = await transformers.AutoProcessor.from_pretrained(MODELS.matting, { progress_callback: modelProgress });
     } catch (error) {
-      throw Object.assign(new Error(error.message || "BiRefNet Lite 模型加载失败"), { stage: "模型下载" });
+      remover = null;
+      removerProcessor = null;
+      throw Object.assign(new Error(error.message || "U-2-Netp 模型加载失败"), { stage: "抠图模型下载" });
     }
+  })();
+  try {
+    await removerLoading;
+  } finally {
+    removerLoading = null;
+  }
+}
+
+async function loadClassifier() {
+  if (classifier) return;
+  if (classifierLoading) return classifierLoading;
+  classifierLoading = (async () => {
+    await loadLibrary();
+    const device = self.navigator.gpu ? "webgpu" : "wasm";
     send("progress", { text: "正在下载或加载衣物理解模型…", percent: 45, state: "recognizing" });
     try {
       classifier = await transformers.pipeline("zero-shot-image-classification", MODELS.vision, {
         device,
         dtype: device === "webgpu" ? "q4f16" : "q8",
-        progress_callback: progress,
+        progress_callback: modelProgress,
       });
     } catch (error) {
+      classifier = null;
       throw Object.assign(new Error(error.message || "CLIP 模型加载失败"), { stage: "模型下载" });
     }
     send("ready", { device });
   })();
   try {
-    await loading;
+    await classifierLoading;
   } finally {
-    loading = null;
+    classifierLoading = null;
   }
 }
 
@@ -124,22 +157,40 @@ async function cutoutWithMask(file, sourceUrl) {
     throw new Error("当前浏览器 Worker 不支持透明蒙版合成，请使用最新版 Safari 或 Chrome");
   }
   const image = await transformers.RawImage.fromURL(sourceUrl);
-  const { pixel_values } = await removerProcessor(image);
-  const output = await remover({ input_image: pixel_values });
-  const tensor = output.output_image || output.logits || Object.values(output)[0];
-  if (!tensor?.[0]?.sigmoid) throw new Error("抠图模型没有返回有效蒙版");
-  const mask = await transformers.RawImage
-    .fromTensor(tensor[0].sigmoid().mul(255).to("uint8"))
-    .resize(image.width, image.height);
+  const processed = await removerProcessor(image);
+  const output = await remover({ input: processed.pixel_values });
+  const mask = output.mask || Object.values(output)[0];
+  if (!mask?.data?.length || !Array.isArray(mask.dims)) throw new Error("抠图模型没有返回有效蒙版");
+  const maskHeight = mask.dims.at(-2);
+  const maskWidth = mask.dims.at(-1);
+  const maskCanvas = new OffscreenCanvas(maskWidth, maskHeight);
+  const maskContext = maskCanvas.getContext("2d");
+  const maskFrame = maskContext.createImageData(maskWidth, maskHeight);
+  for (let index = 0; index < maskWidth * maskHeight; index += 1) {
+    const value = mask.data[index];
+    const offset = index * 4;
+    maskFrame.data[offset] = value;
+    maskFrame.data[offset + 1] = value;
+    maskFrame.data[offset + 2] = value;
+    maskFrame.data[offset + 3] = 255;
+  }
+  maskContext.putImageData(maskFrame, 0, 0);
   const bitmap = await createImageBitmap(file);
   const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
   const context = canvas.getContext("2d", { willReadFrequently: true });
   context.drawImage(bitmap, 0, 0);
   bitmap.close();
   const frame = context.getImageData(0, 0, canvas.width, canvas.height);
-  const channels = mask.channels || 1;
+  const scale = Math.min(maskWidth / canvas.width, maskHeight / canvas.height);
+  const contentWidth = Math.max(1, Math.round(canvas.width * scale));
+  const contentHeight = Math.max(1, Math.round(canvas.height * scale));
+  const cropX = Math.max(0, Math.floor((maskWidth - contentWidth) / 2));
+  const cropY = Math.max(0, Math.floor((maskHeight - contentHeight) / 2));
+  const alphaCanvas = new OffscreenCanvas(canvas.width, canvas.height);
+  alphaCanvas.getContext("2d").drawImage(maskCanvas, cropX, cropY, contentWidth, contentHeight, 0, 0, canvas.width, canvas.height);
+  const alpha = alphaCanvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height).data;
   for (let index = 0; index < canvas.width * canvas.height; index += 1) {
-    const matte = mask.data[index * channels];
+    const matte = alpha[index * 4];
     frame.data[index * 4 + 3] = Math.round(frame.data[index * 4 + 3] * matte / 255);
   }
   context.clearRect(0, 0, canvas.width, canvas.height);
@@ -170,27 +221,44 @@ function normalizeVector(values) {
 }
 
 async function recognize(file) {
-  await loadModels();
   const sourceUrl = URL.createObjectURL(file);
   let cutoutUrl = "";
   try {
+    await loadLibrary();
     send("progress", { text: "正在完整抠出衣物主体…", percent: 72, state: "removing-background" });
-    let cutout;
+    let cutout = file;
+    let cutoutState = "pending";
+    let cutoutError = "";
     try {
+      await loadRemover();
       cutout = await cutoutWithMask(file, sourceUrl);
+      cutoutState = "ready";
     } catch (error) {
-      throw Object.assign(new Error(error.message || "BiRefNet Lite 抠图失败"), { stage: "抠图" });
+      cutoutError = error.message || "本地抠图失败";
     }
-    cutoutUrl = URL.createObjectURL(cutout);
+    cutoutUrl = cutoutState === "ready" ? URL.createObjectURL(cutout) : sourceUrl;
     send("progress", { text: "正在识别品类、花纹、材质、季节、风格与场景…", percent: 84, state: "recognizing" });
     let grouped;
     try {
+      await loadClassifier();
       grouped = {};
       for (const [field, choices] of Object.entries(LABELS)) {
         grouped[field] = await classifyGroup(cutoutUrl, choices, field);
       }
     } catch (error) {
-      throw Object.assign(new Error(error.message || "CLIP 标签识别失败"), { stage: "标签识别" });
+      send("result", {
+        cutout,
+        embedding: new ArrayBuffer(0),
+        recognitionMode: "ai-partial",
+        embeddingState: "unavailable",
+        cutoutState,
+        cutoutError,
+        recognitionError: `标签识别失败：${error.message || "CLIP 模型未完成"}`,
+        recognitionCandidates: {},
+        recognitionConfidence: {},
+        tags: { category: "", pattern: "", material: "", season: "", styles: [], scenes: [] },
+      });
+      return;
     }
     const embedding = normalizeVector(Object.keys(LABELS).flatMap((field) => grouped[field].scores));
     const tags = {
@@ -209,7 +277,8 @@ async function recognize(file) {
       embedding: embedding.buffer,
       recognitionMode: "ai",
       embeddingState: "ready",
-      cutoutState: "ready",
+      cutoutState,
+      cutoutError,
       recognitionCandidates,
       recognitionConfidence,
       tags,
