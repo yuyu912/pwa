@@ -1,0 +1,36 @@
+<view class="home-page">
+  <view class="custom-nav">
+    <text class="nav-brand">衣橱关系</text>
+    <view class="nav-menu"><text>•••</text><text class="menu-dot">○</text></view>
+  </view>
+
+  <view class="hero-section">
+    <view class="hero-copy">
+      <text class="eyebrow">今天也和</text>
+      <text class="hero-title">衣橱好好相处</text>
+      <text class="hero-line">～ 先穿已有的，再决定下一件 ～</text>
+    </view>
+    <image class="hero-image" src="/assets/home-hero-fresh-v1.png" mode="aspectFill" />
+    <view class="weather-card" bindtap="toWeather"><text class="weather-icon">☁︎</text><view><text class="weather-temp">28°C</text><text class="weather-copy">多云 · 空气优</text><text class="weather-tip">适合轻柔色系穿搭</text></view><text class="card-arrow">›</text></view>
+  </view>
+
+  <view class="today-card" bindtap="toTodayOutfit">
+    <view class="today-copy"><text class="hanger">⌁</text><text class="today-title">今天穿什么</text><text class="today-arrow">⟶</text></view>
+    <image class="outfit-image" src="/assets/today-outfit-fresh-v1.png" mode="aspectFill" />
+  </view>
+
+  <view class="quick-grid">
+    <view class="quick-card" bindtap="toAdd"><view class="quick-art art-add"></view><text>添加衣物</text></view>
+    <view class="quick-card" bindtap="toCandidate"><view class="quick-art art-analysis"></view><text>新衣分析</text></view>
+    <view class="quick-card" bindtap="toFriends"><view class="quick-art art-friends"></view><text>好友帮搭</text></view>
+  </view>
+
+  <view class="progress-card" bindtap="toWardrobe"><view class="mini-closet">♧</view><text>已录入 <text class="count">{{itemCount}}</text> 件 · 再添 <text class="count">2</text> 件解锁完整分析</text><text class="chevron">›</text></view>
+
+  <view class="bottom-nav">
+    <view class="nav-item active"><text class="nav-icon">⌂</text><text>首页</text></view>
+    <view class="nav-item" bindtap="toWardrobe"><text class="nav-icon">▯</text><text>衣橱</text></view>
+    <view class="nav-item" bindtap="toCandidate"><text class="nav-icon">⌁</text><text>新衣分析</text></view>
+    <view class="nav-item" bindtap="toMine"><text class="nav-icon">♙</text><text>我的</text></view>
+  </view>
+</view>

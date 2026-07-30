@@ -1,14 +1,37 @@
 {
   "description": "衣橱关系 P0 小程序客户端切片",
-  "packOptions": { "ignore": [] },
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
   "setting": {
     "urlCheck": true,
     "es6": true,
     "enhance": true,
     "postcss": true,
-    "minified": false
+    "minified": false,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "swc": false,
+    "disableSWC": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
   },
   "compileType": "miniprogram",
   "libVersion": "3.8.9",
-  "appid": "touristappid"
+  "appid": "touristappid",
+  "simulatorPluginLibVersion": {},
+  "editorSetting": {}
 }

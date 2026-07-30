@@ -1,6 +1,11 @@
 {
   "pages": [
     "pages/login/index",
+    "pages/home/index",
+    "pages/weather/index",
+    "pages/today-outfit/index",
+    "pages/add-item/index",
+    "pages/friends/index",
     "pages/wardrobe/index",
     "pages/item-detail/index",
     "pages/candidate/index"

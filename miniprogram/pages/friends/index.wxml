@@ -1,0 +1,1 @@
+<view class="page"><view class="art">♡</view><text class="heading">让懂你的人帮你选</text><text class="sub">向好友分享一件候选新衣或今日搭配，请对方留下建议。衣橱内容默认不公开。</text><view class="privacy"><text class="privacy-title">你可以控制</text><text>只分享当前这一次的搭配请求；好友不能浏览你的完整衣橱。</text></view><button class="primary" bindtap="invite">邀请好友帮搭</button><button class="ghost" bindtap="goBack">回到首页</button></view>

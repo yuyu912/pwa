@@ -1,0 +1,5 @@
+<view class="page">
+  <text class="eyebrow">基于今天的天气与已录入衣物</text><text class="heading">今天可以这样穿</text>
+  <view class="outfit-card"><view class="outfit-art"><text>奶油白针织开衫</text><text>＋</text><text>深蓝直筒牛仔裤</text></view><text class="title">轻松通勤</text><text class="desc">温柔上装平衡深色下装，适合 28°C 多云的通勤日。</text><view class="tags"><text>通勤</text><text>舒适</text><text>已有衣物</text></view></view>
+  <button class="primary" bindtap="toWardrobe">去衣橱换一件</button><button class="ghost" bindtap="goBack">暂时不用，谢谢</button>
+</view>
