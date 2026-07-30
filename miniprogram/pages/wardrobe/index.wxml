@@ -1,0 +1,32 @@
+<view class="page">
+  <view class="topline">
+    <view>
+      <text class="eyebrow">{{user.username}} 的衣橱</text>
+      <text class="headline">先看看你已经拥有的。</text>
+    </view>
+    <text class="status mock">模拟模式</text>
+  </view>
+
+  <view class="search-card card">
+    <input value="{{keyword}}" bindinput="onKeyword" placeholder="搜索名称、颜色或场景" />
+    <scroll-view class="categories" scroll-x>
+      <text wx:for="{{categories}}" wx:key="*this" class="category {{activeCategory === item ? 'active' : ''}}" bindtap="selectCategory" data-category="{{item}}">{{item}}</text>
+    </scroll-view>
+  </view>
+
+  <view wx:if="{{loading}}" class="empty">正在读取衣橱…</view>
+  <view wx:elif="{{error}}" class="empty"><text>{{error}}</text><button class="secondary retry" bindtap="loadItems">重新尝试</button></view>
+  <view wx:elif="{{filteredItems.length === 0}}" class="empty">没有找到符合条件的衣物。</view>
+  <view wx:else class="item-list">
+    <view wx:for="{{filteredItems}}" wx:key="id" class="item-card card" bindtap="openItem" data-id="{{item.id}}">
+      <view class="swatch" style="background: {{item.color === '深蓝' ? '#324d79' : item.color === '淡紫' ? '#c5b0db' : '#eadfc9'}}"></view>
+      <view class="item-content">
+        <text class="item-name">{{item.name}}</text>
+        <text class="item-meta">{{item.category}} · {{item.color}} · 已穿 {{item.wearCount}} 次</text>
+        <view class="tags"><text wx:for="{{item.scenes}}" wx:for-item="scene" wx:key="*this" class="tag">{{scene}}</text></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="action-row"><button class="secondary" bindtap="openCandidate">演示候选新衣分析</button></view>
+</view>

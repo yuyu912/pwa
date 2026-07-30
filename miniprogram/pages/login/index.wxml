@@ -1,0 +1,22 @@
+<view class="page login-page">
+  <view class="hero">
+    <text class="eyebrow">WARDROBE RELATIONSHIP</text>
+    <text class="title">从真实衣橱开始，
+理性地决定下一件衣服。</text>
+    <text class="muted">今日为本地模拟演示：不会创建真实账号，也不会上传图片。</text>
+  </view>
+
+  <view class="card form-card">
+    <text class="label">用户名</text>
+    <input value="{{username}}" bindinput="onUsername" placeholder="输入演示名称" maxlength="30" />
+    <text class="label">密码</text>
+    <input password value="{{password}}" bindinput="onPassword" placeholder="模拟模式不校验密码" />
+    <button class="primary" loading="{{loading}}" bindtap="submit">进入演示衣橱</button>
+    <text wx:if="{{error}}" class="error">{{error}}</text>
+  </view>
+
+  <view class="contract-note">
+    <text>真实联调接口：POST /api/auth/login</text>
+    <text>认证方式：Authorization: Bearer &lt;token&gt;</text>
+  </view>
+</view>

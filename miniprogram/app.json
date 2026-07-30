@@ -1,0 +1,16 @@
+{
+  "pages": [
+    "pages/login/index",
+    "pages/wardrobe/index",
+    "pages/item-detail/index",
+    "pages/candidate/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "衣橱关系",
+    "navigationBarBackgroundColor": "#F8F4FF",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F8F4FF",
+    "backgroundTextStyle": "light"
+  },
+  "style": "v2"
+}

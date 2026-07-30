@@ -114,7 +114,7 @@ async function safeAnalyzeCutout(blob) {
 
 let worker;
 function createAiWorker() {
-  worker = new Worker("./local-ai-worker.js?v=8", { type: "module" });
+  worker = new Worker("./local-ai-worker.js?v=9", { type: "module" });
   return worker;
 }
 createAiWorker();
@@ -389,14 +389,18 @@ async function makeDraft(file) {
   const result = await recognize(file);
   let color = "";
   let cutoutState = result.cutoutState || "pending";
+  let displayCutout = result.cutout;
   if (cutoutState === "ready") {
     const analysis = await safeAnalyzeCutout(result.cutout);
     if (analysis.quality.valid) color = analysis.color;
-    else cutoutState = "pending";
+    else {
+      cutoutState = "pending";
+      displayCutout = file;
+    }
   }
   showDraftConfirmation({
     source: file,
-    cutout: result.cutout,
+    cutout: displayCutout,
     sourceHash,
     embedding: result.embedding,
     recognitionMode: cutoutState === "ready" && result.embeddingState === "ready" ? "ai" : "ai-partial",
@@ -813,7 +817,7 @@ function showAiCandidateConfirmation() {
     ? "图片已在本机完成抠图与识别。候选标签不是事实，请确认后再运行五步分析。"
     : classificationReady
       ? "标签识别已完成，但本次抠图未通过。当前保留原图，确认标签后仍可继续分析。"
-      : "抠图已经保留，但标签模型未完成。请手动确认空白字段后继续，或返回后重新识别。";
+      : "抠图未通过质量检查，当前保留原图；标签模型也未完成。请重新识别或手动确认空白字段。";
   form.elements.category.value = analysisCandidate.tags.category || "";
   form.elements.color.value = analysisCandidate.tags.color || "";
   form.elements.season.value = analysisCandidate.tags.season || "";
@@ -824,7 +828,7 @@ function showAiCandidateConfirmation() {
   $("#candidate-form").hidden = true;
   form.hidden = false;
   document.querySelectorAll("#analysis-page .stepper li").forEach((step, index) => step.classList.toggle("active", index === 1));
-  message(cutoutReady && classificationReady ? "本地抠图与标签候选已生成，请先确认；低可信结果可直接修改。" : classificationReady ? "标签候选已生成，抠图未通过但不再影响分类。" : "抠图已保留，但标签识别未完成。", !(cutoutReady && classificationReady));
+  message(cutoutReady && classificationReady ? "本地抠图与标签候选已生成，请先确认；低可信结果可直接修改。" : classificationReady ? "标签候选已生成，抠图未通过但不再影响分类。" : "抠图和标签均未通过；已保留原图，可重试或手动确认。", !(cutoutReady && classificationReady));
 }
 
 $("#candidate-form").addEventListener("submit", async (event) => {
@@ -839,16 +843,20 @@ $("#candidate-form").addEventListener("submit", async (event) => {
     const result = await recognize(file);
     let color = "";
     let cutoutState = result.cutoutState || "pending";
+    let displayCutout = result.cutout;
     if (cutoutState === "ready") {
       const cutoutAnalysis = await safeAnalyzeCutout(result.cutout);
       if (cutoutAnalysis.quality.valid) color = cutoutAnalysis.color;
-      else cutoutState = "pending";
+      else {
+        cutoutState = "pending";
+        displayCutout = file;
+      }
     }
     analysisCandidate = {
       id: "candidate",
       name: `${color.split("（")[0]}${result.tags.category}`,
       source: file,
-      cutout: result.cutout,
+      cutout: displayCutout,
       sourceHash,
       embedding: result.embedding,
       recognitionMode: cutoutState === "ready" && result.embeddingState === "ready" ? "ai" : "ai-partial",

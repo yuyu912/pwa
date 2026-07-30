@@ -1,0 +1,9 @@
+<view class="page" wx:if="{{item}}">
+  <view class="card detail-hero">
+    <view class="large-swatch" style="background: {{item.color === '深蓝' ? '#324d79' : item.color === '淡紫' ? '#c5b0db' : '#eadfc9'}}"></view>
+    <view><text class="eyebrow">{{item.category}} · {{item.color}}</text><text class="detail-title">{{item.name}}</text><text class="muted">已确认穿着 {{item.wearCount}} 次 · 购入价 ¥{{item.price}}</text></view>
+  </view>
+  <view class="card section"><text class="section-title">适用场景</text><view class="tags"><text wx:for="{{item.scenes}}" wx:key="*this" class="tag">{{item}}</text></view></view>
+  <view class="card section"><text class="section-title">记录一次真实穿着</text><text class="muted">这会调用 POST /api/items/:id/wear-logs；模拟模式只更新页面内计数。</text><picker mode="selector" range="{{scenes}}" bindchange="onScene"><view class="picker">{{scene}}</view></picker><textarea value="{{note}}" bindinput="onNote" placeholder="可选：舒适度或搭配备注" maxlength="200"></textarea><button class="primary" loading="{{saving}}" bindtap="saveWear">今天穿了</button><text wx:if="{{message}}" class="message">{{message}}</text></view>
+</view>
+<view wx:else class="page empty">衣物不存在或读取失败。</view>

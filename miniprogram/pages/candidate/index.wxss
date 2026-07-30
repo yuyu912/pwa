@@ -1,0 +1,10 @@
+.candidate-card, .conclusion, .section { display: flex; flex-direction: column; gap: 14rpx; margin-bottom: 20rpx; }
+.candidate-name { font-size: 42rpx; font-weight: 700; }
+.conclusion { background: #f0e8fa; }
+.section-title { font-size: 31rpx; font-weight: 700; }
+.status.pending { align-self: flex-start; background: #fff3d8; color: #8a6425; }
+.reason, .outfit-item { color: #635b6d; font-size: 27rpx; line-height: 1.7; }
+.outfit-item { padding: 14rpx 0; border-bottom: 1rpx solid #eee7f3; }
+.decision-row { display: flex; gap: 18rpx; }
+.decision-row button { flex: 1; }
+.message { display: block; margin-top: 20rpx; color: #56805b; text-align: center; font-size: 25rpx; }

@@ -1,0 +1,8 @@
+.detail-hero { display: flex; align-items: center; gap: 22rpx; }
+.large-swatch { width: 150rpx; height: 150rpx; flex: 0 0 auto; border-radius: 26rpx; }
+.detail-title { display: block; margin: 8rpx 0; font-size: 37rpx; font-weight: 700; }
+.section { display: flex; flex-direction: column; gap: 18rpx; margin-top: 22rpx; }
+.section-title { font-size: 30rpx; font-weight: 700; }
+.picker, textarea { padding: 20rpx; background: #f7f2fc; border-radius: 16rpx; color: #655771; font-size: 27rpx; }
+textarea { box-sizing: border-box; width: 100%; min-height: 150rpx; }
+.message { color: #56805b; font-size: 25rpx; }

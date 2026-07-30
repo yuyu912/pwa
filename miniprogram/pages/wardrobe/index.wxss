@@ -1,0 +1,17 @@
+.topline { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 30rpx; }
+.headline { display: block; margin-top: 8rpx; font-size: 38rpx; font-weight: 700; color: #493063; }
+.search-card { padding-bottom: 18rpx; }
+.search-card input { background: #f7f2fc; }
+.categories { white-space: nowrap; margin-top: 20rpx; }
+.category { display: inline-block; margin-right: 14rpx; padding: 12rpx 20rpx; border-radius: 999rpx; background: #f2ecf8; color: #756482; font-size: 25rpx; }
+.category.active { background: #8362ab; color: #fff; }
+.item-list { display: flex; flex-direction: column; gap: 18rpx; margin-top: 24rpx; }
+.item-card { display: flex; align-items: center; padding: 20rpx; }
+.swatch { width: 104rpx; height: 104rpx; flex: 0 0 auto; border-radius: 22rpx; }
+.item-content { display: flex; flex: 1; flex-direction: column; gap: 8rpx; min-width: 0; margin-left: 20rpx; }
+.item-name { font-size: 30rpx; font-weight: 700; }
+.item-meta { font-size: 24rpx; color: #8b8298; }
+.tags { display: flex; gap: 10rpx; }
+.tag { padding: 5rpx 12rpx; border-radius: 999rpx; background: #f3ecfa; color: #765795; font-size: 21rpx; }
+.action-row { margin: 34rpx 0 20rpx; }
+.retry { margin-top: 24rpx; }

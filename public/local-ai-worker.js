@@ -81,6 +81,8 @@ async function loadLibrary() {
     send("progress", { text: "正在连接本地 AI 资源…", percent: 1, state: "pending" });
     try {
       transformers = await import(LIBRARY_URL);
+      // 模型文件已随本站发布；关闭远程的同时必须显式允许本地模型。
+      transformers.env.allowLocalModels = true;
       transformers.env.allowRemoteModels = false;
       transformers.env.localModelPath = MODEL_PATH;
       transformers.env.backends.onnx.wasm.wasmPaths = VENDOR_PATH;

@@ -101,7 +101,8 @@ export function analyzeRgbaPixels(pixels, width, height) {
     boxWidthRatio,
     boxHeightRatio,
     connectedRatio,
-    valid: foregroundRatio >= 0.03 && foregroundRatio <= 0.94 && transparentRatio >= 0.03 && boxWidthRatio >= 0.1 && boxHeightRatio >= 0.1 && connectedRatio >= 0.72,
+    // 只抠出少量边缘、主体几乎铺满画布时，通常仍是带背景的原图，不能标为成功。
+    valid: foregroundRatio >= 0.03 && foregroundRatio <= 0.88 && transparentRatio >= 0.12 && boxWidthRatio >= 0.1 && boxHeightRatio >= 0.1 && connectedRatio >= 0.72,
   };
   const dominantIndex = bins.reduce((best, bin, index) => bin.weight > bins[best].weight ? index : best, 0);
   const dominant = bins[dominantIndex];

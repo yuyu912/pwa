@@ -7,3 +7,5 @@
 !.github/workflows/deploy-pages.yml
 !public/
 !public/**
+!miniprogram/
+!miniprogram/**
