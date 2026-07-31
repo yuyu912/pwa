@@ -8,7 +8,7 @@
   </view>
 
   <view class="search-card card">
-    <input value="{{keyword}}" bindinput="onKeyword" placeholder="搜索名称、颜色或场景" />
+    <input value="{{keyword}}" bindinput="onKeyword" placeholder="搜索名称、颜色、材质或场景" />
     <scroll-view class="categories" scroll-x>
       <text wx:for="{{categories}}" wx:key="*this" class="category {{activeCategory === item ? 'active' : ''}}" bindtap="selectCategory" data-category="{{item}}">{{item}}</text>
     </scroll-view>
@@ -19,11 +19,17 @@
   <view wx:elif="{{filteredItems.length === 0}}" class="empty">没有找到符合条件的衣物。</view>
   <view wx:else class="item-list">
     <view wx:for="{{filteredItems}}" wx:key="id" class="item-card card" bindtap="openItem" data-id="{{item.id}}">
-      <view class="swatch" style="background: {{item.color === '深蓝' ? '#324d79' : item.color === '淡紫' ? '#c5b0db' : '#eadfc9'}}"></view>
+      <view class="item-visual" style="background: {{item.color === '深蓝' ? '#324d79' : item.color === '淡紫' ? '#c5b0db' : '#eadfc9'}}">
+        <image wx:if="{{item.imageUrl && !item.imageLoadFailed}}" class="item-image" src="{{item.imageUrl}}" mode="aspectFit" binderror="onImageError" data-id="{{item.id}}"></image>
+      </view>
       <view class="item-content">
         <text class="item-name">{{item.name}}</text>
         <text class="item-meta">{{item.category}} · {{item.color}} · 已穿 {{item.wearCount}} 次</text>
-        <view class="tags"><text wx:for="{{item.scenes}}" wx:for-item="scene" wx:key="*this" class="tag">{{scene}}</text></view>
+        <text class="item-attributes">{{item.season || '未填写季节'}} · {{item.thickness || '未填写厚薄'}} · {{item.material || '未填写材质'}}</text>
+        <view class="tags">
+          <text wx:for="{{item.styles}}" wx:for-item="style" wx:key="*this" class="tag style-tag">{{style}}</text>
+          <text wx:for="{{item.scenes}}" wx:for-item="scene" wx:key="*this" class="tag">{{scene}}</text>
+        </view>
       </view>
     </view>
   </view>

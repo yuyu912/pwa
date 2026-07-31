@@ -1,0 +1,864 @@
+"use strict";
+
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const repository = require("./lib/database");
+const cloud = require("./lib/cloud-services");
+const aiBudget = require("./lib/ai-budget");
+
+const now = () => new Date().toISOString();
+// 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
+const BUILD_ID = "2026-07-31-item-management-v7";
+const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
+const newId = () => crypto.randomUUID();
+const parseArray = (value) => {
+  if (Array.isArray(value)) return value;
+  try { return Array.isArray(JSON.parse(value || "[]")) ? JSON.parse(value || "[]") : []; }
+  catch { return []; }
+};
+const sanitizeTags = (value, allowed = null, max = 4) => parseArray(value)
+  .map((item) => cleanText(item, 20))
+  .filter((item) => item && (!allowed || allowed.includes(item)))
+  .slice(0, max);
+const allowedCategories = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"];
+const allowedScenes = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
+const allowedSeasons = ["春夏", "春秋", "秋冬", "多季"];
+const allowedThicknesses = ["薄", "适中", "厚"];
+const budgetId = "global-ai-budget";
+const requiredEnv = (names) => {
+  const missing = names.filter((name) => !process.env[name]);
+  if (missing.length) throw Object.assign(new Error(`云函数缺少配置：${missing.join(", ")}`), { status: 503 });
+};
+
+const requestHeaders = (event) => Object.fromEntries(
+  Object.entries(event.headers || {}).map(([key, value]) => [key.toLowerCase(), value])
+);
+
+const parseBody = (event) => {
+  if (!event.body) return {};
+  const text = event.isBase64Encoded
+    ? Buffer.from(event.body, "base64").toString("utf8")
+    : String(event.body);
+  if (!text) return {};
+  try { return JSON.parse(text); }
+  catch { throw Object.assign(new Error("请求内容不是有效的 JSON。"), { status: 400 }); }
+};
+
+const corsHeaders = (event) => {
+  const headers = requestHeaders(event);
+  const origin = headers.origin || "";
+  const allowed = String(process.env.ALLOWED_ORIGINS || "*").split(",").map((item) => item.trim()).filter(Boolean);
+  const allowOrigin = allowed.includes("*") ? "*" : allowed.includes(origin) ? origin : "";
+  return {
+    ...(allowOrigin ? { "access-control-allow-origin": allowOrigin } : {}),
+    "access-control-allow-headers": "authorization, content-type, x-admin-token",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-max-age": "600",
+    "cache-control": "no-store"
+  };
+};
+
+const response = (event, statusCode, body, extraHeaders = {}) => ({
+  mpserverlessComposedResponse: true,
+  statusCode,
+  headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders(event), ...extraHeaders },
+  body: statusCode === 204 ? "" : JSON.stringify(body)
+});
+
+const publicUser = (user) => ({ id: String(user.id), username: user.username });
+const tokenFor = (user) => {
+  requiredEnv(["JWT_SECRET"]);
+  return jwt.sign(publicUser(user), process.env.JWT_SECRET, { expiresIn: "7d" });
+};
+
+const requireUser = (event) => {
+  requiredEnv(["JWT_SECRET"]);
+  const authorization = requestHeaders(event).authorization || "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!match) throw Object.assign(new Error("请先登录。"), { status: 401 });
+  try { return jwt.verify(match[1], process.env.JWT_SECRET); }
+  catch { throw Object.assign(new Error("登录状态已过期，请重新登录。"), { status: 401 }); }
+};
+
+const requireAdmin = (event) => {
+  requiredEnv(["ADMIN_BOOTSTRAP_TOKEN"]);
+  if (requestHeaders(event)["x-admin-token"] !== process.env.ADMIN_BOOTSTRAP_TOKEN) {
+    throw Object.assign(new Error("管理员令牌无效。"), { status: 401 });
+  }
+};
+
+const mapItem = (item) => ({
+  ...item,
+  id: String(item.id),
+  styles: sanitizeTags(item.styles),
+  scenes: sanitizeTags(item.scenes, allowedScenes),
+  imageUrl: cloud.signedUrl(item.image_key, "GET", 3600)
+});
+const mapCandidate = (candidate) => ({
+  ...candidate,
+  id: String(candidate.id),
+  styles: sanitizeTags(candidate.styles),
+  scenes: sanitizeTags(candidate.scenes, allowedScenes),
+  imageUrl: cloud.signedUrl(candidate.image_key, "GET", 3600)
+});
+
+const ensureBudget = async () => {
+  const limits = aiBudget.limitsFromEnv();
+  let budget = await repository.getById("aiBudget", budgetId);
+  if (budget) return budget;
+  try {
+    await repository.add("aiBudget", {
+      spent_micros: 0,
+      reserved_micros: 0,
+      successful_tasks: 0,
+      total_limit_micros: limits.totalMicros,
+      task_limit: limits.taskLimit,
+      updated_at: now()
+    }, budgetId);
+  } catch (error) {
+    if (!String(error?.code || "").toLowerCase().includes("duplicate")) throw error;
+  }
+  return repository.getById("aiBudget", budgetId);
+};
+
+const budgetSummary = async () => aiBudget.publicSummary(await ensureBudget());
+
+// 在调用任何付费 AI 前，用事务预留本任务最多 0.05 元；并发上传也不能突破项目总预算。
+const reserveTaskBudget = async (taskId, userId) => {
+  await ensureBudget();
+  const limits = aiBudget.limitsFromEnv();
+  return repository.withTransaction(async (tx) => {
+    const task = await tx.getById("aiUsage", taskId);
+    if (!task || task.user_id !== userId) throw Object.assign(new Error("AI 任务不存在或已失效。"), { status: 404 });
+    if (task.status === "completed") return { task, reservationMicros: 0, completed: true };
+    if (task.reserved_micros > 0) return { task, reservationMicros: task.reserved_micros, completed: false };
+    const budget = await tx.getById("aiBudget", budgetId);
+    const spent = aiBudget.integer(budget.spent_micros);
+    const reserved = aiBudget.integer(budget.reserved_micros);
+    const successful = aiBudget.integer(budget.successful_tasks);
+    const taskRemaining = Math.max(0, limits.taskReservationMicros - aiBudget.integer(task.cost_micros));
+    if (!taskRemaining || spent + reserved + taskRemaining > limits.totalMicros || successful >= limits.taskLimit) {
+      throw Object.assign(new Error("AI 测试额度已用完，可以继续手动录入。"), { status: 429, code: "AI_BUDGET_EXHAUSTED" });
+    }
+    await tx.update("aiBudget", budgetId, {
+      reserved_micros: reserved + taskRemaining,
+      updated_at: now()
+    });
+    await tx.update("aiUsage", task.id, {
+      reserved_micros: taskRemaining,
+      status: task.cutout_key ? "recognizing" : "processing",
+      updated_at: now()
+    });
+    return { task: { ...task, reserved_micros: taskRemaining }, reservationMicros: taskRemaining, completed: false };
+  });
+};
+
+// 任务结束后按已发生的抠图次数和 Token 实际结算，释放未使用预留；失败也会保留已发生费用。
+const settleTaskBudget = async (taskId, userId, options) => {
+  await ensureBudget();
+  const limits = aiBudget.limitsFromEnv();
+  return repository.withTransaction(async (tx) => {
+    const task = await tx.getById("aiUsage", taskId);
+    if (!task || task.user_id !== userId) throw Object.assign(new Error("AI 任务不存在或已失效。"), { status: 404 });
+    const budget = await tx.getById("aiBudget", budgetId);
+    const reservation = aiBudget.integer(task.reserved_micros);
+    const charged = Math.min(reservation, aiBudget.integer(options.chargeMicros));
+    const alreadyCompleted = task.status === "completed";
+    const nextBudget = {
+      reserved_micros: Math.max(0, aiBudget.integer(budget.reserved_micros) - reservation),
+      spent_micros: Math.min(limits.totalMicros, aiBudget.integer(budget.spent_micros) + charged),
+      successful_tasks: aiBudget.integer(budget.successful_tasks) + (options.success && !alreadyCompleted ? 1 : 0),
+      updated_at: now()
+    };
+    await tx.update("aiBudget", budgetId, nextBudget);
+    await tx.update("aiUsage", task.id, {
+      reserved_micros: 0,
+      cost_micros: aiBudget.integer(task.cost_micros) + charged,
+      status: options.status,
+      stage: options.stage || task.stage,
+      error_code: options.errorCode || "",
+      error_message: cleanText(options.errorMessage, 200),
+      prompt_tokens: aiBudget.integer(task.prompt_tokens) + aiBudget.integer(options.usage?.prompt_tokens),
+      completion_tokens: aiBudget.integer(task.completion_tokens) + aiBudget.integer(options.usage?.completion_tokens),
+      // uniCloud update 会把普通嵌套对象合并为点路径；旧失败任务的 result 为 null 时会报错。
+      // command.set 明确替换整个 result，使旧任务可以安全重试并写入新的识别结果。
+      result: repository.command().set(options.result || task.result || null),
+      updated_at: now()
+    });
+    return aiBudget.publicSummary({ ...budget, ...nextBudget }, limits);
+  });
+};
+
+const handleRegister = async (body) => {
+  const inviteCode = cleanText(body.inviteCode, 40);
+  const username = cleanText(body.username, 30);
+  const password = String(body.password || "");
+  if (!inviteCode || !/^[\w\u4e00-\u9fa5-]{2,30}$/.test(username) || password.length < 8) {
+    throw Object.assign(new Error("邀请码、用户名或密码格式不符合要求。"), { status: 400 });
+  }
+  const invite = await repository.findOne("invites", { code: inviteCode });
+  if (!invite || invite.used_by) throw Object.assign(new Error("邀请码无效或已被使用。"), { status: 400 });
+  if (await repository.findOne("users", { username })) throw Object.assign(new Error("该用户名已被使用。"), { status: 409 });
+
+  const recoveryCode = crypto.randomBytes(6).toString("hex").toUpperCase();
+  const user = {
+    id: newId(),
+    username,
+    password_hash: await bcrypt.hash(password, 12),
+    recovery_hash: await bcrypt.hash(recoveryCode, 12),
+    created_at: now()
+  };
+  await repository.withTransaction(async (tx) => {
+    const lockedInvite = await tx.getById("invites", invite.id);
+    if (!lockedInvite || lockedInvite.used_by) throw Object.assign(new Error("邀请码无效或已被使用。"), { status: 400 });
+    await tx.add("users", {
+      username: user.username,
+      password_hash: user.password_hash,
+      recovery_hash: user.recovery_hash,
+      created_at: user.created_at
+    }, user.id);
+    await tx.update("invites", lockedInvite.id, { used_by: user.id, used_at: now() });
+  });
+  return { user: publicUser(user), recoveryCode, token: tokenFor(user) };
+};
+
+const handleMigration = async (payload) => {
+  const tables = payload?.tables || {};
+  const expected = { users: 1, invites: 1, clothing_items: 5, wear_logs: 6, candidates: 0 };
+  for (const [name, expectedCount] of Object.entries(expected)) {
+    if (!Array.isArray(tables[name]) || tables[name].length !== expectedCount) {
+      throw Object.assign(new Error(`迁移数据 ${name} 数量应为 ${expectedCount}。`), { status: 400 });
+    }
+  }
+  const targetNames = { users: "users", invites: "invites", clothing_items: "clothing", wear_logs: "wearLogs", candidates: "candidates", image_drafts: "drafts" };
+  for (const name of Object.values(targetNames)) {
+    if (await repository.count(name)) throw Object.assign(new Error(`迁移已停止：云端 ${name} 不是空表。`), { status: 409 });
+  }
+  const userIds = new Set(tables.users.map((row) => String(row.id)));
+  const itemIds = new Set(tables.clothing_items.map((row) => String(row.id)));
+  if (tables.wear_logs.some((row) => !userIds.has(String(row.user_id)) || !itemIds.has(String(row.item_id)))) {
+    throw Object.assign(new Error("迁移数据存在孤立穿着记录。"), { status: 400 });
+  }
+
+  await repository.withTransaction(async (tx) => {
+    for (const row of tables.users) await tx.add("users", {
+      username: row.username,
+      password_hash: row.password_hash,
+      recovery_hash: row.recovery_hash,
+      created_at: row.created_at
+    }, row.id);
+    for (const row of tables.invites) await tx.add("invites", {
+      code: row.code,
+      used_by: row.used_by == null ? null : String(row.used_by),
+      used_at: row.used_at || null,
+      created_at: row.created_at
+    }, row.id);
+    for (const row of tables.clothing_items) await tx.add("clothing", {
+      user_id: String(row.user_id),
+      image_key: row.image_key,
+      name: row.name,
+      category: row.category,
+      color: row.color || "",
+      // 旧数据迁移也必须保留完整衣物属性，否则小程序详情只能显示场景而无法恢复材质等信息。
+      season: row.season || "",
+      thickness: row.thickness || "",
+      pattern: row.pattern || "",
+      material: row.material || "",
+      styles: sanitizeTags(row.styles),
+      scenes: sanitizeTags(row.scenes, allowedScenes),
+      price: row.price == null ? null : Number(row.price),
+      wear_count: Number(row.wear_count || 0),
+      status: row.status || "active",
+      created_at: row.created_at,
+      source_hash: row.source_hash || null,
+      ...(row.source_hash ? { source_hash_key: `${row.user_id}:${row.source_hash}` } : {}),
+      search_entity_id: row.search_entity_id || null
+    }, row.id);
+    for (const row of tables.wear_logs) await tx.add("wearLogs", {
+      user_id: String(row.user_id),
+      item_id: String(row.item_id),
+      scene: row.scene || "",
+      comfort: row.comfort || "",
+      note: row.note || "",
+      worn_at: row.worn_at
+    }, row.id);
+    for (const row of tables.candidates) await tx.add("candidates", {
+      user_id: String(row.user_id),
+      image_key: row.image_key,
+      name: row.name,
+      category: row.category,
+      color: row.color || "",
+      styles: sanitizeTags(row.styles),
+      scenes: sanitizeTags(row.scenes, allowedScenes),
+      price: row.price == null ? null : Number(row.price),
+      decision: row.decision || null,
+      analysis: row.analysis_json ? JSON.parse(row.analysis_json) : null,
+      created_at: row.created_at
+    }, row.id);
+  });
+  return { migrated: expected, image_drafts: 0, orphanWearLogs: 0 };
+};
+
+const verifyData = async () => {
+  const counts = {
+    users: await repository.count("users"),
+    invites: await repository.count("invites"),
+    clothing_items: await repository.count("clothing"),
+    wear_logs: await repository.count("wearLogs"),
+    candidates: await repository.count("candidates"),
+    image_drafts: await repository.count("drafts")
+  };
+  const items = new Set((await repository.findMany("clothing")).map((item) => String(item.id)));
+  const wearLogs = await repository.findMany("wearLogs");
+  const orphanWearLogs = wearLogs.filter((log) => !items.has(String(log.item_id))).length;
+  return { counts, orphanWearLogs };
+};
+
+// 同一 taskId 可以安全重试：已有透明图时跳过抠图，只重新请求识别，避免重复产生抠图费用。
+const processRecognitionTask = async (taskId, userId) => {
+  const reservation = await reserveTaskBudget(taskId, userId);
+  if (reservation.completed) {
+    return {
+      ...reservation.task.result,
+      cutoutUrl: cloud.signedUrl(reservation.task.cutout_key, "GET", 3600),
+      budget: await budgetSummary()
+    };
+  }
+  let task = await repository.getById("aiUsage", taskId);
+  let chargeMicros = 0;
+  let settled = false;
+  let cutoutKey = task.cutout_key || null;
+  let sourceHash = task.source_hash || null;
+  // 仅记录处理阶段，不写入密钥、图片内容或签名 URL；用于区分 COS 读图与 CI 抠图授权错误。
+  let failedStage = "load_task";
+  try {
+    if (!cutoutKey) {
+      if (!task.source_key?.startsWith(`uploads/${userId}/`)) {
+        throw Object.assign(new Error("上传凭据无效，请重新选择图片。"), { status: 400 });
+      }
+      failedStage = "read_source";
+      sourceHash = await cloud.sourceHash(task.source_key);
+      const exact = task.mode !== "candidate"
+        ? await repository.findOne("clothing", { source_hash_key: `${userId}:${sourceHash}` })
+        : null;
+      if (exact) {
+        throw Object.assign(new Error("这张衣物图片已经录入过。"), {
+          status: 409,
+          duplicate: { type: "blocked", item: mapItem(exact), score: 100 }
+        });
+      }
+      failedStage = "goods_matting";
+      cutoutKey = await cloud.extractGarment(task.source_key);
+      chargeMicros += aiBudget.limitsFromEnv().mattingCostMicros;
+      await repository.update("aiUsage", task.id, {
+        cutout_key: cutoutKey,
+        source_hash: sourceHash,
+        matting_calls: aiBudget.integer(task.matting_calls) + 1,
+        stage: "recognizing",
+        updated_at: now()
+      });
+    }
+
+    failedStage = "qwen_recognition";
+    const recognition = await cloud.recognizeImage(cutoutKey);
+    chargeMicros += aiBudget.estimateQwenCostMicros(recognition.usage);
+    if (!recognition.valid) {
+      await settleTaskBudget(task.id, userId, {
+        chargeMicros,
+        status: "failed_retryable",
+        stage: "recognition_rejected",
+        errorCode: "GARMENT_NOT_ISOLATED",
+        errorMessage: recognition.reason,
+        usage: recognition.usage,
+        success: false
+      });
+      settled = true;
+      throw Object.assign(new Error(`未能只保留一件衣物：${recognition.reason}。请改用平铺或挂拍照片。`), { status: 422 });
+    }
+
+    // AI 结果先存为草稿，绝不直接创建衣物；只有用户确认 POST /api/items 后才正式入库。
+    const draftId = newId();
+    await repository.add("drafts", {
+      user_id: userId,
+      image_key: cutoutKey,
+      source_hash: sourceHash,
+      similarity: [],
+      item_id: null,
+      ai_task_id: task.id,
+      created_at: now()
+    }, draftId);
+    const result = {
+      taskId: task.id,
+      draftId,
+      cutoutUrl: cloud.signedUrl(cutoutKey, "GET", 3600),
+      tags: recognition.tags,
+      warning: null,
+      duplicate: null,
+      provider: recognition.provider,
+      model: recognition.model
+    };
+    const budget = await settleTaskBudget(task.id, userId, {
+      chargeMicros,
+      status: "completed",
+      stage: "awaiting_confirmation",
+      usage: recognition.usage,
+      result,
+      success: true
+    });
+    settled = true;
+    return { ...result, budget };
+  } catch (error) {
+    // 将阶段附到当前错误，最外层统一日志会输出它，便于云端联调而不向小程序泄露供应商细节。
+    error.aiTaskStage = failedStage;
+    if (!settled) {
+      const providerCost = aiBudget.estimateQwenCostMicros(error?.providerUsage || {});
+      await settleTaskBudget(task.id, userId, {
+        chargeMicros: chargeMicros + providerCost,
+        status: "failed_retryable",
+        stage: cutoutKey ? "recognition_failed" : "matting_failed",
+        errorCode: String(error?.code || "AI_TASK_FAILED"),
+        errorMessage: error.message,
+        usage: error?.providerUsage || {},
+        success: false
+      }).catch(() => {});
+    }
+    throw error;
+  } finally {
+    // 无论成功、失败或用户后续放弃，任务原图都在本次处理结束后删除；手机相册原文件不受影响。
+    if (task.source_key) await cloud.deleteObject(task.source_key).catch(() => {});
+  }
+};
+
+const route = async (event) => {
+  const method = String(event.httpMethod || "GET").toUpperCase();
+  const path = String(event.path || "/").replace(/\/+$/, "") || "/";
+  const body = ["POST", "PUT", "PATCH"].includes(method) ? parseBody(event) : {};
+
+  if (method === "OPTIONS") return response(event, 204, null);
+  if (method === "GET" && path === "/api/health") {
+    await repository.count("users");
+    return response(event, 200, { ok: true, service: "wardrobe", database: "ready", buildId: BUILD_ID });
+  }
+
+  if (method === "POST" && path === "/api/auth/register") {
+    return response(event, 201, await handleRegister(body));
+  }
+  if (method === "POST" && path === "/api/auth/login") {
+    const user = await repository.findOne("users", { username: cleanText(body.username, 30) });
+    if (!user || !(await bcrypt.compare(String(body.password || ""), user.password_hash))) {
+      throw Object.assign(new Error("用户名或密码不正确。"), { status: 401 });
+    }
+    return response(event, 200, { user: publicUser(user), token: tokenFor(user) });
+  }
+  if (method === "POST" && path === "/api/auth/recover") {
+    const user = await repository.findOne("users", { username: cleanText(body.username, 30) });
+    const password = String(body.newPassword || "");
+    if (!user || password.length < 8 || !(await bcrypt.compare(String(body.recoveryCode || ""), user.recovery_hash))) {
+      throw Object.assign(new Error("恢复码或新密码不正确。"), { status: 400 });
+    }
+    await repository.update("users", user.id, { password_hash: await bcrypt.hash(password, 12) });
+    return response(event, 200, { user: publicUser(user), token: tokenFor(user) });
+  }
+  if (method === "POST" && path === "/api/auth/logout") return response(event, 204, null);
+  if (method === "GET" && path === "/api/auth/me") return response(event, 200, { user: publicUser(requireUser(event)) });
+
+  if (method === "POST" && path === "/api/admin/invites") {
+    requireAdmin(event);
+    const code = cleanText(body.code, 40) || crypto.randomBytes(5).toString("hex").toUpperCase();
+    if (await repository.findOne("invites", { code })) throw Object.assign(new Error("邀请码已存在。"), { status: 409 });
+    await repository.add("invites", { code, used_by: null, used_at: null, created_at: now() }, newId());
+    return response(event, 201, { code });
+  }
+  if (method === "POST" && path === "/api/admin/migrate") {
+    requireAdmin(event);
+    return response(event, 201, await handleMigration(body));
+  }
+  if (method === "GET" && path === "/api/admin/verify") {
+    requireAdmin(event);
+    return response(event, 200, await verifyData());
+  }
+
+  const user = requireUser(event);
+  const userId = String(user.id);
+
+  if (method === "GET" && path === "/api/ai-budget") {
+    return response(event, 200, await budgetSummary());
+  }
+
+  // 幂等键让用户重复点击或网络重发返回原任务，不会创建第二个上传任务或重复扣费。
+  if (method === "POST" && path === "/api/uploads/presign") {
+    const mimeType = cleanText(body.mimeType, 40).toLowerCase();
+    const size = Number(body.size || 0);
+    if (!["image/jpeg", "image/png"].includes(mimeType) || size < 1 || size > 2 * 1024 * 1024) {
+      throw Object.assign(new Error("请上传压缩后不超过 2MB 的 JPG 或 PNG 衣物图片。"), { status: 400 });
+    }
+    const mode = body.mode === "manual" ? "manual" : body.mode === "candidate" ? "candidate" : "closet";
+    const idempotencyKey = cleanText(body.idempotencyKey, 80);
+    if (!idempotencyKey) throw Object.assign(new Error("缺少上传幂等标识，请重新选择图片。"), { status: 400 });
+    const existing = await repository.findOne("aiUsage", { user_id: userId, idempotency_key: idempotencyKey });
+    if (existing) {
+      return response(event, 200, {
+        taskId: existing.id,
+        sourceKey: existing.source_key,
+        uploadUrl: cloud.signedUrl(existing.source_key, "PUT", 300),
+        expiresIn: 300
+      });
+    }
+    const taskId = newId();
+    const upload = cloud.createUpload(userId, mimeType, taskId);
+    await repository.add("aiUsage", {
+      user_id: userId,
+      idempotency_key: idempotencyKey,
+      source_key: upload.sourceKey,
+      cutout_key: null,
+      source_hash: null,
+      mode,
+      provider: mode === "manual" ? "none" : "dashscope",
+      model: mode === "manual" ? "" : process.env.QWEN_VL_MODEL || "qwen3-vl-plus",
+      status: "upload_pending",
+      stage: "upload",
+      reserved_micros: 0,
+      cost_micros: 0,
+      matting_calls: 0,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      result: null,
+      error_code: "",
+      error_message: "",
+      created_at: now(),
+      updated_at: now()
+    }, taskId);
+    return response(event, 201, upload);
+  }
+
+  if (method === "POST" && path === "/api/recognize") {
+    const taskId = cleanText(body.taskId, 80);
+    return response(event, 201, await processRecognitionTask(taskId, userId));
+  }
+
+  const retryMatch = path.match(/^\/api\/tasks\/([^/]+)\/retry$/);
+  if (method === "POST" && retryMatch) {
+    return response(event, 200, await processRecognitionTask(decodeURIComponent(retryMatch[1]), userId));
+  }
+
+  if (method === "GET" && path === "/api/items") {
+    // 衣橱、天气推荐和新衣分析只读取有效衣物；软删除记录仍留在数据库中，避免误删后无法追溯。
+    const items = await repository.findMany("clothing", { user_id: userId, status: "active" }, { orderBy: "created_at", order: "desc" });
+    return response(event, 200, items.map(mapItem));
+  }
+
+  // 预算耗尽或 AI 失败时仍可手动入库；这条路径不调用抠图和千问，因此不消耗 AI 额度。
+  if (method === "POST" && path === "/api/items/manual") {
+    if (await repository.count("clothing", { user_id: userId, status: "active" }) >= 100) {
+      throw Object.assign(new Error("单个测试账号最多保存 100 件衣物。"), { status: 429 });
+    }
+    const task = await repository.getById("aiUsage", cleanText(body.taskId, 80));
+    if (!task || task.user_id !== userId || task.mode !== "manual" || !task.source_key?.startsWith(`uploads/${userId}/`)) {
+      throw Object.assign(new Error("手动录入图片已失效，请重新选择。"), { status: 400 });
+    }
+    if (task.result?.itemId) return response(event, 200, mapItem(await repository.getById("clothing", task.result.itemId)));
+    const category = cleanText(body.category, 30);
+    if (!allowedCategories.includes(category)) throw Object.assign(new Error("请选择衣物品类。"), { status: 400 });
+    const hash = await cloud.sourceHash(task.source_key);
+    const exact = await repository.findOne("clothing", { source_hash_key: `${userId}:${hash}` });
+    if (exact) throw Object.assign(new Error("这张衣物图片已经录入过。"), { status: 409 });
+    const itemId = newId();
+    const savedItemId = await repository.withTransaction(async (tx) => {
+      const lockedTask = await tx.getById("aiUsage", task.id);
+      if (!lockedTask || lockedTask.user_id !== userId) throw Object.assign(new Error("手动录入图片已失效。"), { status: 409 });
+      if (lockedTask.result?.itemId) return lockedTask.result.itemId;
+      await tx.add("clothing", {
+        user_id: userId,
+        image_key: task.source_key,
+        name: cleanText(body.name, 80) || "未命名衣物",
+        category,
+        color: cleanText(body.color, 30),
+        season: allowedSeasons.includes(body.season) ? body.season : "",
+        thickness: allowedThicknesses.includes(body.thickness) ? body.thickness : "",
+        pattern: cleanText(body.pattern, 30),
+        material: cleanText(body.material, 30),
+        styles: sanitizeTags(body.styles),
+        scenes: sanitizeTags(body.scenes, allowedScenes),
+        price: body.price === "" || body.price == null ? null : Number(body.price),
+        wear_count: 0,
+        status: "active",
+        source_hash: hash,
+        source_hash_key: `${userId}:${hash}`,
+        search_entity_id: null,
+        created_at: now()
+      }, itemId);
+      await tx.update("aiUsage", task.id, {
+        status: "manual_completed",
+        stage: "saved",
+        result: { itemId },
+        updated_at: now()
+      });
+      return itemId;
+    });
+    return response(event, savedItemId === itemId ? 201 : 200, mapItem(await repository.getById("clothing", savedItemId)));
+  }
+
+  // 用户确认候选字段后才把透明主图写入正式衣橱；草稿已保存时直接返回旧结果以避免重复入库。
+  if (method === "POST" && path === "/api/items") {
+    if (await repository.count("clothing", { user_id: userId, status: "active" }) >= 100) {
+      throw Object.assign(new Error("单个测试账号最多保存 100 件衣物。"), { status: 429 });
+    }
+    let draft = body.draftId ? await repository.getById("drafts", body.draftId) : null;
+    if (draft && draft.user_id !== userId) draft = null;
+    if (!draft) draft = await repository.findOne("drafts", { user_id: userId, item_id: null }, { orderBy: "created_at", order: "desc" });
+    if (!draft) throw Object.assign(new Error("未找到刚才的识别结果，请重新识别后再保存。"), { status: 400 });
+    if (draft.item_id) return response(event, 200, mapItem(await repository.getById("clothing", draft.item_id)));
+    const category = cleanText(body.category, 30);
+    if (!allowedCategories.includes(category)) throw Object.assign(new Error("请选择衣物品类。"), { status: 400 });
+    const itemId = newId();
+    const itemData = {
+      user_id: userId,
+      image_key: draft.image_key,
+      name: cleanText(body.name, 80) || "未命名衣物",
+      category,
+      color: cleanText(body.color, 30),
+      season: allowedSeasons.includes(body.season) ? body.season : "",
+      thickness: allowedThicknesses.includes(body.thickness) ? body.thickness : "",
+      pattern: cleanText(body.pattern, 30),
+      material: cleanText(body.material, 30),
+      styles: sanitizeTags(body.styles),
+      scenes: sanitizeTags(body.scenes, allowedScenes),
+      price: body.price === "" || body.price == null ? null : Number(body.price),
+      wear_count: 0,
+      status: "active",
+      source_hash: draft.source_hash || null,
+      ...(draft.source_hash ? { source_hash_key: `${userId}:${draft.source_hash}` } : {}),
+      search_entity_id: null,
+      created_at: now()
+    };
+    const saved = await repository.withTransaction(async (tx) => {
+      const lockedDraft = await tx.getById("drafts", draft.id);
+      if (!lockedDraft || lockedDraft.user_id !== userId) throw Object.assign(new Error("识别草稿已失效，请重新识别。"), { status: 409 });
+      if (lockedDraft.item_id) return { itemId: lockedDraft.item_id, alreadySaved: true };
+      await tx.add("clothing", itemData, itemId);
+      await tx.update("drafts", lockedDraft.id, { item_id: itemId });
+      return { itemId, alreadySaved: false };
+    });
+    if (saved.alreadySaved) return response(event, 200, mapItem(await repository.getById("clothing", saved.itemId)));
+    return response(event, 201, mapItem(await repository.getById("clothing", itemId)));
+  }
+
+  const itemMatch = path.match(/^\/api\/items\/([^/]+)$/);
+  if (itemMatch && (method === "PATCH" || method === "DELETE")) {
+    const itemId = decodeURIComponent(itemMatch[1]);
+    const item = await repository.getById("clothing", itemId);
+    if (!item || item.user_id !== userId || item.status !== "active") {
+      throw Object.assign(new Error("未找到衣物。"), { status: 404 });
+    }
+    if (method === "DELETE") {
+      // 这里只做软删除，不删除 COS 图片与穿着记录；后续如需恢复仍有数据基础。
+      await repository.update("clothing", itemId, { status: "inactive" });
+      return response(event, 200, { ok: true, itemId });
+    }
+    const category = cleanText(body.category, 30);
+    if (!allowedCategories.includes(category)) throw Object.assign(new Error("请选择衣物品类。"), { status: 400 });
+    const price = body.price === "" || body.price == null ? null : Number(body.price);
+    if (price !== null && (!Number.isFinite(price) || price < 0)) {
+      throw Object.assign(new Error("购入价格格式不正确。"), { status: 400 });
+    }
+    // 只开放用户可确认字段；图片、归属、穿着次数和哈希不能由客户端修改。
+    await repository.update("clothing", itemId, {
+      name: cleanText(body.name, 80) || "未命名衣物",
+      category,
+      color: cleanText(body.color, 30),
+      season: allowedSeasons.includes(body.season) ? body.season : "",
+      thickness: allowedThicknesses.includes(body.thickness) ? body.thickness : "",
+      pattern: cleanText(body.pattern, 30),
+      material: cleanText(body.material, 30),
+      styles: sanitizeTags(body.styles),
+      scenes: sanitizeTags(body.scenes, allowedScenes),
+      price
+    });
+    return response(event, 200, mapItem(await repository.getById("clothing", itemId)));
+  }
+
+  const wearMatch = path.match(/^\/api\/items\/([^/]+)\/wear-logs$/);
+  if (method === "GET" && wearMatch) {
+    const itemId = decodeURIComponent(wearMatch[1]);
+    const item = await repository.getById("clothing", itemId);
+    if (!item || item.user_id !== userId || item.status !== "active") throw Object.assign(new Error("未找到衣物。"), { status: 404 });
+    // 历史记录只返回当前用户当前衣物的数据，并限制最近 50 条，避免详情页一次拉取无限数据。
+    const logs = await repository.findMany("wearLogs", { user_id: userId, item_id: itemId }, {
+      orderBy: "worn_at",
+      order: "desc",
+      limit: 50
+    });
+    return response(event, 200, logs.map((log) => ({
+      id: String(log.id),
+      scene: log.scene || "",
+      comfort: log.comfort || "",
+      note: log.note || "",
+      wornAt: log.worn_at
+    })));
+  }
+  if (method === "POST" && wearMatch) {
+    const itemId = decodeURIComponent(wearMatch[1]);
+    await repository.withTransaction(async (tx) => {
+      const item = await tx.getById("clothing", itemId);
+      if (!item || item.user_id !== userId || item.status !== "active") throw Object.assign(new Error("未找到衣物。"), { status: 404 });
+      await tx.add("wearLogs", {
+        user_id: userId,
+        item_id: itemId,
+        scene: cleanText(body.scene, 30),
+        comfort: cleanText(body.comfort, 30),
+        note: cleanText(body.note, 200),
+        worn_at: now()
+      }, newId());
+      await tx.update("clothing", itemId, { wear_count: repository.command().inc(1) });
+    });
+    return response(event, 201, { ok: true });
+  }
+
+  if (method === "POST" && path === "/api/candidates") {
+    const draft = body.draftId ? await repository.getById("drafts", body.draftId) : null;
+    if (!draft || draft.user_id !== userId) throw Object.assign(new Error("未找到候选新衣识别结果，请重新识别。"), { status: 400 });
+    const category = cleanText(body.category, 30);
+    if (!allowedCategories.includes(category)) throw Object.assign(new Error("请选择候选新衣品类。"), { status: 400 });
+    const candidateId = newId();
+    await repository.withTransaction(async (tx) => {
+      const lockedDraft = await tx.getById("drafts", draft.id);
+      if (!lockedDraft || lockedDraft.user_id !== userId) throw Object.assign(new Error("候选新衣识别结果已失效。"), { status: 409 });
+      await tx.add("candidates", {
+        user_id: userId,
+        image_key: lockedDraft.image_key,
+        name: cleanText(body.name, 80) || "候选新衣",
+        category,
+        color: cleanText(body.color, 30),
+        season: allowedSeasons.includes(body.season) ? body.season : "",
+        thickness: allowedThicknesses.includes(body.thickness) ? body.thickness : "",
+        pattern: cleanText(body.pattern, 30),
+        material: cleanText(body.material, 30),
+        styles: sanitizeTags(body.styles),
+        scenes: sanitizeTags(body.scenes, allowedScenes),
+        price: body.price === "" || body.price == null ? null : Number(body.price),
+        decision: null,
+        analysis: null,
+        created_at: now()
+      }, candidateId);
+      await tx.remove("drafts", lockedDraft.id);
+    });
+    return response(event, 201, mapCandidate(await repository.getById("candidates", candidateId)));
+  }
+
+  const candidateMatch = path.match(/^\/api\/candidates\/([^/]+)$/);
+  if (method === "GET" && candidateMatch) {
+    const candidate = await repository.getById("candidates", decodeURIComponent(candidateMatch[1]));
+    if (!candidate || candidate.user_id !== userId) throw Object.assign(new Error("未找到候选新衣。"), { status: 404 });
+    return response(event, 200, mapCandidate(candidate));
+  }
+
+  const analyzeMatch = path.match(/^\/api\/candidates\/([^/]+)\/analyze$/);
+  if (method === "POST" && analyzeMatch) {
+    const candidate = await repository.getById("candidates", decodeURIComponent(analyzeMatch[1]));
+    if (!candidate || candidate.user_id !== userId) throw Object.assign(new Error("未找到候选新衣。"), { status: 404 });
+    const existing = await repository.findMany("clothing", { user_id: userId, status: "active" });
+    const candidateScenes = sanitizeTags(candidate.scenes, allowedScenes);
+    const similar = existing.map((item) => {
+      // 相似度只使用用户确认过的标签：同品类 55 分、同颜色 25 分、每个共同场景 10 分。
+      // 这不是图片向量同款识别；把每个加分项返回给页面，用户可以逐件核对结论。
+      const matchedScenes = sanitizeTags(item.scenes, allowedScenes).filter((scene) => candidateScenes.includes(scene));
+      const categoryScore = item.category === candidate.category ? 55 : 0;
+      const colorScore = item.color && candidate.color && item.color === candidate.color ? 25 : 0;
+      const sceneScore = matchedScenes.length * 10;
+      const score = categoryScore + colorScore + sceneScore;
+      const matchReasons = [];
+      if (categoryScore) matchReasons.push(`同品类 +${categoryScore}`);
+      if (colorScore) matchReasons.push(`同颜色 +${colorScore}`);
+      if (sceneScore) matchReasons.push(`共同场景（${matchedScenes.join("、")}）+${sceneScore}`);
+      return { ...mapItem(item), score, matchReasons, matchSummary: matchReasons.join("；") || "未达到标签匹配阈值" };
+    }).filter((item) => item.score >= 55).sort((a, b) => b.score - a.score).slice(0, 3);
+    const compatible = existing.filter((item) => item.category !== candidate.category && sanitizeTags(item.scenes, allowedScenes).some((scene) => candidateScenes.includes(scene))).slice(0, 6).map(mapItem);
+    const lowFrequencySimilar = similar.filter((item) => Number(item.wear_count || 0) < 3).length;
+    const highestSimilarity = similar[0]?.score || 0;
+    // 一件衣物已经达到 85 分即为高标签重复，不能因为只有一件而被误判成“补缺型”。
+    const conclusion = highestSimilarity >= 85 ? "高度重复，不建议购买" : lowFrequencySimilar >= 2 ? "重复风险较高，建议谨慎" : compatible.length >= 5 ? "值得考虑" : compatible.length >= 2 ? "建议谨慎" : "补缺型";
+    const analysis = {
+      conclusion,
+      similar,
+      compatible,
+      reasons: [`最高标签相似度 ${highestSimilarity} 分（85 分及以上视为高度重复）`, `可与 ${compatible.length} 件已有衣物形成候选搭配`, lowFrequencySimilar ? `发现 ${lowFrequencySimilar} 件低频相似旧衣` : "未发现低频相似旧衣", "结论仅依据用户确认的标签与真实穿着记录，不代表图片同款识别"],
+      needsTryOn: ["版型是否舒适", "坐下和走动是否受限", "是否能搭配现有鞋子"]
+    };
+    // 分析报告只由已确认标签和当前衣橱实时计算；不写回候选记录，避免把对象字段写入旧的 null analysis 时触发数据库字段创建错误。
+    // 下次打开报告会重新计算，因此衣橱新增、删除或补充穿着记录后结论也不会过期。
+    return response(event, 200, analysis);
+  }
+
+  const decisionMatch = path.match(/^\/api\/candidates\/([^/]+)\/decision$/);
+  if (method === "POST" && decisionMatch) {
+    const decision = ["purchased", "wait", "declined"].includes(body.decision) ? body.decision : null;
+    if (!decision) throw Object.assign(new Error("购买决定无效。"), { status: 400 });
+    if (decision === "purchased" && await repository.count("clothing", { user_id: userId, status: "active" }) >= 100) {
+      throw Object.assign(new Error("单个测试账号最多保存 100 件衣物。"), { status: 429 });
+    }
+    const candidateId = decodeURIComponent(decisionMatch[1]);
+    await repository.withTransaction(async (tx) => {
+      const candidate = await tx.getById("candidates", candidateId);
+      if (!candidate || candidate.user_id !== userId) throw Object.assign(new Error("购买决定无效。"), { status: 400 });
+      if (candidate.decision) throw Object.assign(new Error("这件候选新衣已经记录过购买决定。"), { status: 409 });
+      await tx.update("candidates", candidate.id, { decision });
+      if (decision === "purchased") await tx.add("clothing", {
+        user_id: userId,
+        image_key: candidate.image_key,
+        name: candidate.name,
+        category: candidate.category,
+        color: candidate.color || "",
+        season: candidate.season || "",
+        thickness: candidate.thickness || "",
+        pattern: candidate.pattern || "",
+        material: candidate.material || "",
+        styles: sanitizeTags(candidate.styles),
+        scenes: sanitizeTags(candidate.scenes, allowedScenes),
+        price: candidate.price == null ? null : Number(candidate.price),
+        wear_count: 0,
+        status: "active",
+        source_hash: null,
+        search_entity_id: null,
+        created_at: now()
+      }, newId());
+    });
+    return response(event, 200, { ok: true, addedToWardrobe: decision === "purchased" });
+  }
+
+  throw Object.assign(new Error("接口不存在。"), { status: 404 });
+};
+
+exports.main = async (event) => {
+  const requestId = crypto.randomUUID().slice(0, 8);
+  try {
+    return await route(event);
+  } catch (error) {
+    console.error("[request-error]", JSON.stringify({
+      requestId,
+      code: String(error?.code || ""),
+      status: Number(error?.status || 0),
+      name: String(error?.name || "Error"),
+      aiTaskStage: String(error?.aiTaskStage || ""),
+      providerStatus: Number(error?.providerStatusCode || error?.statusCode || 0)
+    }));
+    const duplicate = String(error?.code || "").toLowerCase().includes("duplicate");
+    const status = duplicate ? 409 : Number(error?.status || 500);
+    const providerCode = cleanText(error?.code, 80) || null;
+    const providerStatus = Number(error?.providerStatusCode || error?.statusCode || 0) || null;
+    return response(event, status, {
+      error: status < 500 ? error.message : "服务器暂时无法完成该操作，请稍后重试。",
+      requestId,
+      // 仅返回错误代码、HTTP 状态和阶段；这些值不含密钥、图片地址或供应商完整响应。
+      // 测试期需要它们区分 Key、地域、模型权限与参数错误，避免让用户反复盲改配置。
+      aiTaskStage: String(error?.aiTaskStage || "") || null,
+      providerCode,
+      providerStatus,
+      // 错误说明经过长度限制，只用于测试期判断网络、TLS 或供应商错误；不含请求体和密钥。
+      providerMessage: cleanText(error?.message, 120) || null,
+      buildId: BUILD_ID
+    });
+  }
+};
+
+exports._test = { cleanText, parseArray, parseBody, sanitizeTags };

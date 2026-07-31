@@ -1,9 +1,77 @@
 <view class="page" wx:if="{{item}}">
   <view class="card detail-hero">
-    <view class="large-swatch" style="background: {{item.color === '深蓝' ? '#324d79' : item.color === '淡紫' ? '#c5b0db' : '#eadfc9'}}"></view>
-    <view><text class="eyebrow">{{item.category}} · {{item.color}}</text><text class="detail-title">{{item.name}}</text><text class="muted">已确认穿着 {{item.wearCount}} 次 · 购入价 ¥{{item.price}}</text></view>
+    <view class="detail-visual" style="background: {{item.color === '深蓝' ? '#324d79' : item.color === '淡紫' ? '#c5b0db' : '#eadfc9'}}">
+      <image wx:if="{{item.imageUrl && !imageLoadFailed}}" class="detail-image" src="{{item.imageUrl}}" mode="aspectFit" binderror="onImageError"></image>
+    </view>
+    <view class="detail-summary">
+      <text class="eyebrow">{{item.category || '未填写品类'}} · {{item.color || '未填写颜色'}}</text>
+      <text class="detail-title">{{item.name}}</text>
+      <text class="muted">已确认穿着 {{item.wearCount}} 次</text>
+      <text class="muted">{{item.price === null || item.price === undefined || item.price === '' ? '购入价未填写' : '购入价 ¥' + item.price}}</text>
+    </view>
   </view>
-  <view class="card section"><text class="section-title">适用场景</text><view class="tags"><text wx:for="{{item.scenes}}" wx:key="*this" class="tag">{{item}}</text></view></view>
-  <view class="card section"><text class="section-title">记录一次真实穿着</text><text class="muted">这会调用 POST /api/items/:id/wear-logs；模拟模式只更新页面内计数。</text><picker mode="selector" range="{{scenes}}" bindchange="onScene"><view class="picker">{{scene}}</view></picker><textarea value="{{note}}" bindinput="onNote" placeholder="可选：舒适度或搭配备注" maxlength="200"></textarea><button class="primary" loading="{{saving}}" bindtap="saveWear">今天穿了</button><text wx:if="{{message}}" class="message">{{message}}</text></view>
+  <view wx:if="{{editing}}" class="card section edit-card">
+    <text class="section-title">编辑衣物信息</text>
+    <label class="field"><text>名称</text><input value="{{editForm.name}}" data-field="name" bindinput="onEditInput"/></label>
+    <label class="field"><text>品类 *</text><picker range="{{categories}}" value="{{categoryIndex}}" bindchange="onEditCategory"><view class="picker">{{editForm.category || '请选择品类'}}</view></picker></label>
+    <label class="field"><text>颜色</text><input value="{{editForm.color}}" data-field="color" bindinput="onEditInput"/></label>
+    <view class="edit-columns">
+      <label class="field"><text>季节</text><picker range="{{seasons}}" value="{{seasonIndex}}" bindchange="onEditSeason"><view class="picker">{{editForm.season || '请选择'}}</view></picker></label>
+      <label class="field"><text>厚薄</text><picker range="{{thicknesses}}" value="{{thicknessIndex}}" bindchange="onEditThickness"><view class="picker">{{editForm.thickness || '请选择'}}</view></picker></label>
+    </view>
+    <label class="field"><text>花纹</text><input value="{{editForm.pattern}}" data-field="pattern" bindinput="onEditInput"/></label>
+    <label class="field"><text>材质</text><input value="{{editForm.material}}" data-field="material" bindinput="onEditInput"/></label>
+    <label class="field"><text>风格标签</text><input value="{{editForm.stylesText}}" data-field="stylesText" bindinput="onEditInput" placeholder="用逗号分隔"/></label>
+    <label class="field"><text>适用场景</text><input value="{{editForm.scenesText}}" data-field="scenesText" bindinput="onEditInput" placeholder="通勤、休闲等"/></label>
+    <label class="field"><text>购入价格</text><input type="digit" value="{{editForm.price}}" data-field="price" bindinput="onEditInput" placeholder="可留空"/></label>
+    <view class="edit-actions"><button class="ghost" disabled="{{saving}}" bindtap="cancelEdit">取消</button><button class="primary" loading="{{saving}}" disabled="{{saving}}" bindtap="saveEdit">保存修改</button></view>
+  </view>
+  <view wx:else class="management-actions">
+    <button class="secondary" bindtap="startEdit">编辑衣物</button>
+    <button class="delete-button" loading="{{deleting}}" disabled="{{deleting}}" bindtap="deleteItem">移出衣橱</button>
+  </view>
+  <view class="card section">
+    <text class="section-title">衣物属性</text>
+    <view class="attribute-grid">
+      <view class="attribute"><text class="attribute-label">品类</text><text>{{item.category || '未填写'}}</text></view>
+      <view class="attribute"><text class="attribute-label">颜色</text><text>{{item.color || '未填写'}}</text></view>
+      <view class="attribute"><text class="attribute-label">季节</text><text>{{item.season || '未填写'}}</text></view>
+      <view class="attribute"><text class="attribute-label">厚薄</text><text>{{item.thickness || '未填写'}}</text></view>
+      <view class="attribute"><text class="attribute-label">花纹</text><text>{{item.pattern || '未填写'}}</text></view>
+      <view class="attribute"><text class="attribute-label">材质</text><text>{{item.material || '未填写'}}</text></view>
+    </view>
+  </view>
+  <view class="card section">
+    <text class="section-title">风格标签</text>
+    <view wx:if="{{item.styles && item.styles.length}}" class="tags"><text wx:for="{{item.styles}}" wx:key="*this" class="tag style-tag">{{item}}</text></view>
+    <text wx:else class="muted">未填写</text>
+  </view>
+  <view class="card section">
+    <text class="section-title">适用场景</text>
+    <view wx:if="{{item.scenes && item.scenes.length}}" class="tags"><text wx:for="{{item.scenes}}" wx:key="*this" class="tag">{{item}}</text></view>
+    <text wx:else class="muted">未填写</text>
+  </view>
+  <view class="card section">
+    <text class="section-title">记录一次真实穿着</text>
+    <text class="field-label">场景</text>
+    <picker mode="selector" range="{{scenes}}" bindchange="onScene"><view class="picker">{{scene}}</view></picker>
+    <text class="field-label">舒适度</text>
+    <picker mode="selector" range="{{comforts}}" bindchange="onComfort"><view class="picker">{{comfort}}</view></picker>
+    <textarea value="{{note}}" bindinput="onNote" placeholder="可选：搭配、体感或改进备注" maxlength="200"></textarea>
+    <button class="primary" loading="{{saving}}" disabled="{{saving}}" bindtap="saveWear">今天穿了</button>
+    <text wx:if="{{message}}" class="message">{{message}}</text>
+  </view>
+  <view class="card section">
+    <text class="section-title">穿着历史</text>
+    <text wx:if="{{historyLoading}}" class="muted">正在读取记录…</text>
+    <text wx:elif="{{wearLogs.length === 0}}" class="muted">还没有穿着记录。</text>
+    <view wx:else class="history-list">
+      <view wx:for="{{wearLogs}}" wx:key="id" class="history-item">
+        <view class="history-top"><text class="history-date">{{item.dateText}}</text><text class="history-scene">{{item.scene || '未填写场景'}}</text></view>
+        <text class="history-comfort">舒适度：{{item.comfort || '未填写'}}</text>
+        <text wx:if="{{item.note}}" class="history-note">{{item.note}}</text>
+      </view>
+    </view>
+  </view>
 </view>
 <view wx:else class="page empty">衣物不存在或读取失败。</view>

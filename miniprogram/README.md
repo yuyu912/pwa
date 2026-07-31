@@ -17,15 +17,18 @@
 | 衣橱 | `GET /api/items` | 已定义；模拟模式可演示。 |
 | 穿着记录 | `POST /api/items/:id/wear-logs` | 已定义；模拟模式可演示。 |
 | 候选新衣分析 | `POST /api/candidates/:id/analyze`、`POST /api/candidates/:id/decision` | 已定义；模拟模式可演示。 |
-| 上传/识别 | `/api/uploads/presign`、`/api/recognize` | 今天未接入，因其依赖真实对象存储与 AI 服务。 |
+| 上传/识别 | `/api/uploads/presign`、`/api/recognize`、`/api/tasks/:id/retry` | 客户端流程已接入；真实调用需部署云函数并配置 COS、数据万象和千问。 |
+| AI 预算 | `GET /api/ai-budget` | 50 元、1000 次全局硬上限，模拟模式可演示。 |
+| 确认入库 | `POST /api/items`、`POST /api/items/manual` | AI 候选确认或无 AI 手动入库。 |
 
 ## 未来接入测试云环境
 
 1. 在 `config.js` 填写已部署的 uniCloud HTTP 云函数基础地址，并将 `USE_MOCK` 改为 `false`。
 2. 在微信公众平台配置合法请求域名；不要把云端密钥、COS 密钥或 AI Key 写进小程序源码。
 3. 用微信开发者工具导入本目录的 `project.config.json`，替换 `touristappid` 为测试 AppID。
-4. 先联调登录、`GET /api/items` 和穿着记录，再单独接入图片直传、识别和候选新衣创建。
+4. 先联调登录和衣橱，再配置 COS 私有直传、商品抠图与千问 VL；每次真实调用前确认预算台账可读。
+5. 小程序需要把 uniCloud HTTP 域名和 COS 上传域名加入微信公众平台合法 request 域名。
 
 ## 未完成边界
 
-没有真机验收、云函数部署、图片上传、AI 识别/去背景、向量检索、Token 额度、支付、交易、好友协作或试穿。真实接口返回失败时，页面应显示错误和重试，不得把模拟数据当作真实结果。
+当前代码已实现图片上传、抠图、千问候选识别、预算台账、用户确认和手动降级，但没有真实云函数部署或真机云端联调。向量检索、支付、交易、好友协作和试穿仍未接入。真实接口返回失败时，页面显示错误和重试，不得把模拟数据当作真实结果。

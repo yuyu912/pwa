@@ -1,6 +1,11 @@
 <view class="page">
-  <view class="hero"><text class="weather">☁︎</text><text class="temp">28°C</text><text class="condition">多云 · 空气优</text></view>
-  <view class="card"><text class="label">今日穿衣建议</text><text class="title">轻柔色系，舒适叠穿</text><text class="body">午后体感偏暖，薄针织或短袖搭轻外套更合适。</text></view>
-  <view class="card"><text class="label">衣橱里可以优先看</text><text class="body">奶油白、浅紫、浅蓝；通勤场景可带一件薄外套。</text></view>
-  <button class="primary" bindtap="goBack">回到首页</button>
+  <view class="region-bar" bindtap="chooseRegion"><text>{{location ? location.fullName : '请选择省、市、区县'}}</text><text>›</text></view>
+  <view wx:if="{{!location}}" class="empty"><text class="empty-icon">⌖</text><text class="empty-title">先设置你的所在地区</text><text class="empty-copy">选择省、市、区县后，才能给出适合今天的衣橱建议。</text><button class="primary" bindtap="chooseRegion">选择地区</button></view>
+  <block wx:else>
+    <view class="demo-label">本地演示天气 · 不代表实时天气</view>
+    <view class="hero"><text class="weather">{{weather.icon}}</text><text class="temp">{{weather.low}}–{{weather.high}}°C</text><text class="condition">{{weather.condition}}</text><text class="tip">{{weather.tip}}</text></view>
+    <view class="card"><text class="label">衣橱适配结果</text><text class="title">找到 {{recommendation.suitableCount}} 件适合今天的衣物</text><view wx:if="{{recommendation.items.length}}" class="item-list"><text wx:for="{{recommendation.items}}" wx:key="id" class="item-pill">{{item.name}}</text></view><text wx:else class="body">暂未找到完整搭配。</text></view>
+    <view wx:if="{{recommendation.missing.length}}" class="card warning"><text class="label">还缺什么</text><text class="body">{{recommendation.missing.join('、')}}</text></view>
+    <button class="primary" bindtap="toOutfit">查看今天穿什么</button>
+  </block>
 </view>

@@ -1,0 +1,35 @@
+{
+  "bsonType": "object",
+  "description": "AI按件任务与成本台账，仅允许云函数访问",
+  "required": ["user_id", "idempotency_key", "source_key", "mode", "status", "cost_micros", "created_at", "updated_at"],
+  "permission": {
+    "read": false,
+    "create": false,
+    "update": false,
+    "delete": false,
+    "count": false
+  },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "idempotency_key": { "bsonType": "string" },
+    "source_key": { "bsonType": "string" },
+    "cutout_key": { "description": "抠图成功后用于重试识别" },
+    "source_hash": { "description": "原图SHA-256" },
+    "mode": { "bsonType": "string" },
+    "provider": { "bsonType": "string" },
+    "model": { "bsonType": "string" },
+    "status": { "bsonType": "string" },
+    "stage": { "bsonType": "string" },
+    "reserved_micros": { "bsonType": "long", "minimum": 0 },
+    "cost_micros": { "bsonType": "long", "minimum": 0 },
+    "matting_calls": { "bsonType": "int", "minimum": 0 },
+    "prompt_tokens": { "bsonType": "long", "minimum": 0 },
+    "completion_tokens": { "bsonType": "long", "minimum": 0 },
+    "result": { "description": "幂等返回所需的识别结果" },
+    "error_code": { "bsonType": "string" },
+    "error_message": { "bsonType": "string" },
+    "created_at": { "bsonType": "string" },
+    "updated_at": { "bsonType": "string" }
+  }
+}

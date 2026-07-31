@@ -1,0 +1,21 @@
+{
+  "bsonType": "object",
+  "description": "全项目50元与1000次AI硬上限，仅允许云函数访问",
+  "required": ["spent_micros", "reserved_micros", "successful_tasks", "total_limit_micros", "task_limit", "updated_at"],
+  "permission": {
+    "read": false,
+    "create": false,
+    "update": false,
+    "delete": false,
+    "count": false
+  },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "spent_micros": { "bsonType": "long", "minimum": 0 },
+    "reserved_micros": { "bsonType": "long", "minimum": 0 },
+    "successful_tasks": { "bsonType": "int", "minimum": 0 },
+    "total_limit_micros": { "bsonType": "long", "minimum": 0 },
+    "task_limit": { "bsonType": "int", "minimum": 0 },
+    "updated_at": { "bsonType": "string" }
+  }
+}

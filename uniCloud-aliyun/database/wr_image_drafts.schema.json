@@ -1,0 +1,22 @@
+{
+  "bsonType": "object",
+  "description": "识别草稿，仅允许云函数访问",
+  "required": ["user_id", "image_key", "similarity", "created_at"],
+  "permission": {
+    "read": false,
+    "create": false,
+    "update": false,
+    "delete": false,
+    "count": false
+  },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "image_key": { "bsonType": "string" },
+    "source_hash": { "description": "原图 SHA-256" },
+    "similarity": { "bsonType": "array" },
+    "item_id": { "description": "确认后关联的正式衣物 ID" },
+    "ai_task_id": { "description": "关联的AI用量任务" },
+    "created_at": { "bsonType": "string" }
+  }
+}

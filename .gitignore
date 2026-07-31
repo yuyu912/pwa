@@ -9,3 +9,10 @@
 !public/**
 !miniprogram/
 !miniprogram/**
+!UNICLOUD_DEPLOYMENT.md
+!uniCloud-aliyun/
+!uniCloud-aliyun/**
+uniCloud-aliyun/**/node_modules/
+!test/
+!test/ai-budget.test.js
+!test/unicloud-api.test.js

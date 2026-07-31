@@ -1,21 +1,33 @@
 const api = require("../../services/api");
 
 Page({
-  data: { candidate: null, analysis: null, loading: true, error: "", message: "" },
-  onLoad() { this.load(); },
+  data: { candidateId: "", candidate: null, analysis: null, loading: true, error: "", message: "", decided: false, imageLoadFailed: false },
+  onLoad(options) {
+    this.setData({ candidateId: options.id || "" });
+    this.load();
+  },
   async load() {
+    if (!this.data.candidateId) {
+      this.setData({ loading: false, error: "请先上传并确认一件候选新衣。" });
+      return;
+    }
     this.setData({ loading: true, error: "" });
     try {
-      const candidate = await api.createCandidate();
+      const candidate = await api.getCandidate(this.data.candidateId);
       const analysis = await api.analyzeCandidate(candidate.id);
       this.setData({ candidate, analysis });
     } catch (error) { this.setData({ error: error.message || "候选新衣分析暂不可用。" }); }
     finally { this.setData({ loading: false }); }
   },
   async decide(event) {
+    if (this.data.decided) return;
     try {
-      await api.recordDecision(this.data.candidate.id, event.currentTarget.dataset.decision);
-      this.setData({ message: event.currentTarget.dataset.decision === "purchased" ? "已记录购买决定；真实云端模式会按接口返回结果处理。" : "已记录观望决定，可稍后再次查看报告。" });
+      const decision = event.currentTarget.dataset.decision;
+      await api.recordDecision(this.data.candidate.id, decision);
+      const messages = { purchased: "已记录购买，这件衣物已加入衣橱。", wait: "已记录观望，本次不会加入衣橱。", declined: "已记录不买，本次不会加入衣橱。" };
+      this.setData({ decided: true, message: messages[decision] });
     } catch (error) { this.setData({ message: error.message || "记录失败，请重试。" }); }
-  }
+  },
+  onImageError() { this.setData({ imageLoadFailed: true }); },
+  startAnother() { wx.redirectTo({ url: "/pages/add-item/index?mode=candidate" }); }
 });

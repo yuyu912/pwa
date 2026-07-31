@@ -1,1 +1,103 @@
-<view class="page"><text class="heading">把一件衣物放进衣橱</text><text class="sub">拍照或从相册选择后，AI 只会给出候选标签，确认后才会入库。</text><view class="upload" bindtap="chooseImage"><text class="plus">＋</text><text>选择衣物图片</text><text class="hint">支持拍照或相册</text></view><view class="notice"><text class="notice-title">隐私说明</text><text>图片仅在你确认上传后处理；你可以在衣物详情中删除它。</text></view><button class="ghost" bindtap="goBack">回到首页</button></view>
+<view class="page">
+  <text class="heading">{{entryMode === 'candidate' ? '分析一件候选新衣' : '把一件衣物放进衣橱'}}</text>
+  <text class="sub">{{entryMode === 'candidate' ? 'AI 识别后由你确认标签，再与真实衣橱和穿着记录进行比较。' : 'AI 先去除背景并生成候选标签，只有你确认后才会正式入库。'}}</text>
+
+  <view wx:if="{{budget}}" class="budget budget-{{budget.status}}">
+    <view>
+      <text class="budget-title">按件 AI 测试额度</text>
+      <text class="budget-note">已处理 {{budget.successfulTasks}} / {{budget.taskLimit}} 件</text>
+    </view>
+    <text class="budget-remain">剩余约 {{budget.remainingTasks}} 件</text>
+  </view>
+
+  <view class="upload" bindtap="chooseImage">
+    <image wx:if="{{imagePath}}" class="preview" src="{{resultImage || imagePath}}" mode="aspectFit"/>
+    <block wx:else>
+      <text class="plus">＋</text>
+      <text>选择衣物图片</text>
+      <text class="hint">支持拍照或相册，压缩后不超过 2MB</text>
+    </block>
+  </view>
+
+  <view wx:if="{{stageText}}" class="stage">
+    <text>{{stageText}}</text>
+    <text wx:if="{{isDemo}}" class="demo-tag">演示结果</text>
+  </view>
+  <view wx:if="{{errorText}}" class="error">{{errorText}}</view>
+
+  <view wx:if="{{imagePath && !manualMode && stage !== 'confirming' && stage !== 'saving' && stage !== 'saved'}}" class="actions">
+    <button wx:if="{{stage !== 'error' || !taskId}}" class="primary" bindtap="startRecognition">开始 AI 抠图与识别</button>
+    <button wx:if="{{stage === 'error' && taskId}}" class="primary" bindtap="retryRecognition">重试失败阶段</button>
+    <button wx:if="{{entryMode !== 'candidate'}}" class="ghost" bindtap="useManualMode">不使用 AI，手动录入</button>
+  </view>
+
+  <view wx:if="{{stage === 'confirming' || manualMode}}" class="form-card">
+    <view wx:if="{{needsConfirmation.length}}" class="confirm-note">
+      <text class="confirm-title">需要你重点确认</text>
+      <text wx:for="{{needsConfirmation}}" wx:key="*this">· {{item}}</text>
+    </view>
+
+    <label class="field">
+      <text>衣物名称</text>
+      <input value="{{form.name}}" data-field="name" bindinput="onFieldInput" placeholder="例如：浅紫针织上衣"/>
+    </label>
+    <label class="field">
+      <text>品类 *</text>
+      <picker range="{{categories}}" value="{{categoryIndex}}" bindchange="onCategoryChange">
+        <view class="picker-value">{{form.category || '请选择品类'}} <text>›</text></view>
+      </picker>
+    </label>
+    <label class="field">
+      <text>主色</text>
+      <input value="{{form.color}}" data-field="color" bindinput="onFieldInput" placeholder="例如：浅紫"/>
+    </label>
+
+    <view class="two-column">
+      <label class="field">
+        <text>适穿季节</text>
+        <picker range="{{seasons}}" value="{{seasonIndex}}" bindchange="onSeasonChange">
+          <view class="picker-value">{{form.season || '请选择'}} <text>›</text></view>
+        </picker>
+      </label>
+      <label class="field">
+        <text>衣物厚薄</text>
+        <picker range="{{thicknesses}}" value="{{thicknessIndex}}" bindchange="onThicknessChange">
+          <view class="picker-value">{{form.thickness || '请选择'}} <text>›</text></view>
+        </picker>
+      </label>
+    </view>
+
+    <view class="two-column">
+      <label class="field">
+        <text>花纹</text>
+        <input value="{{form.pattern}}" data-field="pattern" bindinput="onFieldInput" placeholder="纯色/条纹"/>
+      </label>
+      <label class="field">
+        <text>材质候选</text>
+        <input value="{{form.material}}" data-field="material" bindinput="onFieldInput" placeholder="请查看实物确认"/>
+      </label>
+    </view>
+
+    <label class="field">
+      <text>风格标签</text>
+      <input value="{{form.stylesText}}" data-field="stylesText" bindinput="onFieldInput" placeholder="用逗号分隔"/>
+    </label>
+    <label class="field">
+      <text>适用场景</text>
+      <input value="{{form.scenesText}}" data-field="scenesText" bindinput="onFieldInput" placeholder="休闲、通勤、约会等"/>
+    </label>
+    <label class="field">
+      <text>购入价格（可选）</text>
+      <input type="digit" value="{{form.price}}" data-field="price" bindinput="onFieldInput" placeholder="用于计算单次穿衣成本"/>
+    </label>
+
+    <view class="notice">
+      <text class="notice-title">{{manualMode ? '手动录入说明' : 'AI 结果说明'}}</text>
+      <text>{{manualMode ? '本次不会调用抠图或识别服务，图片将按原图保存。' : '季节、厚薄和材质均为视觉候选，不代表真实成分或合身保证。'}}</text>
+    </view>
+    <button wx:if="{{manualMode}}" class="primary save" bindtap="saveManual">确认手动入库</button>
+    <button wx:else class="primary save" bindtap="saveConfirmed">{{entryMode === 'candidate' ? '确认标签并生成分析' : '确认标签并入库'}}</button>
+  </view>
+
+  <button class="back" bindtap="goBack">回到首页</button>
+</view>
