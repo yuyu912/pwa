@@ -2,6 +2,12 @@
   <text class="heading">{{entryMode === 'candidate' ? '分析一件候选新衣' : '把一件衣物放进衣橱'}}</text>
   <text class="sub">{{entryMode === 'candidate' ? 'AI 识别后由你确认标签，再与真实衣橱和穿着记录进行比较。' : 'AI 先去除背景并生成候选标签，只有你确认后才会正式入库。'}}</text>
 
+  <view wx:if="{{batchItems.length > 1}}" class="batch-card">
+    <view class="batch-heading"><text>批量录入</text><text>{{batchSummary.saved || 0}} / {{batchSummary.total}} 已保存</text></view>
+    <view class="batch-dots"><text wx:for="{{batchItems}}" wx:key="id" class="batch-dot {{index === batchIndex ? 'current' : ''}} batch-dot-{{item.status}}">{{index + 1}}</text></view>
+    <text class="batch-note">图片严格按顺序处理，当前件确认入库后才会进入下一件。</text>
+  </view>
+
   <view wx:if="{{budget}}" class="budget budget-{{budget.status}}">
     <view>
       <text class="budget-title">按件 AI 测试额度</text>
@@ -10,12 +16,12 @@
     <text class="budget-remain">剩余约 {{budget.remainingTasks}} 件</text>
   </view>
 
-  <view class="upload" bindtap="chooseImage">
+  <view wx:if="{{stage !== 'batch-complete'}}" class="upload" bindtap="chooseImage">
     <image wx:if="{{imagePath}}" class="preview" src="{{resultImage || imagePath}}" mode="aspectFit"/>
     <block wx:else>
       <text class="plus">＋</text>
-      <text>选择衣物图片</text>
-      <text class="hint">支持拍照或相册，压缩后不超过 2MB</text>
+      <text>{{entryMode === 'candidate' ? '选择候选新衣图片' : '选择 1–9 张衣物图片'}}</text>
+      <text class="hint">支持拍照或相册，每张压缩后不超过 2MB</text>
     </block>
   </view>
 
@@ -25,10 +31,18 @@
   </view>
   <view wx:if="{{errorText}}" class="error">{{errorText}}</view>
 
+  <view wx:if="{{stage === 'batch-complete'}}" class="batch-complete">
+    <text class="complete-title">批量录入完成</text><text>已保存 {{batchSummary.saved}} 件，跳过 {{batchSummary.skipped}} 件。</text>
+    <button class="primary" bindtap="openWardrobe">查看衣橱</button>
+  </view>
+
+  <button wx:if="{{batchItems.length > 1 && stage === 'batch-item-error'}}" class="ghost" bindtap="skipBatchItem">跳过这张</button>
+
   <view wx:if="{{imagePath && !manualMode && stage !== 'confirming' && stage !== 'saving' && stage !== 'saved'}}" class="actions">
     <button wx:if="{{stage !== 'error' || !taskId}}" class="primary" bindtap="startRecognition">开始 AI 抠图与识别</button>
     <button wx:if="{{stage === 'error' && taskId}}" class="primary" bindtap="retryRecognition">重试失败阶段</button>
     <button wx:if="{{entryMode !== 'candidate'}}" class="ghost" bindtap="useManualMode">不使用 AI，手动录入</button>
+    <button wx:if="{{batchItems.length > 1 && stage === 'error'}}" class="ghost" bindtap="skipBatchItem">跳过这张</button>
   </view>
 
   <view wx:if="{{stage === 'confirming' || manualMode}}" class="form-card">

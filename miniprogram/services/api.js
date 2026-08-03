@@ -105,6 +105,9 @@ module.exports = {
   createManualItem: (data) => config.USE_MOCK ? Promise.resolve(mock.createManualItem(data)) : request("/api/items/manual", "POST", data),
   updateItem: (id, data) => config.USE_MOCK ? Promise.resolve(mock.updateItem(id, data)) : request(`/api/items/${id}`, "PATCH", data),
   deleteItem: (id) => config.USE_MOCK ? Promise.resolve(mock.deleteItem(id)) : request(`/api/items/${id}`, "DELETE"),
+  listIdleItems: () => config.USE_MOCK ? Promise.resolve(mock.listIdleItems()) : request("/api/idle-items"),
+  markItemIdle: (id, data) => config.USE_MOCK ? Promise.resolve(mock.markItemIdle(id, data)) : request(`/api/items/${id}/idle`, "POST", data),
+  restoreIdleItem: (id) => config.USE_MOCK ? Promise.resolve(mock.restoreIdleItem(id)) : request(`/api/items/${id}/idle`, "DELETE"),
   getWearLogs: (id) => config.USE_MOCK ? Promise.resolve(mock.getWearLogs(id)) : request(`/api/items/${id}/wear-logs`),
   getMonthlyWearLogs: (start, end) => config.USE_MOCK
     ? Promise.resolve(mock.getMonthlyWearLogs(start, end))

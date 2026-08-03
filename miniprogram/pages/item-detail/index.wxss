@@ -27,3 +27,4 @@ textarea { box-sizing: border-box; width: 100%; min-height: 150rpx; }
 .edit-columns .field, .edit-actions button, .management-actions button { flex: 1; min-width: 0; }
 .management-actions { margin-top: 22rpx; }
 .delete-button { background: #fff4f3; color: #9a6670; }
+.idle-status { align-self: flex-start; margin-bottom: 6rpx; padding: 6rpx 12rpx; border-radius: 999rpx; background: #f5e9df; color: #95694c; font-size: 21rpx; }.idle-current { display: flex; flex-direction: column; gap: 8rpx; padding: 18rpx; border-radius: 18rpx; background: #fbf4ed; color: #765e4d; font-size: 24rpx; line-height: 1.55; }.idle-button { background: #ad866c; color: #fff; }.idle-message { padding: 12rpx 16rpx; border-radius: 14rpx; background: #eef5ed; color: #57745a; font-size: 23rpx; }

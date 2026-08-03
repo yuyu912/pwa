@@ -4,6 +4,7 @@ function filterWardrobe(items, filters = {}) {
   const season = filters.season || "全部";
   const thickness = filters.thickness || "全部";
   const wearStatus = filters.wearStatus || "全部";
+  const idleStatus = filters.idleStatus || "全部";
 
   const filteredItems = (Array.isArray(items) ? items : []).filter((item) => {
     const searchableText = [
@@ -22,7 +23,8 @@ function filterWardrobe(items, filters = {}) {
       && (category === "全部" || item.category === category)
       && (season === "全部" || item.season === season)
       && (thickness === "全部" || item.thickness === thickness)
-      && (wearStatus === "全部" || (wearStatus === "本月穿过" ? monthlyWearCount > 0 : monthlyWearCount === 0));
+      && (wearStatus === "全部" || (wearStatus === "本月穿过" ? monthlyWearCount > 0 : monthlyWearCount === 0))
+      && (idleStatus === "全部" || (idleStatus === "考虑闲置" ? item.idleStatus === "considering" : item.idleStatus !== "considering"));
   });
 
   return {

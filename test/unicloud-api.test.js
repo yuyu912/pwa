@@ -152,7 +152,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const { main } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-03-p1-calendar-v1");
+  assert.equal(health.body.buildId, "2026-08-03-p1-idle-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -288,6 +288,23 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const updatedItems = readResponse(await main(makeEvent("/api/items", "GET", null, authorization)));
   assert.equal(updatedItems.body.find((item) => item.id === "1").wear_count, 7);
 
+  const markedIdle = readResponse(await main(makeEvent("/api/items/1/idle", "POST", { reason: "很少穿", note: "先放进私人清单观察。" }, authorization)));
+  assert.equal(markedIdle.status, 200);
+  assert.equal(markedIdle.body.idle_status, "considering");
+  const idleItems = readResponse(await main(makeEvent("/api/idle-items", "GET", null, authorization)));
+  assert.equal(idleItems.status, 200);
+  assert.equal(idleItems.body.length, 1);
+  assert.equal(idleItems.body[0].idleReason, "很少穿");
+  assert.equal(idleItems.body[0].idleNote, "先放进私人清单观察。");
+  assert.match(idleItems.body[0].lastWornAt, /^\d{4}-\d{2}-\d{2}T/);
+  const friendCannotMarkIdle = readResponse(await main(makeEvent("/api/items/1/idle", "POST", { reason: "重复" }, friendAuthorization)));
+  assert.equal(friendCannotMarkIdle.status, 404);
+  const invalidIdleReason = readResponse(await main(makeEvent("/api/items/1/idle", "POST", { reason: "自动判定" }, authorization)));
+  assert.equal(invalidIdleReason.status, 400);
+  const restoredIdle = readResponse(await main(makeEvent("/api/items/1/idle", "DELETE", null, authorization)));
+  assert.equal(restoredIdle.status, 200);
+  assert.equal(restoredIdle.body.idle_status, "active");
+
   const upload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
     mimeType: "image/jpeg",
     size: 500000,
@@ -329,7 +346,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-03-p1-calendar-v1");
+  assert.equal(failedRecognition.body.buildId, "2026-08-03-p1-idle-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

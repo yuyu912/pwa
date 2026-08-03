@@ -15,4 +15,8 @@
 uniCloud-aliyun/**/node_modules/
 !test/
 !test/ai-budget.test.js
+!test/batch-upload.test.js
+!test/idle-management.test.js
 !test/unicloud-api.test.js
+!test/wardrobe-filter.test.js
+!test/wardrobe-report.test.js

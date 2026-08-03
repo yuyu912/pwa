@@ -6,6 +6,7 @@
     <view class="detail-summary">
       <text class="eyebrow">{{item.category || '未填写品类'}} · {{item.color || '未填写颜色'}}</text>
       <text class="detail-title">{{item.name}}</text>
+      <text wx:if="{{item.idleStatus === 'considering'}}" class="idle-status">考虑闲置</text>
       <text class="muted">已确认穿着 {{item.wearCount}} 次</text>
       <text class="muted">{{item.price === null || item.price === undefined || item.price === '' ? '购入价未填写' : '购入价 ¥' + item.price}}</text>
     </view>
@@ -50,6 +51,21 @@
     <text class="section-title">适用场景</text>
     <view wx:if="{{item.scenes && item.scenes.length}}" class="tags"><text wx:for="{{item.scenes}}" wx:key="*this" class="tag">{{item}}</text></view>
     <text wx:else class="muted">未填写</text>
+  </view>
+  <view class="card section idle-section">
+    <text class="section-title">私人闲置管理</text>
+    <text class="muted">状态和备注仅你可见，不会公开、交换或出租。</text>
+    <text wx:if="{{idleMessage}}" class="idle-message">{{idleMessage}}</text>
+    <block wx:if="{{item.idleStatus === 'considering'}}">
+      <view class="idle-current"><text>闲置原因：{{item.idleReason || '未填写'}}</text><text wx:if="{{item.idleNote}}">私人备注：{{item.idleNote}}</text></view>
+      <button class="secondary" loading="{{idleSaving}}" disabled="{{idleSaving}}" bindtap="restoreIdle">恢复为正常使用</button>
+    </block>
+    <block wx:else>
+      <text class="field-label">闲置原因</text>
+      <picker mode="selector" range="{{idleReasons}}" value="{{idleReasonIndex}}" bindchange="onIdleReason"><view class="picker">{{idleReason}}</view></picker>
+      <textarea value="{{idleNote}}" bindinput="onIdleNote" placeholder="可选：记录为什么考虑处理" maxlength="100"></textarea>
+      <button class="idle-button" loading="{{idleSaving}}" disabled="{{idleSaving}}" bindtap="markIdle">标记为考虑闲置</button>
+    </block>
   </view>
   <view class="card section">
     <text class="section-title">记录一次真实穿着</text>

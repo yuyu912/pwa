@@ -155,6 +155,26 @@ module.exports = {
     saveItems(items().filter((item) => item.id !== id));
     return { ok: true, itemId: id };
   },
+  listIdleItems() {
+    return items().filter((item) => item.idle_status === "considering").map((item) => ({
+      ...item,
+      idleStatus: "considering",
+      idleReason: item.idle_reason || "",
+      idleNote: item.idle_note || "",
+      idleMarkedAt: item.idle_marked_at || "",
+      lastWornAt: (wx.getStorageSync(`wardrobe_mock_wear_logs_${item.id}`) || [])[0]?.wornAt || ""
+    }));
+  },
+  markItemIdle(id, data) {
+    const next = items().map((item) => item.id === id ? { ...item, idle_status: "considering", idle_reason: data.reason, idle_note: data.note || "", idle_marked_at: new Date().toISOString() } : item);
+    saveItems(next);
+    return next.find((item) => item.id === id);
+  },
+  restoreIdleItem(id) {
+    const next = items().map((item) => item.id === id ? { ...item, idle_status: "active", idle_reason: "", idle_note: "", idle_marked_at: "" } : item);
+    saveItems(next);
+    return next.find((item) => item.id === id);
+  },
   getWearLogs(id) {
     return wx.getStorageSync(`wardrobe_mock_wear_logs_${id}`) || [];
   },

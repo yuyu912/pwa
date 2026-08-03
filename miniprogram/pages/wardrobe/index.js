@@ -4,7 +4,7 @@ const { filterWardrobe } = require("../../utils/wardrobe-filter");
 
 function normalizeItem(item) {
   // 云端沿用数据库字段 wear_count，模拟数据使用 wearCount；页面统一后不再出现“已穿 次”。
-  return { ...item, wearCount: Number(item.wearCount ?? item.wear_count ?? 0), imageLoadFailed: false };
+  return { ...item, wearCount: Number(item.wearCount ?? item.wear_count ?? 0), idleStatus: item.idleStatus || item.idle_status || "active", imageLoadFailed: false };
 }
 
 function currentMonthRange() {
@@ -25,10 +25,12 @@ Page({
     activeSeason: "全部",
     activeThickness: "全部",
     activeWearStatus: "全部",
+    activeIdleStatus: "全部",
     categories: ["全部", "上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"],
     seasons: ["全部", "春夏", "春秋", "秋冬", "多季"],
     thicknesses: ["全部", "薄", "适中", "厚"],
     wearStatuses: ["全部", "本月穿过", "本月未穿"],
+    idleStatuses: ["全部", "正常使用", "考虑闲置"],
     matchedCount: 0,
     monthlyWearTotal: 0,
     loading: true,
@@ -60,7 +62,8 @@ Page({
       category: this.data.activeCategory,
       season: this.data.activeSeason,
       thickness: this.data.activeThickness,
-      wearStatus: this.data.activeWearStatus
+      wearStatus: this.data.activeWearStatus,
+      idleStatus: this.data.activeIdleStatus
     }));
   },
   onKeyword(event) { this.setData({ keyword: event.detail.value }); this.applyFilter(); },
@@ -68,6 +71,7 @@ Page({
   selectSeason(event) { this.setData({ activeSeason: event.currentTarget.dataset.value }); this.applyFilter(); },
   selectThickness(event) { this.setData({ activeThickness: event.currentTarget.dataset.value }); this.applyFilter(); },
   selectWearStatus(event) { this.setData({ activeWearStatus: event.currentTarget.dataset.value }); this.applyFilter(); },
+  selectIdleStatus(event) { this.setData({ activeIdleStatus: event.currentTarget.dataset.value }); this.applyFilter(); },
   onImageError(event) {
     const id = String(event.currentTarget.dataset.id);
     // 签名地址过期或网络失败时仅回退为颜色块，卡片和其他属性仍然可以正常使用。
@@ -76,5 +80,6 @@ Page({
     this.applyFilter();
   },
   openItem(event) { wx.navigateTo({ url: `/pages/item-detail/index?id=${event.currentTarget.dataset.id}` }); },
-  openCandidate() { wx.navigateTo({ url: "/pages/add-item/index?mode=candidate" }); }
+  openCandidate() { wx.navigateTo({ url: "/pages/add-item/index?mode=candidate" }); },
+  openIdleItems() { wx.navigateTo({ url: "/pages/idle-items/index" }); }
 });

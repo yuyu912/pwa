@@ -2,6 +2,7 @@ const api = require("../../services/api");
 const CATEGORIES = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"];
 const SEASONS = ["春夏", "春秋", "秋冬", "多季"];
 const THICKNESSES = ["薄", "适中", "厚"];
+const IDLE_REASONS = ["很少穿", "不合适", "重复", "风格变化", "其他"];
 const listFromText = (value) => String(value || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean).slice(0, 4);
 
 function editFormFromItem(item) {
@@ -21,7 +22,13 @@ function editFormFromItem(item) {
 
 function normalizeItem(item) {
   // 详情页同时兼容云端 snake_case 与模拟数据 camelCase，不改变后端接口或数据库字段。
-  return item ? { ...item, wearCount: Number(item.wearCount ?? item.wear_count ?? 0) } : null;
+  return item ? {
+    ...item,
+    wearCount: Number(item.wearCount ?? item.wear_count ?? 0),
+    idleStatus: item.idleStatus || item.idle_status || "active",
+    idleReason: item.idleReason || item.idle_reason || "",
+    idleNote: item.idleNote || item.idle_note || ""
+  } : null;
 }
 
 function formatWearLog(log) {
@@ -56,7 +63,13 @@ Page({
     seasonIndex: 0,
     thicknessIndex: 0,
     editForm: {},
-    message: ""
+    message: "",
+    idleReasons: IDLE_REASONS,
+    idleReasonIndex: 0,
+    idleReason: IDLE_REASONS[0],
+    idleNote: "",
+    idleSaving: false,
+    idleMessage: ""
   },
   async onLoad(options) {
     // 每次进入详情都重新读取衣物，以获取后端新生成的 COS 临时签名地址。
@@ -169,5 +182,28 @@ Page({
       });
     } catch (error) { this.setData({ message: error.message || "记录失败，请重试。" }); }
     finally { this.setData({ saving: false }); }
+  },
+  onIdleReason(event) {
+    const idleReasonIndex = Number(event.detail.value);
+    this.setData({ idleReasonIndex, idleReason: IDLE_REASONS[idleReasonIndex] });
+  },
+  onIdleNote(event) { this.setData({ idleNote: event.detail.value }); },
+  async markIdle() {
+    if (!this.data.item || this.data.idleSaving) return;
+    this.setData({ idleSaving: true, idleMessage: "" });
+    try {
+      const item = await api.markItemIdle(this.data.item.id, { reason: this.data.idleReason, note: this.data.idleNote });
+      this.setData({ item: normalizeItem(item), idleNote: "", idleMessage: "已加入私人闲置清单。" });
+    } catch (error) { this.setData({ idleMessage: error.message || "闲置标记失败，请重试。" }); }
+    finally { this.setData({ idleSaving: false }); }
+  },
+  async restoreIdle() {
+    if (!this.data.item || this.data.idleSaving) return;
+    this.setData({ idleSaving: true, idleMessage: "" });
+    try {
+      const item = await api.restoreIdleItem(this.data.item.id);
+      this.setData({ item: normalizeItem(item), idleMessage: "已恢复为正常使用。" });
+    } catch (error) { this.setData({ idleMessage: error.message || "恢复失败，请重试。" }); }
+    finally { this.setData({ idleSaving: false }); }
   }
 });

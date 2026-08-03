@@ -1,0 +1,13 @@
+<view class="page idle-page">
+  <text class="eyebrow">PRIVATE IDLE LIST</text><text class="page-title">私人闲置清单</text><text class="muted">只有你能看到这里的衣物、原因和备注。</text>
+  <view class="privacy-note">当前不会公开、交换、出租或联系其他用户。</view>
+  <view wx:if="{{loading}}" class="empty">正在读取闲置清单…</view>
+  <view wx:elif="{{error}}" class="empty"><text>{{error}}</text><button class="secondary retry" bindtap="loadItems">重新加载</button></view>
+  <view wx:elif="{{items.length === 0}}" class="card empty-card"><text class="empty-title">还没有考虑闲置的衣物</text><text class="muted">可以从衣物详情页手动标记，系统不会自动判定。</text></view>
+  <view wx:else class="idle-list">
+    <view wx:for="{{items}}" wx:key="id" class="card idle-item" data-id="{{item.id}}" bindtap="openItem">
+      <image wx:if="{{item.imageUrl && !imageFailures[item.id]}}" class="item-image" src="{{item.imageUrl}}" mode="aspectFit" data-id="{{item.id}}" binderror="onImageError"/><view wx:else class="item-placeholder">衣</view>
+      <view class="item-copy"><text class="item-name">{{item.name}}</text><text class="reason">原因：{{item.idleReason || '未填写'}}</text><text wx:if="{{item.idleNote}}" class="note">{{item.idleNote}}</text><text class="meta">累计穿着 {{item.wearCount}} 次 · 最近穿着：{{item.lastWornText}}</text><text class="meta">标记于 {{item.markedText}}</text><button class="restore-button" data-id="{{item.id}}" loading="{{restoringId === item.id}}" disabled="{{!!restoringId}}" catchtap="restoreItem">恢复正常使用</button></view>
+    </view>
+  </view>
+</view>

@@ -18,7 +18,11 @@
     <scroll-view class="filter-options" scroll-x><text wx:for="{{thicknesses}}" wx:key="*this" class="filter-chip {{activeThickness === item ? 'active' : ''}}" bindtap="selectThickness" data-value="{{item}}">{{item}}</text></scroll-view>
     <text class="filter-label">本月穿着状态</text>
     <scroll-view class="filter-options" scroll-x><text wx:for="{{wearStatuses}}" wx:key="*this" class="filter-chip {{activeWearStatus === item ? 'active' : ''}}" bindtap="selectWearStatus" data-value="{{item}}">{{item}}</text></scroll-view>
+    <text class="filter-label">私人闲置状态</text>
+    <scroll-view class="filter-options" scroll-x><text wx:for="{{idleStatuses}}" wx:key="*this" class="filter-chip {{activeIdleStatus === item ? 'active' : ''}}" bindtap="selectIdleStatus" data-value="{{item}}">{{item}}</text></scroll-view>
   </view>
+
+  <view class="idle-entry card" bindtap="openIdleItems"><view><text class="idle-entry-title">私人闲置清单</text><text class="idle-entry-note">仅你可见，不会公开、交换或出租</text></view><text class="idle-entry-arrow">›</text></view>
 
   <view wx:if="{{!loading && !error}}" class="filter-summary"><view><text class="summary-number">{{matchedCount}}</text><text class="summary-label">件符合条件</text></view><view><text class="summary-number">{{monthlyWearTotal}}</text><text class="summary-label">次本月穿着</text></view></view>
 
@@ -32,6 +36,7 @@
       </view>
       <view class="item-content">
         <text class="item-name">{{item.name}}</text>
+        <text wx:if="{{item.idleStatus === 'considering'}}" class="idle-badge">考虑闲置</text>
         <text class="item-meta">{{item.category}} · {{item.color}} · 本月 {{item.monthlyWearCount}} 次 · 累计 {{item.wearCount}} 次</text>
         <text class="item-attributes">{{item.season || '未填写季节'}} · {{item.thickness || '未填写厚薄'}} · {{item.material || '未填写材质'}}</text>
         <view class="tags">

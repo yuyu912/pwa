@@ -9,7 +9,7 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-03-p1-calendar-v1";
+const BUILD_ID = "2026-08-03-p1-idle-v1";
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
 const newId = () => crypto.randomUUID();
 const parseArray = (value) => {
@@ -25,6 +25,7 @@ const allowedCategories = ["上衣", "裤子", "半身裙", "外套", "连衣裙
 const allowedScenes = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
 const allowedSeasons = ["春夏", "春秋", "秋冬", "多季"];
 const allowedThicknesses = ["薄", "适中", "厚"];
+const allowedIdleReasons = ["很少穿", "不合适", "重复", "风格变化", "其他"];
 const budgetId = "global-ai-budget";
 const requiredEnv = (names) => {
   const missing = names.filter((name) => !process.env[name]);
@@ -357,6 +358,10 @@ const handleMigration = async (payload) => {
       price: row.price == null ? null : Number(row.price),
       wear_count: Number(row.wear_count || 0),
       status: row.status || "active",
+      idle_status: row.idle_status === "considering" ? "considering" : "active",
+      idle_reason: allowedIdleReasons.includes(row.idle_reason) ? row.idle_reason : "",
+      idle_note: cleanText(row.idle_note, 100),
+      idle_marked_at: row.idle_marked_at || "",
       created_at: row.created_at,
       source_hash: row.source_hash || null,
       ...(row.source_hash ? { source_hash_key: `${row.user_id}:${row.source_hash}` } : {}),
@@ -844,6 +849,7 @@ const route = async (event) => {
         price: body.price === "" || body.price == null ? null : Number(body.price),
         wear_count: 0,
         status: "active",
+        idle_status: "active",
         source_hash: hash,
         source_hash_key: `${userId}:${hash}`,
         search_entity_id: null,
@@ -888,6 +894,7 @@ const route = async (event) => {
       price: body.price === "" || body.price == null ? null : Number(body.price),
       wear_count: 0,
       status: "active",
+      idle_status: "active",
       source_hash: draft.source_hash || null,
       ...(draft.source_hash ? { source_hash_key: `${userId}:${draft.source_hash}` } : {}),
       search_entity_id: null,
@@ -903,6 +910,46 @@ const route = async (event) => {
     });
     if (saved.alreadySaved) return response(event, 200, mapItem(await repository.getById("clothing", saved.itemId)));
     return response(event, 201, mapItem(await repository.getById("clothing", itemId)));
+  }
+
+  if (method === "GET" && path === "/api/idle-items") {
+    const items = await repository.findMany("clothing", { user_id: userId, status: "active", idle_status: "considering" }, { orderBy: "idle_marked_at", order: "desc" });
+    const rows = await Promise.all(items.map(async (item) => {
+      const lastWear = await repository.findOne("wearLogs", { user_id: userId, item_id: String(item.id) }, { orderBy: "worn_at", order: "desc" });
+      return {
+        ...mapItem(item),
+        idleStatus: "considering",
+        idleReason: item.idle_reason || "",
+        idleNote: item.idle_note || "",
+        idleMarkedAt: item.idle_marked_at || "",
+        lastWornAt: lastWear?.worn_at || ""
+      };
+    }));
+    return response(event, 200, rows);
+  }
+
+  const idleMatch = path.match(/^\/api\/items\/([^/]+)\/idle$/);
+  if (idleMatch && (method === "POST" || method === "DELETE")) {
+    const itemId = decodeURIComponent(idleMatch[1]);
+    const item = await repository.getById("clothing", itemId);
+    if (!item || item.user_id !== userId || item.status !== "active") {
+      throw Object.assign(new Error("未找到衣物。"), { status: 404 });
+    }
+    if (method === "DELETE") {
+      await repository.update("clothing", itemId, { idle_status: "active", idle_reason: "", idle_note: "", idle_marked_at: "" });
+      return response(event, 200, mapItem(await repository.getById("clothing", itemId)));
+    }
+    const reason = cleanText(body.reason, 20);
+    if (!allowedIdleReasons.includes(reason)) {
+      throw Object.assign(new Error("请选择闲置原因。"), { status: 400 });
+    }
+    await repository.update("clothing", itemId, {
+      idle_status: "considering",
+      idle_reason: reason,
+      idle_note: cleanText(body.note, 100),
+      idle_marked_at: now()
+    });
+    return response(event, 200, mapItem(await repository.getById("clothing", itemId)));
   }
 
   const itemMatch = path.match(/^\/api\/items\/([^/]+)$/);
@@ -1087,6 +1134,7 @@ const route = async (event) => {
         price: candidate.price == null ? null : Number(candidate.price),
         wear_count: 0,
         status: "active",
+        idle_status: "active",
         source_hash: null,
         search_entity_id: null,
         created_at: now()
