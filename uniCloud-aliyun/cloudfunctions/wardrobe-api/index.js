@@ -616,8 +616,9 @@ const route = async (event) => {
     if (itemIds.length < 1 || itemIds.length > 5 || !question) {
       throw Object.assign(new Error("请选择 1 至 5 件衣物，并填写搭配问题。"), { status: 400 });
     }
-    const ownedItems = await repository.findMany("clothing", { user_id: userId, status: "active" });
-    const selected = itemIds.map((id) => ownedItems.find((item) => String(item.id) === id));
+    const ownedItems = await repository.findMany("clothing", { user_id: userId, status: "active", _id: repository.command().in(itemIds) });
+    const ownedById = new Map(ownedItems.map((item) => [String(item.id), item]));
+    const selected = itemIds.map((id) => ownedById.get(id));
     if (selected.some((item) => !item)) throw Object.assign(new Error("只能分享自己衣橱中仍有效的衣物。"), { status: 403 });
     const rawToken = outfitToken();
     const requestId = newId();
@@ -794,8 +795,11 @@ const route = async (event) => {
     const range = repository.command().gte(start).and(repository.command().lt(end));
     const logs = await repository.findMany("wearLogs", { user_id: userId, worn_at: range }, { orderBy: "worn_at", order: "asc", limit: 500 });
     const itemIds = [...new Set(logs.map((log) => String(log.item_id)))];
-    const itemPairs = await Promise.all(itemIds.map(async (id) => [id, await repository.getById("clothing", id)]));
-    const itemsById = new Map(itemPairs.filter(([, item]) => item && item.user_id === userId));
+    // 一次读取本月记录涉及的衣物，避免按衣物数量逐条 getById 消耗数据库读额度。
+    const relatedItems = itemIds.length
+      ? await repository.findMany("clothing", { user_id: userId, _id: repository.command().in(itemIds) })
+      : [];
+    const itemsById = new Map(relatedItems.map((item) => [String(item.id), item]));
     return response(event, 200, logs.map((log) => {
       const item = itemsById.get(String(log.item_id));
       return {

@@ -44,3 +44,15 @@ test("闲置清单优先使用衣物最近穿着汇总字段", () => {
   assert.match(backend, /item\.last_worn_at \? null : await repository\.findOne\("wearLogs"/);
   assert.match(backend, /last_worn_at: wornAt/);
 });
+
+test("穿着日历一次批量读取相关衣物", () => {
+  const backend = fs.readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
+  assert.match(backend, /_id: repository\.command\(\)\.in\(itemIds\)/);
+  assert.doesNotMatch(backend, /itemIds\.map\(async \(id\).*getById\("clothing"/s);
+});
+
+test("好友帮搭只批量读取用户选中的衣物", () => {
+  const backend = fs.readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
+  assert.match(backend, /status: "active", _id: repository\.command\(\)\.in\(itemIds\)/);
+  assert.match(backend, /const ownedById = new Map/);
+});
