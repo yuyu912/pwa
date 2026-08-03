@@ -1,34 +1,37 @@
 # 衣橱关系小程序 P0 客户端切片
 
-本目录是独立的原生微信小程序源码，默认使用模拟数据，目的是先验证页面流与 uniCloud 接口契约。它不替代现有 PWA，也没有接入真实云账号、图片上传或 AI 服务。
+本目录是《衣橱关系》的原生微信小程序源码。当前 `config.js` 已配置真实 uniCloud HTTP 地址并使用真实接口；本地代码是否已上线必须以 `/api/health` 返回的 `buildId` 为准。
 
 ## 当前可演示的流程
 
-1. 演示登录。
-2. 云端衣橱列表的加载、关键词/品类筛选、空态与失败重试 UI。
-3. 衣物详情和一次穿着记录。
-4. 候选新衣的解释性报告、观望/购买决定入口；相似度明确显示“未计算”。
+1. 登录、邀请码注册，以及通过私密搭配链接注册受邀好友。
+2. 云端衣橱、图片上传、AI 候选标签确认、衣物编辑/软删除和穿着记录。
+3. 演示天气、今日穿搭和候选新衣的标签规则分析。
+4. 私密好友帮搭：分享 1 至 5 件衣物，最多 5 位登录好友、7 天有效、可提前关闭；不开放完整衣橱和公开社区。
+5. 用户协议、隐私说明、投诉反馈，以及账号停用和个人数据删除申请。
 
 ## 对齐的 uniCloud 接口
 
 | 能力 | 接口 | 当前状态 |
 | --- | --- | --- |
-| 登录/会话 | `POST /api/auth/login`、`GET /api/auth/me` | 已在 `services/api.js` 定义；模拟模式可演示。 |
-| 衣橱 | `GET /api/items` | 已定义；模拟模式可演示。 |
-| 穿着记录 | `POST /api/items/:id/wear-logs` | 已定义；模拟模式可演示。 |
-| 候选新衣分析 | `POST /api/candidates/:id/analyze`、`POST /api/candidates/:id/decision` | 已定义；模拟模式可演示。 |
-| 上传/识别 | `/api/uploads/presign`、`/api/recognize`、`/api/tasks/:id/retry` | 客户端流程已接入；真实调用需部署云函数并配置 COS、数据万象和千问。 |
+| 登录/会话 | `POST /api/auth/login`、`GET /api/auth/me` | 已接入真实云端；停用后旧令牌立即失效。 |
+| 衣橱 | `GET /api/items` | 已接入真实云端。 |
+| 穿着记录 | `POST /api/items/:id/wear-logs` | 已接入真实云端。 |
+| 候选新衣分析 | `POST /api/candidates/:id/analyze`、`POST /api/candidates/:id/decision` | 已接入真实云端；使用标签规则。 |
+| 上传/识别 | `/api/uploads/presign`、`/api/recognize`、`/api/tasks/:id/retry` | 已接入真实云端；以线上 health buildId 为准。 |
 | AI 预算 | `GET /api/ai-budget` | 50 元、1000 次全局硬上限，模拟模式可演示。 |
 | 确认入库 | `POST /api/items`、`POST /api/items/manual` | AI 候选确认或无 AI 手动入库。 |
+| 好友帮搭 | `/api/outfit-requests` | `v8` 已部署并完成开发者工具测试；A/B 真机回归待完成。 |
+| 投诉与账号停用 | `POST /api/complaints`、`POST /api/auth/delete-request` | `v9` 已部署；停用操作暂未真机执行。 |
 
-## 未来接入测试云环境
+## 当前测试云环境
 
-1. 在 `config.js` 填写已部署的 uniCloud HTTP 云函数基础地址，并将 `USE_MOCK` 改为 `false`。
+1. `config.js` 已填写真实 uniCloud 地址，且 `USE_MOCK: false`。
 2. 在微信公众平台配置合法请求域名；不要把云端密钥、COS 密钥或 AI Key 写进小程序源码。
-3. 用微信开发者工具导入本目录的 `project.config.json`，替换 `touristappid` 为测试 AppID。
-4. 先联调登录和衣橱，再配置 COS 私有直传、商品抠图与千问 VL；每次真实调用前确认预算台账可读。
-5. 小程序需要把 uniCloud HTTP 域名和 COS 上传域名加入微信公众平台合法 request 域名。
+3. 微信开发者工具已使用当前小程序 AppID 完成开发者工具回归。
+4. COS 私有直传、商品抠图、千问 VL 和预算台账均已真实接通。
+5. 每次云函数部署后必须以 `/api/health` 的 `buildId` 验证线上版本。
 
 ## 未完成边界
 
-当前代码已实现图片上传、抠图、千问候选识别、预算台账、用户确认和手动降级，但没有真实云函数部署或真机云端联调。向量检索、支付、交易、好友协作和试穿仍未接入。真实接口返回失败时，页面显示错误和重试，不得把模拟数据当作真实结果。
+天气仍是本地演示数据；标签相似度不是图片同款识别。支付、交易、租赁、公开社区、人物照片和虚拟试穿均未接入。真实接口返回失败时，页面显示错误和重试，不得把模拟数据当作真实结果。

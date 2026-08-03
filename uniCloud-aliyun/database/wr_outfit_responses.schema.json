@@ -1,0 +1,18 @@
+{
+  "bsonType": "object",
+  "description": "好友帮搭回复，仅允许云函数访问",
+  "required": ["request_id", "user_id", "verdict", "comment", "reported", "hidden", "created_at", "updated_at"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false, "count": false },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "request_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "verdict": { "bsonType": "string" },
+    "comment": { "bsonType": "string", "maxLength": 200 },
+    "reported": { "bsonType": "bool" },
+    "report_reason": { "bsonType": "string", "maxLength": 200 },
+    "hidden": { "bsonType": "bool" },
+    "created_at": { "bsonType": "string" },
+    "updated_at": { "bsonType": "string" }
+  }
+}

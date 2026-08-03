@@ -15,6 +15,9 @@
     "showES6CompileOption": false,
     "compileHotReLoad": true,
     "checkInvalidKey": true,
+    "minified": true,
+    "minifyWXML": true,
+    "minifyWXSS": true,
     "ignoreDevUnusedFiles": true,
     "bigPackageSizeSupport": false
   }

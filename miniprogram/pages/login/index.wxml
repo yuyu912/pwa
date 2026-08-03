@@ -3,20 +3,20 @@
     <text class="eyebrow">WARDROBE RELATIONSHIP</text>
     <text class="title">从真实衣橱开始，
 理性地决定下一件衣服。</text>
-    <text class="muted">{{mode === 'register' ? '使用邀请码创建真实测试账号。' : '使用已创建的测试账号登录。'}}</text>
+    <text class="muted">{{sharedToken ? '这是一次私密搭配邀请。登录后才能查看或回复。' : (mode === 'register' ? '使用邀请码创建真实测试账号。' : '使用已创建的测试账号登录。')}}</text>
   </view>
 
   <view class="card form-card">
-    <block wx:if="{{mode === 'register'}}">
-      <text class="label">邀请码</text>
-      <input value="{{inviteCode}}" bindinput="onInviteCode" placeholder="输入一次性邀请码" maxlength="64" />
+    <block wx:if="{{mode === 'register' && !sharedToken}}">
+      <text class="label">邀请码或好友帮搭口令</text>
+      <input value="{{inviteCode}}" bindinput="onInviteCode" placeholder="粘贴一次性邀请码或好友帮搭口令" maxlength="160" />
     </block>
     <text class="label">用户名</text>
     <input value="{{username}}" bindinput="onUsername" placeholder="2—30 个字符" maxlength="30" />
     <text class="label">密码</text>
     <input password value="{{password}}" bindinput="onPassword" placeholder="{{mode === 'register' ? '至少 8 位' : '输入密码'}}" />
     <button class="primary" loading="{{loading}}" bindtap="submit">{{mode === 'register' ? '创建账号' : '登录衣橱'}}</button>
-    <text class="mode-switch" bindtap="toggleMode">{{mode === 'register' ? '已有账号，去登录' : '有邀请码？创建账号'}}</text>
+    <text class="mode-switch" bindtap="toggleMode">{{mode === 'register' ? '已有账号，去登录' : (sharedToken ? '还没有账号？用邀请注册' : '有邀请码？创建账号')}}</text>
     <text wx:if="{{error}}" class="error">{{error}}</text>
   </view>
 

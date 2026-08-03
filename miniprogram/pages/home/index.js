@@ -29,7 +29,7 @@ Page({
   toTodayOutfit() { wx.navigateTo({ url: "/pages/today-outfit/index" }); },
   toAdd() { wx.navigateTo({ url: "/pages/add-item/index" }); },
   toFriends() { wx.navigateTo({ url: "/pages/friends/index" }); },
-  toMine() { wx.showToast({ title: "个人中心将在账号联调后开放", icon: "none" }); },
+  toMine() { wx.navigateTo({ url: "/pages/account/index" }); },
   onActionImageError(event) {
     const id = event.currentTarget.dataset.id;
     this.setData({ [`imageErrors.${id}`]: true });

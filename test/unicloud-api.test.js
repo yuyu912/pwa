@@ -143,7 +143,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const { main } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-07-31-item-management-v7");
+  assert.equal(health.body.buildId, "2026-08-03-compliance-v9");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -207,6 +207,51 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.deepEqual(migratedItem.styles, ["简约"]);
   assert.deepEqual(migratedItem.scenes, ["休闲"]);
 
+  // 好友帮搭必须是登录后的点对点分享：令牌本身不返回完整衣橱，受邀新用户注册后只加入本次请求。
+  const unauthenticatedRequest = readResponse(await main(makeEvent("/api/outfit-requests/not-a-real-token", "GET")));
+  assert.equal(unauthenticatedRequest.status, 401);
+  const outfitRequest = readResponse(await main(makeEvent("/api/outfit-requests", "POST", {
+    itemIds: ["1"], question: "这件上衣适合周末见朋友吗？"
+  }, authorization)));
+  assert.equal(outfitRequest.status, 201);
+  assert.ok(outfitRequest.body.token.length >= 20);
+  assert.equal(outfitRequest.body.items[0].name, "衣物1");
+  const guestRegistration = readResponse(await main(makeEvent("/api/auth/outfit-guest-register", "POST", {
+    token: outfitRequest.body.token, username: "friend-one", password: "password123"
+  })));
+  assert.equal(guestRegistration.status, 201);
+  const friendAuthorization = { authorization: `Bearer ${guestRegistration.body.token}` };
+  const sharedView = readResponse(await main(makeEvent(`/api/outfit-requests/${outfitRequest.body.token}`, "GET", null, friendAuthorization)));
+  assert.equal(sharedView.status, 200);
+  assert.equal(sharedView.body.items.length, 1);
+  assert.equal(sharedView.body.items[0].price, undefined);
+  const friendReply = readResponse(await main(makeEvent(`/api/outfit-requests/${outfitRequest.body.token}/responses`, "POST", {
+    verdict: "like", comment: "颜色很适合周末，搭配浅色鞋子会更轻松。"
+  }, friendAuthorization)));
+  assert.equal(friendReply.status, 201);
+  const ownerResults = readResponse(await main(makeEvent(`/api/outfit-requests/${outfitRequest.body.id}/results`, "GET", null, authorization)));
+  assert.equal(ownerResults.status, 200);
+  assert.equal(ownerResults.body.summary.like, 1);
+  const report = readResponse(await main(makeEvent(`/api/outfit-responses/${ownerResults.body.responses[0].id}/report`, "POST", { reason: "测试举报" }, authorization)));
+  assert.equal(report.status, 200);
+  const reportedResults = readResponse(await main(makeEvent(`/api/outfit-requests/${outfitRequest.body.id}/results`, "GET", null, authorization)));
+  assert.equal(reportedResults.body.responses[0].hidden, true);
+  const closedRequest = readResponse(await main(makeEvent(`/api/outfit-requests/${outfitRequest.body.id}/close`, "POST", {}, authorization)));
+  assert.equal(closedRequest.status, 200);
+  const replyAfterClose = readResponse(await main(makeEvent(`/api/outfit-requests/${outfitRequest.body.token}/responses/me`, "PATCH", {
+    verdict: "neutral", comment: "关闭后不能再修改。"
+  }, friendAuthorization)));
+  assert.equal(replyAfterClose.status, 403);
+
+  const deletionRequest = readResponse(await main(makeEvent("/api/outfit-requests", "POST", {
+    itemIds: ["2"], question: "移出衣橱后应关闭分享。"
+  }, authorization)));
+  assert.equal(deletionRequest.status, 201);
+  const deletedSharedItem = readResponse(await main(makeEvent("/api/items/2", "DELETE", {}, authorization)));
+  assert.equal(deletedSharedItem.status, 200);
+  const closedAfterItemDelete = readResponse(await main(makeEvent(`/api/outfit-requests/${deletionRequest.body.id}/results`, "GET", null, authorization)));
+  assert.equal(closedAfterItemDelete.body.request.status, "closed");
+
   const wear = readResponse(await main(makeEvent("/api/items/1/wear-logs", "POST", { scene: "日常", comfort: "舒适" }, authorization)));
   assert.equal(wear.status, 201);
 
@@ -261,7 +306,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-07-31-item-management-v7");
+  assert.equal(failedRecognition.body.buildId, "2026-08-03-compliance-v9");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
@@ -387,4 +432,29 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(itemsAfterDelete.body.some((item) => item.id === purchasedItem.id), false);
   const deletedStoredResult = await memoryDatabase.collection("wr_clothing_items").doc(purchasedItem.id).get();
   assert.equal(deletedStoredResult.data[0].status, "inactive");
+
+  // 投诉必须登录、限制类型和长度，并由云函数写入只读集合。
+  const unauthenticatedComplaint = readResponse(await main(makeEvent("/api/complaints", "POST", {
+    category: "功能问题", detail: "无法正常使用好友帮搭。"
+  })));
+  assert.equal(unauthenticatedComplaint.status, 401);
+  const invalidComplaint = readResponse(await main(makeEvent("/api/complaints", "POST", {
+    category: "未知类型", detail: "短"
+  }, authorization)));
+  assert.equal(invalidComplaint.status, 400);
+  const complaint = readResponse(await main(makeEvent("/api/complaints", "POST", {
+    category: "功能问题", detail: "无法正常使用好友帮搭。", contact: "test@example.com"
+  }, authorization)));
+  assert.equal(complaint.status, 201);
+  assert.equal(complaint.body.status, "submitted");
+
+  // 注销后旧 JWT 也必须立即失效，不能只阻止下一次登录。
+  const accountDeletion = readResponse(await main(makeEvent("/api/auth/delete-request", "POST", {}, authorization)));
+  assert.equal(accountDeletion.status, 202);
+  const accessAfterDeletion = readResponse(await main(makeEvent("/api/items", "GET", null, authorization)));
+  assert.equal(accessAfterDeletion.status, 401);
+  const loginAfterDeletion = readResponse(await main(makeEvent("/api/auth/login", "POST", {
+    username: "tester", password: "password123"
+  })));
+  assert.equal(loginAfterDeletion.status, 401);
 });

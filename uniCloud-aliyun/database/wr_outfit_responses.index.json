@@ -1,0 +1,10 @@
+[
+  {
+    "IndexName": "wr_resp_req_user_uq",
+    "MgoKeySchema": { "MgoIndexKeys": [{ "Name": "request_id", "Direction": "1" }, { "Name": "user_id", "Direction": "1" }], "MgoIsUnique": true, "MgoIsSparse": false }
+  },
+  {
+    "IndexName": "wr_resp_req_created",
+    "MgoKeySchema": { "MgoIndexKeys": [{ "Name": "request_id", "Direction": "1" }, { "Name": "created_at", "Direction": "1" }], "MgoIsUnique": false, "MgoIsSparse": false }
+  }
+]

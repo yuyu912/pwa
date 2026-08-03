@@ -9,7 +9,7 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-07-31-item-management-v7";
+const BUILD_ID = "2026-08-03-compliance-v9";
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
 const newId = () => crypto.randomUUID();
 const parseArray = (value) => {
@@ -53,7 +53,7 @@ const corsHeaders = (event) => {
   return {
     ...(allowOrigin ? { "access-control-allow-origin": allowOrigin } : {}),
     "access-control-allow-headers": "authorization, content-type, x-admin-token",
-    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "access-control-max-age": "600",
     "cache-control": "no-store"
   };
@@ -81,6 +81,15 @@ const requireUser = (event) => {
   catch { throw Object.assign(new Error("登录状态已过期，请重新登录。"), { status: 401 }); }
 };
 
+const requireActiveUser = async (event) => {
+  const claims = requireUser(event);
+  const user = await repository.getById("users", claims.id);
+  if (!user || user.status === "deletion_requested") {
+    throw Object.assign(new Error("账号已停用，请联系处理账号删除申请。"), { status: 401 });
+  }
+  return user;
+};
+
 const requireAdmin = (event) => {
   requiredEnv(["ADMIN_BOOTSTRAP_TOKEN"]);
   if (requestHeaders(event)["x-admin-token"] !== process.env.ADMIN_BOOTSTRAP_TOKEN) {
@@ -102,6 +111,30 @@ const mapCandidate = (candidate) => ({
   scenes: sanitizeTags(candidate.scenes, allowedScenes),
   imageUrl: cloud.signedUrl(candidate.image_key, "GET", 3600)
 });
+const outfitTokenHash = (token) => crypto.createHash("sha256").update(String(token)).digest("hex");
+const outfitToken = () => crypto.randomBytes(24).toString("base64url");
+const outfitExpiresAt = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+const requestIsOpen = (request) => request && request.status === "open" && Date.parse(request.expires_at) > Date.now();
+const requestItems = (request) => (request.items || []).map((item) => ({
+  id: String(item.id),
+  name: item.name,
+  category: item.category,
+  color: item.color || "",
+  imageUrl: cloud.signedUrl(item.image_key, "GET", 600)
+}));
+const publicOutfitRequest = (request, extra = {}) => ({
+  id: String(request.id),
+  question: request.question,
+  status: requestIsOpen(request) ? "open" : request.status === "open" ? "expired" : request.status,
+  createdAt: request.created_at,
+  expiresAt: request.expires_at,
+  participantCount: (request.participant_user_ids || []).length,
+  participantLimit: 5,
+  items: requestItems(request),
+  ...extra
+});
+const validOutfitVerdict = (value) => ["like", "neutral", "dislike"].includes(value);
+const invalidComment = (value) => /(?:https?:\/\/|www\.|微信号|加我|博彩|贷款)/i.test(value);
 
 const ensureBudget = async () => {
   const limits = aiBudget.limitsFromEnv();
@@ -219,6 +252,60 @@ const handleRegister = async (body) => {
       created_at: user.created_at
     }, user.id);
     await tx.update("invites", lockedInvite.id, { used_by: user.id, used_at: now() });
+  });
+  return { user: publicUser(user), recoveryCode, token: tokenFor(user) };
+};
+
+// 分享令牌只保存哈希值；即使数据库被导出，也不能直接拼出可访问的分享链接。
+const findOutfitRequestByToken = async (token) => {
+  const safeToken = cleanText(token, 160);
+  if (!safeToken || safeToken.length < 20) throw Object.assign(new Error("分享链接无效。"), { status: 400 });
+  const request = await repository.findOne("outfitRequests", { token_hash: outfitTokenHash(safeToken) });
+  if (!request) throw Object.assign(new Error("分享请求不存在或链接已失效。"), { status: 404 });
+  return request;
+};
+
+const joinOutfitRequest = async (requestId, userId) => repository.withTransaction(async (tx) => {
+  const request = await tx.getById("outfitRequests", requestId);
+  if (!request) throw Object.assign(new Error("分享请求不存在。"), { status: 404 });
+  if (!requestIsOpen(request)) {
+    if (request.status === "open") await tx.update("outfitRequests", request.id, { status: "expired" });
+    throw Object.assign(new Error("这次搭配请求已结束。"), { status: 410 });
+  }
+  if (request.owner_user_id === userId) return request;
+  const participants = (request.participant_user_ids || []).map(String);
+  if (!participants.includes(userId)) {
+    if (participants.length >= 5) throw Object.assign(new Error("这次搭配请求已满 5 人。"), { status: 409 });
+    participants.push(userId);
+    await tx.update("outfitRequests", request.id, { participant_user_ids: participants });
+    return { ...request, participant_user_ids: participants };
+  }
+  return request;
+});
+
+const handleOutfitGuestRegister = async (body) => {
+  const request = await findOutfitRequestByToken(body.token);
+  const username = cleanText(body.username, 30);
+  const password = String(body.password || "");
+  if (!/^[\w\u4e00-\u9fa5-]{2,30}$/.test(username) || password.length < 8) {
+    throw Object.assign(new Error("用户名或密码格式不符合要求。"), { status: 400 });
+  }
+  if (await repository.findOne("users", { username })) throw Object.assign(new Error("该用户名已被使用。"), { status: 409 });
+  const recoveryCode = crypto.randomBytes(6).toString("hex").toUpperCase();
+  const user = {
+    id: newId(), username, password_hash: await bcrypt.hash(password, 12),
+    recovery_hash: await bcrypt.hash(recoveryCode, 12), created_at: now(), status: "active"
+  };
+  await repository.withTransaction(async (tx) => {
+    const lockedRequest = await tx.getById("outfitRequests", request.id);
+    if (!requestIsOpen(lockedRequest)) throw Object.assign(new Error("这次搭配请求已结束。"), { status: 410 });
+    const participants = (lockedRequest.participant_user_ids || []).map(String);
+    if (participants.length >= 5) throw Object.assign(new Error("这次搭配请求已满 5 人。"), { status: 409 });
+    await tx.add("users", {
+      username: user.username, password_hash: user.password_hash, recovery_hash: user.recovery_hash,
+      created_at: user.created_at, status: "active"
+    }, user.id);
+    await tx.update("outfitRequests", lockedRequest.id, { participant_user_ids: [...participants, user.id] });
   });
   return { user: publicUser(user), recoveryCode, token: tokenFor(user) };
 };
@@ -446,7 +533,7 @@ const route = async (event) => {
   }
   if (method === "POST" && path === "/api/auth/login") {
     const user = await repository.findOne("users", { username: cleanText(body.username, 30) });
-    if (!user || !(await bcrypt.compare(String(body.password || ""), user.password_hash))) {
+    if (!user || user.status === "deletion_requested" || !(await bcrypt.compare(String(body.password || ""), user.password_hash))) {
       throw Object.assign(new Error("用户名或密码不正确。"), { status: 401 });
     }
     return response(event, 200, { user: publicUser(user), token: tokenFor(user) });
@@ -461,7 +548,10 @@ const route = async (event) => {
     return response(event, 200, { user: publicUser(user), token: tokenFor(user) });
   }
   if (method === "POST" && path === "/api/auth/logout") return response(event, 204, null);
-  if (method === "GET" && path === "/api/auth/me") return response(event, 200, { user: publicUser(requireUser(event)) });
+  if (method === "GET" && path === "/api/auth/me") return response(event, 200, { user: publicUser(await requireActiveUser(event)) });
+  if (method === "POST" && path === "/api/auth/outfit-guest-register") {
+    return response(event, 201, await handleOutfitGuestRegister(body));
+  }
 
   if (method === "POST" && path === "/api/admin/invites") {
     requireAdmin(event);
@@ -479,11 +569,147 @@ const route = async (event) => {
     return response(event, 200, await verifyData());
   }
 
-  const user = requireUser(event);
+  const user = await requireActiveUser(event);
   const userId = String(user.id);
 
   if (method === "GET" && path === "/api/ai-budget") {
     return response(event, 200, await budgetSummary());
+  }
+
+  if (method === "POST" && path === "/api/auth/delete-request") {
+    // 立即停用账号，避免后续继续访问；云端保留最短的 30 天处理窗口用于撤销误操作和清理 COS 对象。
+    await repository.update("users", userId, { status: "deletion_requested", deletion_requested_at: now() });
+    return response(event, 202, { ok: true, message: "账号已停用并进入删除队列。" });
+  }
+
+  if (method === "POST" && path === "/api/complaints") {
+    const category = cleanText(body.category, 20);
+    const detail = cleanText(body.detail, 500);
+    const allowedComplaintCategories = ["功能问题", "隐私与数据", "不当内容", "其他"];
+    if (!allowedComplaintCategories.includes(category) || detail.length < 5) {
+      throw Object.assign(new Error("请选择投诉类型，并填写至少 5 个字的说明。"), { status: 400 });
+    }
+    const id = newId();
+    await repository.add("complaints", {
+      user_id: userId,
+      category,
+      detail,
+      contact: cleanText(body.contact, 80),
+      status: "submitted",
+      created_at: now(),
+      updated_at: now()
+    }, id);
+    return response(event, 201, { id, status: "submitted", message: "投诉已提交。" });
+  }
+
+  if (method === "POST" && path === "/api/outfit-requests") {
+    const itemIds = [...new Set(parseArray(body.itemIds).map((id) => cleanText(id, 80)).filter(Boolean))];
+    const question = cleanText(body.question, 200);
+    if (itemIds.length < 1 || itemIds.length > 5 || !question) {
+      throw Object.assign(new Error("请选择 1 至 5 件衣物，并填写搭配问题。"), { status: 400 });
+    }
+    const ownedItems = await repository.findMany("clothing", { user_id: userId, status: "active" });
+    const selected = itemIds.map((id) => ownedItems.find((item) => String(item.id) === id));
+    if (selected.some((item) => !item)) throw Object.assign(new Error("只能分享自己衣橱中仍有效的衣物。"), { status: 403 });
+    const rawToken = outfitToken();
+    const requestId = newId();
+    const createdAt = now();
+    await repository.add("outfitRequests", {
+      owner_user_id: userId,
+      items: selected.map((item) => ({ id: String(item.id), name: item.name, category: item.category, color: item.color || "", image_key: item.image_key })),
+      question,
+      token_hash: outfitTokenHash(rawToken),
+      status: "open",
+      participant_user_ids: [],
+      responded_user_ids: [],
+      created_at: createdAt,
+      expires_at: outfitExpiresAt(),
+      closed_at: null
+    }, requestId);
+    return response(event, 201, { ...publicOutfitRequest(await repository.getById("outfitRequests", requestId)), token: rawToken });
+  }
+
+  const outfitRequestByTokenMatch = path.match(/^\/api\/outfit-requests\/([^/]+)$/);
+  if (method === "GET" && outfitRequestByTokenMatch) {
+    const request = await findOutfitRequestByToken(decodeURIComponent(outfitRequestByTokenMatch[1]));
+    const joined = request.owner_user_id === userId ? request : await joinOutfitRequest(request.id, userId);
+    const ownResponse = request.owner_user_id === userId ? null : await repository.findOne("outfitResponses", { request_id: request.id, user_id: userId });
+    return response(event, 200, publicOutfitRequest(joined, { isOwner: joined.owner_user_id === userId, ownResponse: ownResponse ? {
+      verdict: ownResponse.verdict, comment: ownResponse.comment, reported: Boolean(ownResponse.reported)
+    } : null }));
+  }
+
+  const outfitResponseMatch = path.match(/^\/api\/outfit-requests\/([^/]+)\/responses$/);
+  if (method === "POST" && outfitResponseMatch) {
+    const request = await findOutfitRequestByToken(decodeURIComponent(outfitResponseMatch[1]));
+    if (request.owner_user_id === userId) throw Object.assign(new Error("发起人不能给自己的搭配请求回复。"), { status: 403 });
+    const verdict = cleanText(body.verdict, 20);
+    const comment = cleanText(body.comment, 200);
+    if (!validOutfitVerdict(verdict) || !comment || invalidComment(comment)) {
+      throw Object.assign(new Error("请选择建议并填写不超过 200 字的正常短评。"), { status: 400 });
+    }
+    await joinOutfitRequest(request.id, userId);
+    await repository.withTransaction(async (tx) => {
+      const locked = await tx.getById("outfitRequests", request.id);
+      if (!requestIsOpen(locked) || !(locked.participant_user_ids || []).map(String).includes(userId)) {
+        throw Object.assign(new Error("这次搭配请求已结束或你没有访问权限。"), { status: 403 });
+      }
+      const replied = (locked.responded_user_ids || []).map(String);
+      if (replied.includes(userId)) throw Object.assign(new Error("你已经回复过，可修改原回复。"), { status: 409 });
+      await tx.add("outfitResponses", {
+        request_id: locked.id, user_id: userId, verdict, comment, reported: false, hidden: false,
+        report_reason: "", created_at: now(), updated_at: now()
+      }, newId());
+      await tx.update("outfitRequests", locked.id, { responded_user_ids: [...replied, userId] });
+    });
+    return response(event, 201, { ok: true });
+  }
+
+  const outfitResponseUpdateMatch = path.match(/^\/api\/outfit-requests\/([^/]+)\/responses\/me$/);
+  if (method === "PATCH" && outfitResponseUpdateMatch) {
+    const request = await findOutfitRequestByToken(decodeURIComponent(outfitResponseUpdateMatch[1]));
+    if (!requestIsOpen(request) || request.owner_user_id === userId || !(request.participant_user_ids || []).map(String).includes(userId)) {
+      throw Object.assign(new Error("这次搭配请求已结束或你没有访问权限。"), { status: 403 });
+    }
+    const verdict = cleanText(body.verdict, 20);
+    const comment = cleanText(body.comment, 200);
+    if (!validOutfitVerdict(verdict) || !comment || invalidComment(comment)) throw Object.assign(new Error("请填写有效的建议和短评。"), { status: 400 });
+    const existing = await repository.findOne("outfitResponses", { request_id: request.id, user_id: userId });
+    if (!existing) throw Object.assign(new Error("尚未提交回复。"), { status: 404 });
+    if (existing.reported) throw Object.assign(new Error("该回复正在处理举报，暂不能修改。"), { status: 409 });
+    await repository.update("outfitResponses", existing.id, { verdict, comment, updated_at: now() });
+    return response(event, 200, { ok: true });
+  }
+
+  const outfitCloseMatch = path.match(/^\/api\/outfit-requests\/([^/]+)\/close$/);
+  if (method === "POST" && outfitCloseMatch) {
+    const request = await repository.getById("outfitRequests", decodeURIComponent(outfitCloseMatch[1]));
+    if (!request || request.owner_user_id !== userId) throw Object.assign(new Error("未找到可关闭的搭配请求。"), { status: 404 });
+    if (request.status !== "open") return response(event, 200, { ok: true, status: request.status });
+    await repository.update("outfitRequests", request.id, { status: "closed", closed_at: now() });
+    return response(event, 200, { ok: true, status: "closed" });
+  }
+
+  const outfitResultsMatch = path.match(/^\/api\/outfit-requests\/([^/]+)\/results$/);
+  if (method === "GET" && outfitResultsMatch) {
+    const request = await repository.getById("outfitRequests", decodeURIComponent(outfitResultsMatch[1]));
+    if (!request || request.owner_user_id !== userId) throw Object.assign(new Error("未找到搭配请求。"), { status: 404 });
+    const responses = await repository.findMany("outfitResponses", { request_id: request.id }, { orderBy: "created_at", order: "asc" });
+    const summary = { like: 0, neutral: 0, dislike: 0 };
+    responses.forEach((item) => { if (summary[item.verdict] !== undefined) summary[item.verdict] += 1; });
+    return response(event, 200, { request: publicOutfitRequest(request, { isOwner: true }), summary, responses: responses.map((item) => ({
+      id: String(item.id), verdict: item.verdict, comment: item.comment, reported: Boolean(item.reported), hidden: Boolean(item.hidden), createdAt: item.created_at
+    })) });
+  }
+
+  const outfitReportMatch = path.match(/^\/api\/outfit-responses\/([^/]+)\/report$/);
+  if (method === "POST" && outfitReportMatch) {
+    const reply = await repository.getById("outfitResponses", decodeURIComponent(outfitReportMatch[1]));
+    const request = reply ? await repository.getById("outfitRequests", reply.request_id) : null;
+    const allowed = request && (request.owner_user_id === userId || (request.participant_user_ids || []).map(String).includes(userId));
+    if (!reply || !allowed || reply.user_id === userId) throw Object.assign(new Error("无权举报该回复。"), { status: 403 });
+    await repository.update("outfitResponses", reply.id, { reported: true, hidden: true, report_reason: cleanText(body.reason, 200), updated_at: now() });
+    return response(event, 200, { ok: true });
   }
 
   // 幂等键让用户重复点击或网络重发返回原任务，不会创建第二个上传任务或重复扣费。
@@ -654,6 +880,14 @@ const route = async (event) => {
     if (method === "DELETE") {
       // 这里只做软删除，不删除 COS 图片与穿着记录；后续如需恢复仍有数据基础。
       await repository.update("clothing", itemId, { status: "inactive" });
+      // 分享快照不再暴露已移出衣橱的衣物；若一条请求已无可分享衣物则自动关闭。
+      const requests = await repository.findMany("outfitRequests", { owner_user_id: userId, status: "open" });
+      await Promise.all(requests.filter((request) => (request.items || []).some((shared) => String(shared.id) === itemId)).map(async (request) => {
+        const remaining = (request.items || []).filter((shared) => String(shared.id) !== itemId);
+        await repository.update("outfitRequests", request.id, remaining.length
+          ? { items: remaining }
+          : { items: [], status: "closed", closed_at: now() });
+      }));
       return response(event, 200, { ok: true, itemId });
     }
     const category = cleanText(body.category, 30);

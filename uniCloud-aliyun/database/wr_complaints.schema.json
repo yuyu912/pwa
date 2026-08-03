@@ -1,0 +1,16 @@
+{
+  "bsonType": "object",
+  "description": "用户投诉与反馈，仅允许云函数访问",
+  "required": ["user_id", "category", "detail", "status", "created_at", "updated_at"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false, "count": false },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "category": { "bsonType": "string", "maxLength": 20 },
+    "detail": { "bsonType": "string", "minLength": 5, "maxLength": 500 },
+    "contact": { "bsonType": "string", "maxLength": 80 },
+    "status": { "bsonType": "string" },
+    "created_at": { "bsonType": "string" },
+    "updated_at": { "bsonType": "string" }
+  }
+}

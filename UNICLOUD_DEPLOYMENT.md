@@ -1,6 +1,6 @@
 # 衣橱关系 uniCloud 阿里云免费版部署
 
-更新日期：2026-07-30
+更新日期：2026-08-03
 
 ## 1. 费用边界
 
@@ -35,7 +35,10 @@ uniCloud-aliyun/
    ├─ wr_candidates.*
    ├─ wr_image_drafts.*
    ├─ wr_ai_usage_events.*
-   └─ wr_ai_budget.*
+   ├─ wr_ai_budget.*
+   ├─ wr_outfit_requests.*
+   ├─ wr_outfit_responses.*
+   └─ wr_complaints.*
 ```
 
 关键设计：
@@ -67,11 +70,17 @@ uniCloud-aliyun/
 
 1. 右键 `uniCloud-aliyun/database`。
 2. 选择初始化/上传数据库 Schema。
-3. 确认创建 8 个集合：`wr_users`、`wr_invites`、`wr_clothing_items`、`wr_wear_logs`、`wr_candidates`、`wr_image_drafts`、`wr_ai_usage_events`、`wr_ai_budget`。
+3. 确认创建 11 个集合：`wr_users`、`wr_invites`、`wr_clothing_items`、`wr_wear_logs`、`wr_candidates`、`wr_image_drafts`、`wr_ai_usage_events`、`wr_ai_budget`、`wr_outfit_requests`、`wr_outfit_responses`、`wr_complaints`。
 4. 上传同目录的索引文件。
 5. 确认 `username_unique`、`invite_code_unique`、`source_hash_unique` 为唯一索引。
 
 所有 Schema 的客户端权限均为 `false`，不要改成公开读写。
+
+好友帮搭的两张新表必须先上传 Schema 和索引，再部署 `wardrobe-api`。分享令牌只在创建响应中返回一次，数据库仅保存哈希；不得把原始令牌写入日志。
+
+阿里云索引名称最多 30 个字符。好友帮搭使用 `wr_req_token_uq`、`wr_req_owner_created`、`wr_resp_req_user_uq`、`wr_resp_req_created` 四个短名称；不要改动对应字段顺序和唯一性。
+
+投诉集合使用 `wr_complaint_user_created`、`wr_complaint_status_created` 两个非唯一索引；客户端无权直接读取或写入投诉集合。
 
 ## 5. 配置云函数
 
@@ -128,7 +137,7 @@ GET <上述地址>/api/health
 应返回：
 
 ```json
-{"ok":true,"service":"wardrobe","database":"ready"}
+{"ok":true,"service":"wardrobe","database":"ready","buildId":"2026-08-03-compliance-v9"}
 ```
 
 ## 6. 配置微信小程序

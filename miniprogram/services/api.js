@@ -77,9 +77,18 @@ async function register({ inviteCode, username, password }) {
   return result;
 }
 
+async function registerOutfitGuest({ token, username, password }) {
+  const result = config.USE_MOCK
+    ? mock.login(username)
+    : await request("/api/auth/outfit-guest-register", "POST", { token, username, password });
+  session.save(result);
+  return result;
+}
+
 module.exports = {
   login,
   register,
+  registerOutfitGuest,
   getMe: () => config.USE_MOCK ? Promise.resolve(mock.getMe()) : request("/api/auth/me"),
   listItems: () => config.USE_MOCK ? Promise.resolve(mock.listItems()) : request("/api/items"),
   getItem: async (id) => {
@@ -101,5 +110,14 @@ module.exports = {
   createCandidate: (data) => config.USE_MOCK ? Promise.resolve(mock.createCandidate(data)) : request("/api/candidates", "POST", data),
   getCandidate: (id) => config.USE_MOCK ? Promise.resolve(mock.getCandidate(id)) : request(`/api/candidates/${id}`),
   analyzeCandidate: (id) => config.USE_MOCK ? Promise.resolve(mock.analyzeCandidate(id)) : request(`/api/candidates/${id}/analyze`, "POST"),
-  recordDecision: (id, decision) => config.USE_MOCK ? Promise.resolve(mock.recordDecision(id, decision)) : request(`/api/candidates/${id}/decision`, "POST", { decision })
+  recordDecision: (id, decision) => config.USE_MOCK ? Promise.resolve(mock.recordDecision(id, decision)) : request(`/api/candidates/${id}/decision`, "POST", { decision }),
+  createOutfitRequest: (data) => request("/api/outfit-requests", "POST", data),
+  getOutfitRequest: (token) => request(`/api/outfit-requests/${encodeURIComponent(token)}`),
+  replyToOutfitRequest: (token, data) => request(`/api/outfit-requests/${encodeURIComponent(token)}/responses`, "POST", data),
+  updateOutfitReply: (token, data) => request(`/api/outfit-requests/${encodeURIComponent(token)}/responses/me`, "PATCH", data),
+  closeOutfitRequest: (id) => request(`/api/outfit-requests/${encodeURIComponent(id)}/close`, "POST"),
+  getOutfitResults: (id) => request(`/api/outfit-requests/${encodeURIComponent(id)}/results`),
+  reportOutfitReply: (id, reason) => request(`/api/outfit-responses/${encodeURIComponent(id)}/report`, "POST", { reason }),
+  requestAccountDeletion: () => request("/api/auth/delete-request", "POST"),
+  submitComplaint: (data) => request("/api/complaints", "POST", data)
 };

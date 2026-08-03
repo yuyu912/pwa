@@ -1,0 +1,10 @@
+[
+  {
+    "IndexName": "wr_req_token_uq",
+    "MgoKeySchema": { "MgoIndexKeys": [{ "Name": "token_hash", "Direction": "1" }], "MgoIsUnique": true, "MgoIsSparse": false }
+  },
+  {
+    "IndexName": "wr_req_owner_created",
+    "MgoKeySchema": { "MgoIndexKeys": [{ "Name": "owner_user_id", "Direction": "1" }, { "Name": "created_at", "Direction": "-1" }], "MgoIsUnique": false, "MgoIsSparse": false }
+  }
+]

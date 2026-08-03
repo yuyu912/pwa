@@ -1,1 +1,29 @@
-<view class="page"><view class="art">♡</view><text class="heading">让懂你的人帮你选</text><text class="sub">向好友分享一件候选新衣或今日搭配，请对方留下建议。衣橱内容默认不公开。</text><view class="privacy"><text class="privacy-title">你可以控制</text><text>只分享当前这一次的搭配请求；好友不能浏览你的完整衣橱。</text></view><button class="primary" bindtap="invite">邀请好友帮搭</button><button class="ghost" bindtap="goBack">回到首页</button></view>
+<view class="page">
+  <view class="head"><text class="eyebrow">PRIVATE OUTFIT REQUEST</text><text class="heading">让懂你的人帮你选</text><text class="sub">只分享这一次选择的衣物；好友不能浏览你的完整衣橱。</text></view>
+  <view wx:if="{{loading}}" class="empty">正在读取搭配请求…</view>
+  <view wx:elif="{{error}}" class="notice error">{{error}}</view>
+  <block wx:elif="{{guestRequest}}">
+    <view class="notice">本次邀请最多 5 人参与，{{guestRequest.status === 'open' ? '距失效还有 7 天以内' : '请求已结束'}}。</view>
+    <view class="item-grid"><view wx:for="{{guestRequest.items}}" wx:key="id" class="shared-item"><image src="{{item.imageUrl}}" mode="aspectFit"/><text>{{item.name}}</text><text>{{item.category}} · {{item.color || '未填写颜色'}}</text></view></view>
+    <view class="card"><text class="label">对方想问</text><text class="question">{{guestRequest.question}}</text></view>
+    <view wx:if="{{guestRequest.status === 'open'}}" class="card"><text class="label">你的建议</text><view class="verdicts"><text wx:for="{{verdicts}}" wx:key="value" class="verdict {{verdict === item.value ? 'selected' : ''}}" data-value="{{item.value}}" bindtap="selectVerdict">{{item.label}}</text></view><textarea value="{{comment}}" maxlength="200" bindinput="onComment" placeholder="写一句真诚、具体的建议（最多 200 字）"/><button class="primary" loading="{{saving}}" bindtap="submitReply">{{guestRequest.ownResponse ? '修改建议' : '提交建议'}}</button></view>
+    <view wx:else class="notice">这次搭配请求已关闭或过期，不能再回复。</view>
+  </block>
+  <block wx:elif="{{activeRequest}}">
+    <view class="notice">已创建私密请求：最多 5 位好友、7 天有效。可点击右上角分享；若分享卡片没有带入请求，请复制口令发给好友。</view>
+    <view class="card"><text class="label">你的问题</text><text class="question">{{activeRequest.question}}</text><text class="muted">已进入 {{activeRequest.participantCount}} / 5 人</text></view>
+    <view class="item-grid"><view wx:for="{{activeRequest.items}}" wx:key="id" class="shared-item"><image src="{{item.imageUrl}}" mode="aspectFit"/><text>{{item.name}}</text></view></view>
+    <view wx:if="{{results}}" class="card"><text class="label">好友建议</text><text class="summary">好看 {{results.summary.like}} · 一般 {{results.summary.neutral}} · 不建议 {{results.summary.dislike}}</text><view wx:for="{{results.responses}}" wx:key="id" class="reply"><text>{{item.verdict === 'like' ? '好看' : item.verdict === 'neutral' ? '一般' : '不建议'}} · {{item.comment}}</text><button wx:if="{{!item.reported}}" size="mini" class="link" data-id="{{item.id}}" bindtap="reportReply">举报并隐藏</button><text wx:else class="muted">已举报并隐藏给其他参与者</text></view></view>
+    <button wx:if="{{activeRequest.status === 'open'}}" class="primary" bindtap="copyInviteCode">复制好友帮搭口令</button><button wx:if="{{activeRequest.status === 'open'}}" class="secondary" loading="{{saving}}" bindtap="closeRequest">提前关闭本次请求</button><button class="ghost" bindtap="startNew">发起新的搭配请求</button>
+  </block>
+  <block wx:else>
+    <view class="privacy card"><text class="privacy-title">你可以控制</text><text>选择 1 至 5 件衣物并提出问题。链接只给受邀好友使用，7 天后自动失效，也可提前关闭。</text></view>
+    <view class="card restore-card"><text class="label">查看已经创建的请求</text><input class="restore-input" value="{{restoreCode}}" bindinput="onRestoreCode" placeholder="请粘贴“搭配:…”完整口令" placeholder-style="color:#8b8298;" maxlength="160"/><button class="secondary" bindtap="pasteRestoreCode">从剪贴板粘贴口令</button><button class="primary" bindtap="openByInviteCode">查看好友回复</button></view>
+    <text class="label">选择要分享的衣物（{{selectedIds.length}} / 5）</text>
+    <view wx:if="{{items.length === 0}}" class="empty">先添加衣物，才能请好友帮搭。</view>
+    <view wx:else class="item-grid"><view wx:for="{{items}}" wx:key="id" class="choose-item {{item.selected ? 'picked' : ''}}" data-id="{{item.id}}" bindtap="toggleItem"><image src="{{item.imageUrl}}" mode="aspectFit"/><text>{{item.name}}</text><text>{{item.selected ? '已选择' : '点击选择'}}</text></view></view>
+    <text class="label">想问好友什么？</text><textarea value="{{question}}" maxlength="200" bindinput="onQuestion" placeholder="例如：这套适合周末见朋友吗？"/>
+    <button class="primary" loading="{{saving}}" bindtap="createRequest">创建并分享</button>
+  </block>
+  <text wx:if="{{message}}" class="notice success">{{message}}</text>
+</view>

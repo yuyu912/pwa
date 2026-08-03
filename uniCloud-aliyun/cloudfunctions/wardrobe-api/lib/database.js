@@ -8,7 +8,10 @@ const COLLECTIONS = Object.freeze({
   candidates: "wr_candidates",
   drafts: "wr_image_drafts",
   aiUsage: "wr_ai_usage_events",
-  aiBudget: "wr_ai_budget"
+  aiBudget: "wr_ai_budget",
+  outfitRequests: "wr_outfit_requests",
+  outfitResponses: "wr_outfit_responses",
+  complaints: "wr_complaints"
 });
 
 const database = () => uniCloud.database();

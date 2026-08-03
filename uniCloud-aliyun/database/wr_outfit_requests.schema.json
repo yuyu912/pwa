@@ -1,0 +1,19 @@
+{
+  "bsonType": "object",
+  "description": "受邀好友帮搭请求，仅允许云函数访问",
+  "required": ["owner_user_id", "items", "question", "token_hash", "status", "participant_user_ids", "created_at", "expires_at"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false, "count": false },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "owner_user_id": { "bsonType": "string" },
+    "items": { "bsonType": "array" },
+    "question": { "bsonType": "string", "maxLength": 200 },
+    "token_hash": { "bsonType": "string" },
+    "status": { "bsonType": "string" },
+    "participant_user_ids": { "bsonType": "array", "arrayType": "string" },
+    "responded_user_ids": { "bsonType": "array", "arrayType": "string" },
+    "created_at": { "bsonType": "string" },
+    "expires_at": { "bsonType": "string" },
+    "closed_at": { "bsonType": "string" }
+  }
+}

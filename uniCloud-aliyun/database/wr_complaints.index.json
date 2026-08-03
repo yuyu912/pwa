@@ -1,0 +1,10 @@
+[
+  {
+    "IndexName": "wr_complaint_user_created",
+    "MgoKeySchema": { "MgoIndexKeys": [{ "Name": "user_id", "Direction": "1" }, { "Name": "created_at", "Direction": "-1" }], "MgoIsUnique": false, "MgoIsSparse": false }
+  },
+  {
+    "IndexName": "wr_complaint_status_created",
+    "MgoKeySchema": { "MgoIndexKeys": [{ "Name": "status", "Direction": "1" }, { "Name": "created_at", "Direction": "-1" }], "MgoIsUnique": false, "MgoIsSparse": false }
+  }
+]
