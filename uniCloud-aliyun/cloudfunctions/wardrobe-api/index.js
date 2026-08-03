@@ -9,7 +9,7 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-03-compliance-v9";
+const BUILD_ID = "2026-08-03-p1-calendar-v1";
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
 const newId = () => crypto.randomUUID();
 const parseArray = (value) => {
@@ -520,6 +520,7 @@ const processRecognitionTask = async (taskId, userId) => {
 const route = async (event) => {
   const method = String(event.httpMethod || "GET").toUpperCase();
   const path = String(event.path || "/").replace(/\/+$/, "") || "/";
+  const query = event.queryStringParameters || {};
   const body = ["POST", "PUT", "PATCH"].includes(method) ? parseBody(event) : {};
 
   if (method === "OPTIONS") return response(event, 204, null);
@@ -772,6 +773,40 @@ const route = async (event) => {
     // 衣橱、天气推荐和新衣分析只读取有效衣物；软删除记录仍留在数据库中，避免误删后无法追溯。
     const items = await repository.findMany("clothing", { user_id: userId, status: "active" }, { orderBy: "created_at", order: "desc" });
     return response(event, 200, items.map(mapItem));
+  }
+
+  if (method === "GET" && path === "/api/wear-logs") {
+    const start = String(query.start || "");
+    const end = String(query.end || "");
+    const startTime = Date.parse(start);
+    const endTime = Date.parse(end);
+    if (!start || !end || !Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime || endTime - startTime > 32 * 24 * 60 * 60 * 1000) {
+      throw Object.assign(new Error("请提供有效的月份时间范围。"), { status: 400 });
+    }
+    // 由客户端传入本地月份对应的 UTC 起止时间，避免月初月末因时区被分到错误日期。
+    const range = repository.command().gte(start).and(repository.command().lt(end));
+    const logs = await repository.findMany("wearLogs", { user_id: userId, worn_at: range }, { orderBy: "worn_at", order: "asc", limit: 500 });
+    const itemIds = [...new Set(logs.map((log) => String(log.item_id)))];
+    const itemPairs = await Promise.all(itemIds.map(async (id) => [id, await repository.getById("clothing", id)]));
+    const itemsById = new Map(itemPairs.filter(([, item]) => item && item.user_id === userId));
+    return response(event, 200, logs.map((log) => {
+      const item = itemsById.get(String(log.item_id));
+      return {
+        id: String(log.id),
+        wornAt: log.worn_at,
+        scene: log.scene || "",
+        comfort: log.comfort || "",
+        note: log.note || "",
+        item: item ? {
+          id: String(item.id),
+          name: item.name || "未命名衣物",
+          category: item.category || "",
+          color: item.color || "",
+          active: item.status === "active",
+          imageUrl: cloud.signedUrl(item.image_key, "GET", 3600)
+        } : null
+      };
+    }));
   }
 
   // 预算耗尽或 AI 失败时仍可手动入库；这条路径不调用抠图和千问，因此不消耗 AI 额度。

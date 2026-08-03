@@ -106,6 +106,9 @@ module.exports = {
   updateItem: (id, data) => config.USE_MOCK ? Promise.resolve(mock.updateItem(id, data)) : request(`/api/items/${id}`, "PATCH", data),
   deleteItem: (id) => config.USE_MOCK ? Promise.resolve(mock.deleteItem(id)) : request(`/api/items/${id}`, "DELETE"),
   getWearLogs: (id) => config.USE_MOCK ? Promise.resolve(mock.getWearLogs(id)) : request(`/api/items/${id}/wear-logs`),
+  getMonthlyWearLogs: (start, end) => config.USE_MOCK
+    ? Promise.resolve(mock.getMonthlyWearLogs(start, end))
+    : request(`/api/wear-logs?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
   addWearLog: (id, data) => config.USE_MOCK ? Promise.resolve(mock.addWearLog(id, data)) : request(`/api/items/${id}/wear-logs`, "POST", data),
   createCandidate: (data) => config.USE_MOCK ? Promise.resolve(mock.createCandidate(data)) : request("/api/candidates", "POST", data),
   getCandidate: (id) => config.USE_MOCK ? Promise.resolve(mock.getCandidate(id)) : request(`/api/candidates/${id}`),

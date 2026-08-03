@@ -9,6 +9,8 @@
     "pages/friends/index",
     "pages/wardrobe/index",
     "pages/item-detail/index",
+    "pages/wear-calendar/index",
+    "pages/wardrobe-report/index",
     "pages/candidate/index",
     "pages/privacy/index",
     "pages/account/index",

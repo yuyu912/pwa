@@ -1,0 +1,42 @@
+<view class="page calendar-page">
+  <text class="eyebrow">WEAR HISTORY</text>
+  <text class="page-title">穿着日历</text>
+  <text class="muted">只展示你真实保存的穿着记录。</text>
+
+  <view class="month-switcher card">
+    <button class="month-button" bindtap="previousMonth">‹</button>
+    <text class="month-title">{{monthText}}</text>
+    <button class="month-button" bindtap="nextMonth">›</button>
+  </view>
+
+  <view wx:if="{{loading}}" class="card state-card"><text class="muted">正在加载本月记录…</text></view>
+  <view wx:elif="{{error}}" class="card state-card"><text class="error-text">{{error}}</text><button class="secondary retry-button" bindtap="retry">重新加载</button></view>
+  <block wx:else>
+    <view class="summary-grid">
+      <view class="summary-card"><text class="summary-number">{{totalCount}}</text><text class="summary-label">本月穿着次数</text></view>
+      <view class="summary-card"><text class="summary-number">{{distinctItemCount}}</text><text class="summary-label">不同衣物</text></view>
+    </view>
+    <view class="report-entry card" bindtap="openReport"><view><text class="report-entry-title">查看本月衣橱报表</text><text class="report-entry-copy">高低频衣物与品类使用分布</text></view><text class="row-arrow">›</text></view>
+
+    <view class="card calendar-card">
+      <view class="weekday-row"><text wx:for="{{weekdays}}" wx:key="*this" class="weekday">{{item}}</text></view>
+      <view class="days-grid">
+        <view wx:for="{{days}}" wx:key="key" class="{{item.empty ? 'calendar-day empty-day' : item.className}}" data-key="{{item.empty ? '' : item.key}}" bindtap="selectDay">
+          <text wx:if="{{!item.empty}}" class="day-number">{{item.day}}</text>
+          <text wx:if="{{item.count}}" class="record-dot">{{item.count}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="day-section">
+      <text class="section-title">{{selectedKey || '本月'}}穿着</text>
+      <view wx:if="{{selectedLogs.length === 0}}" class="card empty-day-copy"><text class="muted">这一天还没有穿着记录。</text></view>
+      <view wx:for="{{selectedLogs}}" wx:key="id" class="card log-card" data-id="{{item.item.id}}" data-active="{{item.item.active}}" bindtap="openItem">
+        <image wx:if="{{item.item.imageUrl && !imageFailures[item.id]}}" class="item-image" src="{{item.item.imageUrl}}" mode="aspectFill" data-id="{{item.id}}" binderror="onImageError" />
+        <view wx:else class="item-placeholder">衣</view>
+        <view class="log-copy"><text class="item-name">{{item.item.name}}</text><text class="item-meta">{{item.item.category}}{{item.item.color ? ' · ' + item.item.color : ''}}</text><text class="item-meta">{{item.timeText}}{{item.scene ? ' · ' + item.scene : ''}}{{item.comfort ? ' · ' + item.comfort : ''}}</text><text wx:if="{{!item.item.active}}" class="inactive-label">已移出衣橱</text></view>
+        <text class="row-arrow">{{item.item.active ? '›' : ''}}</text>
+      </view>
+    </view>
+  </block>
+</view>

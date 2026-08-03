@@ -29,6 +29,7 @@ Page({
   toTodayOutfit() { wx.navigateTo({ url: "/pages/today-outfit/index" }); },
   toAdd() { wx.navigateTo({ url: "/pages/add-item/index" }); },
   toFriends() { wx.navigateTo({ url: "/pages/friends/index" }); },
+  toWearCalendar() { wx.navigateTo({ url: "/pages/wear-calendar/index" }); },
   toMine() { wx.navigateTo({ url: "/pages/account/index" }); },
   onActionImageError(event) {
     const id = event.currentTarget.dataset.id;

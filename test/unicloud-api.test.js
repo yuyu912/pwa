@@ -14,10 +14,15 @@ const createMemoryDatabase = () => {
   const command = {
     in: (values) => ({ operation: "in", values }),
     inc: (value) => ({ operation: "inc", value }),
-    set: (value) => ({ operation: "set", value })
+    set: (value) => ({ operation: "set", value }),
+    gte: (value) => ({ operation: "gte", value, and(other) { return { operation: "and", conditions: [this, other] }; } }),
+    lt: (value) => ({ operation: "lt", value })
   };
   const matches = (document, where) => Object.entries(where || {}).every(([field, expected]) => {
     if (expected?.operation === "in") return expected.values.includes(document[field]);
+    if (expected?.operation === "gte") return document[field] >= expected.value;
+    if (expected?.operation === "lt") return document[field] < expected.value;
+    if (expected?.operation === "and") return expected.conditions.every((condition) => matches({ value: document[field] }, { value: condition }));
     return document[field] === expected;
   });
   const collectionFor = (store, name, transactionMode = false) => {
@@ -84,13 +89,17 @@ const createMemoryDatabase = () => {
   };
 };
 
-const makeEvent = (path, method = "GET", body = null, headers = {}) => ({
-  path,
+const makeEvent = (path, method = "GET", body = null, headers = {}) => {
+  const url = new URL(path, "https://wardrobe.test");
+  return {
+  path: url.pathname,
   httpMethod: method,
   headers,
+  queryStringParameters: Object.fromEntries(url.searchParams),
   body: body == null ? "" : JSON.stringify(body),
   isBase64Encoded: false
-});
+  };
+};
 const readResponse = (result) => ({ status: result.statusCode, body: result.body ? JSON.parse(result.body) : null });
 
 test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着", async () => {
@@ -143,7 +152,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const { main } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-03-compliance-v9");
+  assert.equal(health.body.buildId, "2026-08-03-p1-calendar-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -262,6 +271,20 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(wearHistory.body[0].comfort, "舒适");
   assert.match(wearHistory.body[0].wornAt, /^\d{4}-\d{2}-\d{2}T/);
 
+  const februaryCalendar = readResponse(await main(makeEvent(
+    "/api/wear-logs?start=2026-02-01T00%3A00%3A00.000Z&end=2026-03-01T00%3A00%3A00.000Z",
+    "GET",
+    null,
+    authorization
+  )));
+  assert.equal(februaryCalendar.status, 200);
+  assert.equal(februaryCalendar.body.length, 6);
+  assert.equal(februaryCalendar.body[0].item.name, "衣物1");
+  assert.equal(februaryCalendar.body[0].item.active, true);
+
+  const invalidCalendarRange = readResponse(await main(makeEvent("/api/wear-logs?start=bad&end=also-bad", "GET", null, authorization)));
+  assert.equal(invalidCalendarRange.status, 400);
+
   const updatedItems = readResponse(await main(makeEvent("/api/items", "GET", null, authorization)));
   assert.equal(updatedItems.body.find((item) => item.id === "1").wear_count, 7);
 
@@ -306,7 +329,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-03-compliance-v9");
+  assert.equal(failedRecognition.body.buildId, "2026-08-03-p1-calendar-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

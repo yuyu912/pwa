@@ -5,6 +5,7 @@
 .categories { white-space: nowrap; margin-top: 20rpx; }
 .category { display: inline-block; margin-right: 14rpx; padding: 12rpx 20rpx; border-radius: 999rpx; background: #f2ecf8; color: #756482; font-size: 25rpx; }
 .category.active { background: #8362ab; color: #fff; }
+.filter-label { display: block; margin-top: 22rpx; color: #695b74; font-size: 23rpx; font-weight: 700; }.filter-options { margin-top: 12rpx; white-space: nowrap; }.filter-chip { display: inline-block; margin-right: 12rpx; padding: 10rpx 18rpx; border-radius: 999rpx; background: #f4eff8; color: #7c6e86; font-size: 23rpx; }.filter-chip.active { background: #9a7ab8; color: #fff; }.filter-summary { display: flex; gap: 18rpx; margin-top: 22rpx; }.filter-summary > view { display: flex; flex: 1; align-items: baseline; gap: 8rpx; padding: 20rpx; border-radius: 24rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(83,57,118,.07); }.summary-number { color: #8461a6; font-size: 39rpx; font-weight: 700; }.summary-label { color: #887d92; font-size: 21rpx; }
 .item-list { display: flex; flex-direction: column; gap: 18rpx; margin-top: 24rpx; }
 .item-card { display: flex; align-items: center; padding: 20rpx; }
 .item-visual { width: 116rpx; height: 116rpx; flex: 0 0 auto; overflow: hidden; border-radius: 22rpx; }

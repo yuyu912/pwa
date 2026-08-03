@@ -12,7 +12,15 @@
     <scroll-view class="categories" scroll-x>
       <text wx:for="{{categories}}" wx:key="*this" class="category {{activeCategory === item ? 'active' : ''}}" bindtap="selectCategory" data-category="{{item}}">{{item}}</text>
     </scroll-view>
+    <text class="filter-label">季节</text>
+    <scroll-view class="filter-options" scroll-x><text wx:for="{{seasons}}" wx:key="*this" class="filter-chip {{activeSeason === item ? 'active' : ''}}" bindtap="selectSeason" data-value="{{item}}">{{item}}</text></scroll-view>
+    <text class="filter-label">厚薄</text>
+    <scroll-view class="filter-options" scroll-x><text wx:for="{{thicknesses}}" wx:key="*this" class="filter-chip {{activeThickness === item ? 'active' : ''}}" bindtap="selectThickness" data-value="{{item}}">{{item}}</text></scroll-view>
+    <text class="filter-label">本月穿着状态</text>
+    <scroll-view class="filter-options" scroll-x><text wx:for="{{wearStatuses}}" wx:key="*this" class="filter-chip {{activeWearStatus === item ? 'active' : ''}}" bindtap="selectWearStatus" data-value="{{item}}">{{item}}</text></scroll-view>
   </view>
+
+  <view wx:if="{{!loading && !error}}" class="filter-summary"><view><text class="summary-number">{{matchedCount}}</text><text class="summary-label">件符合条件</text></view><view><text class="summary-number">{{monthlyWearTotal}}</text><text class="summary-label">次本月穿着</text></view></view>
 
   <view wx:if="{{loading}}" class="empty">正在读取衣橱…</view>
   <view wx:elif="{{error}}" class="empty"><text>{{error}}</text><button class="secondary retry" bindtap="loadItems">重新尝试</button></view>
@@ -24,7 +32,7 @@
       </view>
       <view class="item-content">
         <text class="item-name">{{item.name}}</text>
-        <text class="item-meta">{{item.category}} · {{item.color}} · 已穿 {{item.wearCount}} 次</text>
+        <text class="item-meta">{{item.category}} · {{item.color}} · 本月 {{item.monthlyWearCount}} 次 · 累计 {{item.wearCount}} 次</text>
         <text class="item-attributes">{{item.season || '未填写季节'}} · {{item.thickness || '未填写厚薄'}} · {{item.material || '未填写材质'}}</text>
         <view class="tags">
           <text wx:for="{{item.styles}}" wx:for-item="style" wx:key="*this" class="tag style-tag">{{style}}</text>

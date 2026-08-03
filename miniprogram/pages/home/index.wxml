@@ -22,6 +22,8 @@
     <view class="quick-card" bindtap="toFriends"><image wx:if="{{!imageErrors.friends}}" class="quick-bg" src="/assets/action-friends-bg-v2.jpg" mode="aspectFill" data-id="friends" binderror="onActionImageError"/><text wx:else class="quick-fallback">♡</text><view class="quick-label"><text>好友帮搭</text></view></view>
   </view>
 
+  <view class="calendar-entry" bindtap="toWearCalendar"><view class="calendar-entry-icon"><text class="calendar-entry-month">月</text><text class="calendar-entry-day">日</text></view><view class="calendar-entry-copy"><text class="calendar-entry-title">穿着日历</text><text class="calendar-entry-subtitle">按月回看真实穿着记录</text></view><text class="chevron">›</text></view>
+
   <view class="progress-card" bindtap="toWardrobe"><image wx:if="{{!imageErrors.progress}}" class="progress-art" src="/assets/progress-wardrobe-v2.jpg" mode="aspectFit" data-id="progress" binderror="onActionImageError"/><view wx:else class="mini-closet">▥</view><text class="progress-copy">已录入 <text class="count">{{itemCount}}</text> 件 · 再添 <text class="count">2</text> 件解锁完整分析</text><text class="chevron">›</text></view>
 
   <view class="bottom-nav">

@@ -1,0 +1,28 @@
+.report-page { padding-bottom: 70rpx; }
+.page-title { display: block; margin: 10rpx 0 4rpx; color: #4f3c61; font-size: 50rpx; font-weight: 700; }
+.month-text { display: block; margin-bottom: 8rpx; color: #755990; font-size: 29rpx; font-weight: 600; }
+.state-card { margin-top: 28rpx; text-align: center; }
+.error-text { display: block; color: #a04f5a; font-size: 26rpx; }
+.retry-button { margin-top: 20rpx; font-size: 26rpx; }
+.summary-grid { display: flex; gap: 20rpx; margin-top: 28rpx; }
+.summary-card { display: flex; flex: 1; flex-direction: column; gap: 5rpx; padding: 25rpx; border-radius: 26rpx; background: #fff; box-shadow: 0 10rpx 30rpx rgba(83,57,118,.08); }
+.summary-number { color: #8966ab; font-size: 46rpx; font-weight: 700; }
+.summary-label { color: #80758c; font-size: 22rpx; }
+.no-data { margin-top: 24rpx; text-align: center; }
+.no-data-title { display: block; margin-bottom: 10rpx; color: #554463; font-size: 30rpx; font-weight: 700; }
+.section { margin-top: 30rpx; }
+.section-title { display: block; color: #554463; font-size: 31rpx; font-weight: 700; }
+.section-note { display: block; margin: 8rpx 0 15rpx; color: #8b8298; font-size: 22rpx; line-height: 1.55; }
+.item-row { display: flex; align-items: center; gap: 18rpx; margin-bottom: 14rpx; padding: 18rpx; }
+.item-image, .item-placeholder { flex: 0 0 auto; width: 102rpx; height: 102rpx; border-radius: 20rpx; }
+.item-placeholder { background: #eee7f5; color: #987caf; font-size: 34rpx; line-height: 102rpx; text-align: center; }
+.item-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 7rpx; }
+.item-name { overflow: hidden; color: #4c3d58; font-size: 28rpx; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.item-meta { color: #8b8298; font-size: 22rpx; }
+.count-badge { flex: 0 0 auto; padding: 8rpx 15rpx; border-radius: 999rpx; background: #e9def3; color: #74548f; font-size: 23rpx; font-weight: 700; }
+.count-badge.quiet { background: #f2edf5; color: #81758b; }
+.category-card { padding: 24rpx; }
+.category-row + .category-row { margin-top: 22rpx; }
+.category-heading { display: flex; justify-content: space-between; margin-bottom: 10rpx; color: #64566e; font-size: 24rpx; }
+.bar-track { height: 18rpx; overflow: hidden; border-radius: 999rpx; background: #eee8f2; }
+.bar-fill { height: 100%; border-radius: 999rpx; background: linear-gradient(90deg, #b99aca, #8a68aa); }

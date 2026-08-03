@@ -158,6 +158,19 @@ module.exports = {
   getWearLogs(id) {
     return wx.getStorageSync(`wardrobe_mock_wear_logs_${id}`) || [];
   },
+  getMonthlyWearLogs(start, end) {
+    const startTime = Date.parse(start);
+    const endTime = Date.parse(end);
+    return items().flatMap((item) => (wx.getStorageSync(`wardrobe_mock_wear_logs_${item.id}`) || [])
+      .filter((log) => {
+        const time = Date.parse(log.wornAt);
+        return time >= startTime && time < endTime;
+      })
+      .map((log) => ({
+        ...log,
+        item: { id: item.id, name: item.name, category: item.category, color: item.color, active: true, imageUrl: item.imageUrl || "" }
+      })));
+  },
   addWearLog(id, data) {
     const next = items().map((item) => item.id === id ? { ...item, wearCount: item.wearCount + 1 } : item);
     saveItems(next);

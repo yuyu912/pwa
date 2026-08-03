@@ -1,0 +1,33 @@
+.calendar-page { padding-bottom: 70rpx; }
+.page-title { display: block; margin: 10rpx 0 8rpx; color: #4f3c61; font-size: 50rpx; font-weight: 700; }
+.month-switcher { display: flex; align-items: center; justify-content: space-between; margin-top: 28rpx; padding: 16rpx 20rpx; }
+.month-button { width: 72rpx; height: 64rpx; padding: 0; background: #f1e9f8; color: #73558f; font-size: 42rpx; line-height: 64rpx; }
+.month-title { color: #4f3c61; font-size: 32rpx; font-weight: 700; }
+.state-card { margin-top: 24rpx; text-align: center; }
+.error-text { display: block; color: #a04f5a; font-size: 26rpx; }
+.retry-button { margin-top: 20rpx; font-size: 26rpx; }
+.summary-grid { display: flex; gap: 20rpx; margin-top: 24rpx; }
+.summary-card { display: flex; flex: 1; flex-direction: column; gap: 4rpx; padding: 24rpx; border-radius: 25rpx; background: #fff; box-shadow: 0 10rpx 30rpx rgba(83,57,118,.08); }
+.summary-number { color: #8a66ad; font-size: 44rpx; font-weight: 700; }
+.summary-label { color: #80758c; font-size: 23rpx; }
+.report-entry { display: flex; align-items: center; justify-content: space-between; margin-top: 20rpx; padding: 24rpx 28rpx; }.report-entry-title, .report-entry-copy { display: block; }.report-entry-title { color: #554463; font-size: 28rpx; font-weight: 700; }.report-entry-copy { margin-top: 7rpx; color: #8b8298; font-size: 22rpx; }
+.calendar-card { margin-top: 24rpx; padding: 20rpx; }
+.weekday-row, .days-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+.weekday { padding: 10rpx 0 16rpx; color: #91859c; font-size: 23rpx; text-align: center; }
+.calendar-day { position: relative; display: flex; align-items: center; justify-content: center; height: 76rpx; margin: 3rpx; border-radius: 18rpx; color: #51465d; }
+.calendar-day.selected { background: #8a68aa; color: #fff; }
+.empty-day { opacity: 0; }
+.day-number { font-size: 26rpx; }
+.record-dot { position: absolute; right: 5rpx; bottom: 4rpx; min-width: 25rpx; height: 25rpx; padding: 0 4rpx; border-radius: 999rpx; background: #eadff4; color: #76568f; font-size: 17rpx; line-height: 25rpx; text-align: center; box-sizing: border-box; }
+.selected .record-dot { background: #fff; }
+.day-section { margin-top: 30rpx; }
+.section-title { display: block; margin-bottom: 16rpx; color: #554463; font-size: 30rpx; font-weight: 700; }
+.empty-day-copy { text-align: center; }
+.log-card { display: flex; align-items: center; gap: 20rpx; margin-bottom: 16rpx; padding: 20rpx; }
+.item-image, .item-placeholder { flex: 0 0 auto; width: 116rpx; height: 116rpx; border-radius: 22rpx; }
+.item-placeholder { background: #eee7f5; color: #9a7db2; font-size: 38rpx; line-height: 116rpx; text-align: center; }
+.log-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 7rpx; }
+.item-name { overflow: hidden; color: #4c3d58; font-size: 29rpx; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.item-meta { color: #8b8298; font-size: 23rpx; }
+.inactive-label { color: #a36b73; font-size: 22rpx; }
+.row-arrow { color: #8a6ca3; font-size: 40rpx; }

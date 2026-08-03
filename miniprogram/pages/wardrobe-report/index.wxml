@@ -1,0 +1,46 @@
+<view class="page report-page">
+  <text class="eyebrow">WARDROBE REPORT</text>
+  <text class="page-title">衣橱报表</text>
+  <text class="month-text">{{monthText}}</text>
+  <text class="muted">统计只基于已保存的真实穿着记录。</text>
+
+  <view wx:if="{{loading}}" class="card state-card"><text class="muted">正在生成本月报表…</text></view>
+  <view wx:elif="{{error}}" class="card state-card"><text class="error-text">{{error}}</text><button class="secondary retry-button" bindtap="retry">重新加载</button></view>
+  <block wx:elif="{{report}}">
+    <view class="summary-grid">
+      <view class="summary-card"><text class="summary-number">{{report.totalCount}}</text><text class="summary-label">本月穿着次数</text></view>
+      <view class="summary-card"><text class="summary-number">{{report.distinctItemCount}}</text><text class="summary-label">穿过的不同衣物</text></view>
+    </view>
+
+    <view wx:if="{{!report.hasData}}" class="card no-data"><text class="no-data-title">本月数据不足</text><text class="muted">还没有穿着记录，暂不生成高低频和品类分布。</text></view>
+    <block wx:else>
+      <view class="section">
+        <text class="section-title">本月穿着最多</text>
+        <text class="section-note">并列时同时展示，不代表穿搭质量评价。</text>
+        <view wx:for="{{report.highFrequency}}" wx:key="id" class="card item-row" data-id="{{item.id}}" bindtap="openItem">
+          <image wx:if="{{item.imageUrl && !imageFailures['high-' + item.id]}}" class="item-image" src="{{item.imageUrl}}" mode="aspectFill" data-id="high-{{item.id}}" binderror="onImageError"/><view wx:else class="item-placeholder">衣</view>
+          <view class="item-copy"><text class="item-name">{{item.name}}</text><text class="item-meta">{{item.category}}{{item.color ? ' · ' + item.color : ''}}</text></view><text class="count-badge">{{item.count}}次</text>
+        </view>
+      </view>
+
+      <view class="section">
+        <text class="section-title">本月穿着最少</text>
+        <text class="section-note">按当前衣橱中的衣物计算，0 次衣物会优先出现。</text>
+        <view wx:for="{{report.lowFrequency}}" wx:key="id" class="card item-row" data-id="{{item.id}}" bindtap="openItem">
+          <image wx:if="{{item.imageUrl && !imageFailures['low-' + item.id]}}" class="item-image" src="{{item.imageUrl}}" mode="aspectFill" data-id="low-{{item.id}}" binderror="onImageError"/><view wx:else class="item-placeholder">衣</view>
+          <view class="item-copy"><text class="item-name">{{item.name}}</text><text class="item-meta">{{item.category}}{{item.color ? ' · ' + item.color : ''}}</text></view><text class="count-badge quiet">{{item.count}}次</text>
+        </view>
+      </view>
+
+      <view class="section">
+        <text class="section-title">品类使用分布</text>
+        <view class="card category-card">
+          <view wx:for="{{report.categories}}" wx:key="name" class="category-row">
+            <view class="category-heading"><text>{{item.name}}</text><text>{{item.count}}次 · {{item.percent}}%</text></view>
+            <view class="bar-track"><view class="bar-fill" style="width: {{item.percent}}%"></view></view>
+          </view>
+        </view>
+      </view>
+    </block>
+  </block>
+</view>
