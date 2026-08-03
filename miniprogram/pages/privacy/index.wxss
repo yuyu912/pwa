@@ -1,1 +1,6 @@
-.title{display:block;font-size:46rpx;font-weight:600;margin:12rpx 0 28rpx}.card{margin-bottom:20rpx;line-height:1.8;color:#67566f}.heading{display:block;font-weight:600;color:#71566e;margin-bottom:8rpx}
+.privacy-page { padding-bottom: 70rpx; }
+.title { margin: 12rpx 0 28rpx; font-size: 46rpx; font-weight: 600; }
+.privacy-card { margin-bottom: 20rpx; }
+.heading { margin-bottom: 8rpx; color: #71566e; font-weight: 600; }
+.content { color: #67566f; line-height: 1.8; }
+.secondary { margin-top: 8rpx; }

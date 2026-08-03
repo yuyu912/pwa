@@ -1,4 +1,5 @@
 <view class="page">
+  <button class="home-link" bindtap="goHome">回到首页</button>
   <view class="head"><text class="eyebrow">PRIVATE OUTFIT REQUEST</text><text class="heading">让懂你的人帮你选</text><text class="sub">只分享这一次选择的衣物；好友不能浏览你的完整衣橱。</text></view>
   <view wx:if="{{loading}}" class="empty">正在读取搭配请求…</view>
   <view wx:elif="{{error}}" class="notice error">{{error}}</view>

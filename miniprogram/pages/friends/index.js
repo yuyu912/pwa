@@ -6,7 +6,13 @@ const verdicts = [
   { value: "neutral", label: "一般" },
   { value: "dislike", label: "不建议" }
 ];
-const pendingShareToken = () => getApp().globalData.pendingOutfitToken || wx.getStorageSync("pending_outfit_token") || "";
+function consumePendingShareToken() {
+  const app = getApp();
+  const token = app.globalData.pendingOutfitToken || wx.getStorageSync("pending_outfit_token") || "";
+  app.globalData.pendingOutfitToken = "";
+  wx.removeStorageSync("pending_outfit_token");
+  return token;
+}
 
 Page({
   data: {
@@ -15,12 +21,9 @@ Page({
     verdicts, verdict: "like", comment: "", reportReason: "", restoreCode: ""
   },
   onLoad(options) {
-    const token = options.token || pendingShareToken() || wx.getStorageSync("owner_outfit_token") || "";
-    // 好友页拿到令牌后会把它显式带到登录页，避免页面重定向时依赖微信继续保留原始 query。
-    if (token) {
-      getApp().globalData.pendingOutfitToken = token;
-      wx.removeStorageSync("pending_outfit_token");
-    }
+    // 分享入口只消费一次；本人以前创建的请求必须通过页面上的口令恢复，不能劫持普通入口。
+    const token = options.token || consumePendingShareToken();
+    if (options.token) consumePendingShareToken();
     this.setData({ token });
     wx.showShareMenu({ withShareTicket: false });
   },
@@ -137,5 +140,5 @@ Page({
     } catch (error) { this.setData({ error: error.message || "举报失败。" }); }
   },
   startNew() { wx.removeStorageSync("owner_outfit_token"); this.setData({ token: "", selectedIds: [], activeRequest: null, guestRequest: null, results: null, message: "", restoreCode: "" }); this.load(); },
-  goBack() { wx.navigateBack(); }
+  goHome() { wx.reLaunch({ url: "/pages/home/index" }); }
 });
