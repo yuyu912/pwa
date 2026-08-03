@@ -20,7 +20,7 @@ Page({
       const item = await api.getItem(options.id);
       if (!item || (item.idle_status || item.idleStatus || "active") !== "considering") throw new Error("请先把衣物加入私人闲置清单。");
       const form = formFromItem(item);
-      this.setData({ item, form, modeIndex: Math.max(0, MODES.findIndex((entry) => entry.value === form.mode)), statusIndex: Math.max(0, STATUSES.findIndex((entry) => entry.value === form.status)), generated: generateListing(item, form), loading: false });
+      this.setData({ item, form, modeIndex: Math.max(0, MODES.findIndex((entry) => entry.value === form.mode)), statusIndex: Math.max(0, STATUSES.findIndex((entry) => entry.value === form.status)), generated: item.listing_mode ? generateListing(item, form) : null, loading: false });
     } catch (error) { this.setData({ loading: false, error: error.message || "发布助手加载失败。" }); }
   },
   onInput(event) { this.setData({ [`form.${event.currentTarget.dataset.field}`]: event.detail.value, error: "", message: "" }); },
@@ -28,8 +28,14 @@ Page({
   onStatus(event) { const statusIndex = Number(event.detail.value); this.setData({ statusIndex, "form.status": STATUSES[statusIndex].value }); },
   generate() {
     const error = validateListingForm(this.data.form);
-    if (error) return this.setData({ error, message: "" });
-    this.setData({ generated: generateListing(this.data.item, this.data.form), error: "", message: "文案已更新。" });
+    if (error) {
+      this.setData({ error, message: "" });
+      return wx.showToast({ title: error, icon: "none" });
+    }
+    this.setData({ generated: generateListing(this.data.item, this.data.form), error: "", message: "文案已更新。" }, () => {
+      wx.showToast({ title: "文案已更新", icon: "success" });
+      wx.pageScrollTo({ selector: ".result-card", duration: 250 });
+    });
   },
   copyText() {
     const error = validateListingForm(this.data.form);

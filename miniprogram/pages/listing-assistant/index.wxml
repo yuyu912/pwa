@@ -13,9 +13,10 @@
       <label><text>交付方式 *</text><input value="{{form.delivery}}" data-field="delivery" bindinput="onInput" placeholder="例如：同城当面交付或快递" maxlength="50"/></label>
       <label><text>补充说明</text><textarea value="{{form.note}}" data-field="note" bindinput="onInput" maxlength="200"/></label>
       <button class="secondary" bindtap="generate">生成/更新文案</button>
+      <text wx:if="{{error}}" class="error action-feedback">{{error}}</text>
+      <text wx:if="{{message}}" class="message action-feedback">{{message}}</text>
     </view>
     <view wx:if="{{generated}}" class="card result-card"><text class="result-title">{{generated.title}}</text><text class="result-content">{{generated.content}}</text><button class="primary" bindtap="copyText">复制发布文案</button><button class="secondary" bindtap="previewImage">查看并长按保存图片</button></view>
-    <view class="card form-card"><text class="section-title">发布后的记录</text><label><text>平台</text><input value="{{form.platform}}" data-field="platform" bindinput="onInput" maxlength="30"/></label><label><text>商品链接（可留空）</text><input value="{{form.url}}" data-field="url" bindinput="onInput" placeholder="发布后粘贴链接" maxlength="500"/></label><label><text>状态</text><picker range="{{statuses}}" range-key="label" value="{{statusIndex}}" bindchange="onStatus"><view class="picker">{{statuses[statusIndex].label}}</view></picker></label><button class="primary" loading="{{saving}}" disabled="{{saving}}" bindtap="save">保存发布记录</button></view>
-    <text wx:if="{{error}}" class="error">{{error}}</text><text wx:if="{{message}}" class="message">{{message}}</text>
+    <view class="card form-card"><text class="section-title">发布后的记录</text><label><text>平台</text><input value="{{form.platform}}" data-field="platform" bindinput="onInput" maxlength="30"/></label><label><text>商品链接（可留空）</text><input value="{{form.url}}" data-field="url" bindinput="onInput" placeholder="发布后粘贴链接" maxlength="500"/></label><label><text>状态</text><picker range="{{statuses}}" range-key="label" value="{{statusIndex}}" bindchange="onStatus"><view class="picker">{{statuses[statusIndex].label}}</view></picker></label><button class="primary" loading="{{saving}}" disabled="{{saving}}" bindtap="save">保存发布记录</button><text wx:if="{{error}}" class="error action-feedback">{{error}}</text><text wx:if="{{message}}" class="message action-feedback">{{message}}</text></view>
   </block>
 </view>

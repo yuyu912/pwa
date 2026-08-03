@@ -38,6 +38,14 @@ test("客户端在请求云端前校验必填项、金额、租期和链接", ()
   assert.equal(validateListingForm({ mode: "sale", condition: "九成新", delivery: "快递", salePrice: "", url: "" }), "");
 });
 
+test("生成按钮提供可见反馈并滚动到结果", () => {
+  const page = fs.readFileSync(new URL("../miniprogram/pages/listing-assistant/index.js", import.meta.url), "utf8");
+  const template = fs.readFileSync(new URL("../miniprogram/pages/listing-assistant/index.wxml", import.meta.url), "utf8");
+  assert.match(page, /wx\.showToast\(\{ title: "文案已更新"/);
+  assert.match(page, /wx\.pageScrollTo\(\{ selector: "\.result-card"/);
+  assert.match(template, /class="error action-feedback"/);
+});
+
 test("云端发布记录只接受本人闲置衣物并校验链接", () => {
   const backend = fs.readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
   assert.match(backend, /item\.user_id !== userId/);
