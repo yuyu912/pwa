@@ -9,7 +9,7 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-03-p1-listing-assistant-v1";
+const BUILD_ID = "2026-08-03-p1-listing-assistant-v2";
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
 const newId = () => crypto.randomUUID();
 const parseArray = (value) => {
@@ -917,14 +917,15 @@ const route = async (event) => {
   if (method === "GET" && path === "/api/idle-items") {
     const items = await repository.findMany("clothing", { user_id: userId, status: "active", idle_status: "considering" }, { orderBy: "idle_marked_at", order: "desc" });
     const rows = await Promise.all(items.map(async (item) => {
-      const lastWear = await repository.findOne("wearLogs", { user_id: userId, item_id: String(item.id) }, { orderBy: "worn_at", order: "desc" });
+      // 新记录直接使用衣物上的汇总字段；旧数据缺字段时才查询一次穿着历史以保持兼容。
+      const lastWear = item.last_worn_at ? null : await repository.findOne("wearLogs", { user_id: userId, item_id: String(item.id) }, { orderBy: "worn_at", order: "desc" });
       return {
         ...mapItem(item),
         idleStatus: "considering",
         idleReason: item.idle_reason || "",
         idleNote: item.idle_note || "",
         idleMarkedAt: item.idle_marked_at || "",
-        lastWornAt: lastWear?.worn_at || ""
+        lastWornAt: item.last_worn_at || lastWear?.worn_at || ""
       };
     }));
     return response(event, 200, rows);
@@ -945,11 +946,13 @@ const route = async (event) => {
     if (!allowedIdleReasons.includes(reason)) {
       throw Object.assign(new Error("请选择闲置原因。"), { status: 400 });
     }
+    const lastWear = item.last_worn_at ? null : await repository.findOne("wearLogs", { user_id: userId, item_id: itemId }, { orderBy: "worn_at", order: "desc" });
     await repository.update("clothing", itemId, {
       idle_status: "considering",
       idle_reason: reason,
       idle_note: cleanText(body.note, 100),
-      idle_marked_at: now()
+      idle_marked_at: now(),
+      last_worn_at: item.last_worn_at || lastWear?.worn_at || ""
     });
     return response(event, 200, mapItem(await repository.getById("clothing", itemId)));
   }
@@ -1001,12 +1004,14 @@ const route = async (event) => {
   }
 
   const itemMatch = path.match(/^\/api\/items\/([^/]+)$/);
-  if (itemMatch && (method === "PATCH" || method === "DELETE")) {
+  if (itemMatch && (method === "GET" || method === "PATCH" || method === "DELETE")) {
     const itemId = decodeURIComponent(itemMatch[1]);
     const item = await repository.getById("clothing", itemId);
     if (!item || item.user_id !== userId || item.status !== "active") {
       throw Object.assign(new Error("未找到衣物。"), { status: 404 });
     }
+    // 详情页只读取这一件本人衣物，避免为查一个 id 下载整份衣橱并消耗额外 RU。
+    if (method === "GET") return response(event, 200, mapItem(item));
     if (method === "DELETE") {
       // 这里只做软删除，不删除 COS 图片与穿着记录；后续如需恢复仍有数据基础。
       await repository.update("clothing", itemId, { status: "inactive" });
@@ -1063,6 +1068,7 @@ const route = async (event) => {
   }
   if (method === "POST" && wearMatch) {
     const itemId = decodeURIComponent(wearMatch[1]);
+    const wornAt = now();
     await repository.withTransaction(async (tx) => {
       const item = await tx.getById("clothing", itemId);
       if (!item || item.user_id !== userId || item.status !== "active") throw Object.assign(new Error("未找到衣物。"), { status: 404 });
@@ -1072,9 +1078,9 @@ const route = async (event) => {
         scene: cleanText(body.scene, 30),
         comfort: cleanText(body.comfort, 30),
         note: cleanText(body.note, 200),
-        worn_at: now()
+        worn_at: wornAt
       }, newId());
-      await tx.update("clothing", itemId, { wear_count: repository.command().inc(1) });
+      await tx.update("clothing", itemId, { wear_count: repository.command().inc(1), last_worn_at: wornAt });
     });
     return response(event, 201, { ok: true });
   }

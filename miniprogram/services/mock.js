@@ -203,7 +203,8 @@ module.exports = {
       })));
   },
   addWearLog(id, data) {
-    const next = items().map((item) => item.id === id ? { ...item, wearCount: item.wearCount + 1 } : item);
+    const wornAt = new Date().toISOString();
+    const next = items().map((item) => item.id === id ? { ...item, wearCount: item.wearCount + 1, last_worn_at: wornAt } : item);
     saveItems(next);
     // 模拟模式也保存完整记录，保证页面流程与真实云端一致。
     const key = `wardrobe_mock_wear_logs_${id}`;
@@ -213,7 +214,7 @@ module.exports = {
       scene: data.scene || "",
       comfort: data.comfort || "",
       note: data.note || "",
-      wornAt: new Date().toISOString()
+      wornAt
     });
     wx.setStorageSync(key, logs.slice(0, 50));
     return { ok: true };

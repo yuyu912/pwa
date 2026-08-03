@@ -93,8 +93,7 @@ module.exports = {
   listItems: () => config.USE_MOCK ? Promise.resolve(mock.listItems()) : request("/api/items"),
   getItem: async (id) => {
     if (config.USE_MOCK) return mock.getItem(id);
-    const list = await request("/api/items");
-    return list.find((item) => String(item.id) === String(id));
+    return request(`/api/items/${encodeURIComponent(id)}`);
   },
   getAiBudget: () => config.USE_MOCK ? Promise.resolve(mock.getAiBudget()) : request("/api/ai-budget"),
   createUpload: (data) => config.USE_MOCK ? Promise.resolve(mock.createUpload(data)) : request("/api/uploads/presign", "POST", data),

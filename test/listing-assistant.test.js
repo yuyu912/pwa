@@ -31,3 +31,16 @@ test("云端发布记录只接受本人闲置衣物并校验链接", () => {
   assert.match(backend, /item\.idle_status \|\| "active"\) !== "considering"/);
   assert.match(backend, /\^https\?:\\\/\\\/\[\^\\s\]\+\$/);
 });
+
+test("读取单件衣物不再先下载整份衣橱", () => {
+  const client = fs.readFileSync(new URL("../miniprogram/services/api.js", import.meta.url), "utf8");
+  const backend = fs.readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
+  assert.match(client, /request\(`\/api\/items\/\$\{encodeURIComponent\(id\)\}`\)/);
+  assert.match(backend, /if \(method === "GET"\) return response\(event, 200, mapItem\(item\)\)/);
+});
+
+test("闲置清单优先使用衣物最近穿着汇总字段", () => {
+  const backend = fs.readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
+  assert.match(backend, /item\.last_worn_at \? null : await repository\.findOne\("wearLogs"/);
+  assert.match(backend, /last_worn_at: wornAt/);
+});

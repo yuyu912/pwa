@@ -152,7 +152,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const { main } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-03-p1-listing-assistant-v1");
+  assert.equal(health.body.buildId, "2026-08-03-p1-listing-assistant-v2");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -297,6 +297,19 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(idleItems.body[0].idleReason, "很少穿");
   assert.equal(idleItems.body[0].idleNote, "先放进私人清单观察。");
   assert.match(idleItems.body[0].lastWornAt, /^\d{4}-\d{2}-\d{2}T/);
+  const singleItem = readResponse(await main(makeEvent("/api/items/1", "GET", null, authorization)));
+  assert.equal(singleItem.status, 200);
+  assert.equal(singleItem.body.id, "1");
+  const friendCannotReadItem = readResponse(await main(makeEvent("/api/items/1", "GET", null, friendAuthorization)));
+  assert.equal(friendCannotReadItem.status, 404);
+  const savedListing = readResponse(await main(makeEvent("/api/items/1/listing", "PUT", {
+    mode: "rent", condition: "九成新", dailyRent: 10, deposit: 100, minDays: 2,
+    delivery: "同城当面交付", note: "请爱惜衣物", platform: "闲鱼", url: "https://example.com/item/1", status: "listed"
+  }, authorization)));
+  assert.equal(savedListing.status, 200);
+  assert.equal(savedListing.body.listing_mode, "rent");
+  assert.equal(savedListing.body.listing_daily_rent, 10);
+  assert.equal(savedListing.body.listing_status, "listed");
   const friendCannotMarkIdle = readResponse(await main(makeEvent("/api/items/1/idle", "POST", { reason: "重复" }, friendAuthorization)));
   assert.equal(friendCannotMarkIdle.status, 404);
   const invalidIdleReason = readResponse(await main(makeEvent("/api/items/1/idle", "POST", { reason: "自动判定" }, authorization)));
@@ -346,7 +359,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-03-p1-listing-assistant-v1");
+  assert.equal(failedRecognition.body.buildId, "2026-08-03-p1-listing-assistant-v2");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

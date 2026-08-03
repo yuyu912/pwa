@@ -24,6 +24,7 @@
     "scenes": { "bsonType": "array", "arrayType": "string" },
     "price": { "description": "可选价格" },
     "wear_count": { "bsonType": "int", "minimum": 0 },
+    "last_worn_at": { "bsonType": "string", "description": "最近一次真实穿着时间，用于避免闲置清单重复查询穿着记录" },
     "status": { "bsonType": "string" },
     "idle_status": { "bsonType": "string", "description": "私人闲置状态：active 或 considering" },
     "idle_reason": { "bsonType": "string", "description": "用户选择的私人闲置原因" },
