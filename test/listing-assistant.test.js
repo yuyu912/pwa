@@ -6,7 +6,7 @@ import vm from "node:vm";
 const source = fs.readFileSync(new URL("../miniprogram/utils/listing-assistant.js", import.meta.url), "utf8");
 const commonJsModule = { exports: {} };
 vm.runInNewContext(source, { module: commonJsModule, exports: commonJsModule.exports, Number, String, Math });
-const { generateListing } = commonJsModule.exports;
+const { generateListing, validateListingForm } = commonJsModule.exports;
 
 const item = { name: "奶油白针织开衫", category: "外套", color: "奶油白", material: "针织" };
 
@@ -23,6 +23,19 @@ test("出租文案包含日租金、押金和最短租期", () => {
   assert.match(result.content, /日租金：¥10/);
   assert.match(result.content, /押金：¥100/);
   assert.match(result.content, /最短租期：3 天/);
+});
+
+test("价格留空显示待议而不是零元", () => {
+  assert.match(generateListing(item, { mode: "sale", condition: "九成新", delivery: "快递", salePrice: "" }).content, /转卖价格：¥待议/);
+  assert.match(generateListing(item, { mode: "rent", condition: "九成新", delivery: "快递", dailyRent: "", deposit: "", minDays: 1 }).content, /日租金：¥待议；押金：¥待议/);
+});
+
+test("客户端在请求云端前校验必填项、金额、租期和链接", () => {
+  assert.equal(validateListingForm({ mode: "sale", condition: "", delivery: "快递" }), "请填写成色说明。");
+  assert.match(validateListingForm({ mode: "sale", condition: "九成新", delivery: "快递", salePrice: "-1" }), /转卖价格/);
+  assert.match(validateListingForm({ mode: "rent", condition: "九成新", delivery: "快递", minDays: "1.5" }), /最短租期/);
+  assert.match(validateListingForm({ mode: "sale", condition: "九成新", delivery: "快递", url: "xianyu-item" }), /http/);
+  assert.equal(validateListingForm({ mode: "sale", condition: "九成新", delivery: "快递", salePrice: "", url: "" }), "");
 });
 
 test("云端发布记录只接受本人闲置衣物并校验链接", () => {
