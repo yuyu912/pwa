@@ -9,7 +9,7 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-03-p1-idle-v1";
+const BUILD_ID = "2026-08-03-p1-listing-assistant-v1";
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
 const newId = () => crypto.randomUUID();
 const parseArray = (value) => {
@@ -26,6 +26,8 @@ const allowedScenes = ["休闲", "通勤", "约会", "旅行", "聚会", "运动
 const allowedSeasons = ["春夏", "春秋", "秋冬", "多季"];
 const allowedThicknesses = ["薄", "适中", "厚"];
 const allowedIdleReasons = ["很少穿", "不合适", "重复", "风格变化", "其他"];
+const allowedListingModes = ["sale", "rent"];
+const allowedListingStatuses = ["draft", "listed", "delisted", "completed"];
 const budgetId = "global-ai-budget";
 const requiredEnv = (names) => {
   const missing = names.filter((name) => !process.env[name]);
@@ -54,7 +56,7 @@ const corsHeaders = (event) => {
   return {
     ...(allowOrigin ? { "access-control-allow-origin": allowOrigin } : {}),
     "access-control-allow-headers": "authorization, content-type, x-admin-token",
-    "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "access-control-max-age": "600",
     "cache-control": "no-store"
   };
@@ -948,6 +950,52 @@ const route = async (event) => {
       idle_reason: reason,
       idle_note: cleanText(body.note, 100),
       idle_marked_at: now()
+    });
+    return response(event, 200, mapItem(await repository.getById("clothing", itemId)));
+  }
+
+  const listingMatch = path.match(/^\/api\/items\/([^/]+)\/listing$/);
+  if (listingMatch && method === "PUT") {
+    const itemId = decodeURIComponent(listingMatch[1]);
+    const item = await repository.getById("clothing", itemId);
+    if (!item || item.user_id !== userId || item.status !== "active") {
+      throw Object.assign(new Error("未找到衣物。"), { status: 404 });
+    }
+    if ((item.idle_status || "active") !== "considering") {
+      throw Object.assign(new Error("请先把衣物加入私人闲置清单。"), { status: 409 });
+    }
+    const mode = cleanText(body.mode, 10);
+    const status = cleanText(body.status, 20);
+    const condition = cleanText(body.condition, 80);
+    const delivery = cleanText(body.delivery, 50);
+    if (!allowedListingModes.includes(mode)) throw Object.assign(new Error("请选择转卖或出租。"), { status: 400 });
+    if (!allowedListingStatuses.includes(status)) throw Object.assign(new Error("请选择有效的发布状态。"), { status: 400 });
+    if (!condition || !delivery) throw Object.assign(new Error("请填写成色说明和交付方式。"), { status: 400 });
+    const optionalMoney = (value, label) => {
+      if (value === "" || value == null) return null;
+      const number = Number(value);
+      if (!Number.isFinite(number) || number < 0 || number > 1000000) throw Object.assign(new Error(`${label}格式不正确。`), { status: 400 });
+      return number;
+    };
+    const minDays = Math.floor(Number(body.minDays || 1));
+    if (mode === "rent" && (!Number.isFinite(minDays) || minDays < 1 || minDays > 365)) {
+      throw Object.assign(new Error("最短租期应为 1 至 365 天。"), { status: 400 });
+    }
+    const url = cleanText(body.url, 500);
+    if (url && !/^https?:\/\/[^\s]+$/i.test(url)) throw Object.assign(new Error("商品链接必须以 http:// 或 https:// 开头。"), { status: 400 });
+    await repository.update("clothing", itemId, {
+      listing_mode: mode,
+      listing_condition: condition,
+      listing_sale_price: mode === "sale" ? optionalMoney(body.salePrice, "转卖价格") : null,
+      listing_daily_rent: mode === "rent" ? optionalMoney(body.dailyRent, "日租金") : null,
+      listing_deposit: mode === "rent" ? optionalMoney(body.deposit, "押金") : null,
+      listing_min_days: mode === "rent" ? minDays : 1,
+      listing_delivery: delivery,
+      listing_note: cleanText(body.note, 200),
+      listing_platform: cleanText(body.platform, 30) || "闲鱼",
+      listing_url: url,
+      listing_status: status,
+      listing_updated_at: now()
     });
     return response(event, 200, mapItem(await repository.getById("clothing", itemId)));
   }

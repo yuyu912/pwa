@@ -108,6 +108,7 @@ module.exports = {
   listIdleItems: () => config.USE_MOCK ? Promise.resolve(mock.listIdleItems()) : request("/api/idle-items"),
   markItemIdle: (id, data) => config.USE_MOCK ? Promise.resolve(mock.markItemIdle(id, data)) : request(`/api/items/${id}/idle`, "POST", data),
   restoreIdleItem: (id) => config.USE_MOCK ? Promise.resolve(mock.restoreIdleItem(id)) : request(`/api/items/${id}/idle`, "DELETE"),
+  saveItemListing: (id, data) => config.USE_MOCK ? Promise.resolve(mock.saveItemListing(id, data)) : request(`/api/items/${id}/listing`, "PUT", data),
   getWearLogs: (id) => config.USE_MOCK ? Promise.resolve(mock.getWearLogs(id)) : request(`/api/items/${id}/wear-logs`),
   getMonthlyWearLogs: (start, end) => config.USE_MOCK
     ? Promise.resolve(mock.getMonthlyWearLogs(start, end))

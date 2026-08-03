@@ -58,6 +58,7 @@
     <text wx:if="{{idleMessage}}" class="idle-message">{{idleMessage}}</text>
     <block wx:if="{{item.idleStatus === 'considering'}}">
       <view class="idle-current"><text>闲置原因：{{item.idleReason || '未填写'}}</text><text wx:if="{{item.idleNote}}">私人备注：{{item.idleNote}}</text></view>
+      <button class="idle-button" bindtap="openListingAssistant">准备转卖或出租</button>
       <button class="secondary" loading="{{idleSaving}}" disabled="{{idleSaving}}" bindtap="restoreIdle">恢复为正常使用</button>
     </block>
     <block wx:else>

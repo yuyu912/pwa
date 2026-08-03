@@ -205,5 +205,6 @@ Page({
       this.setData({ item: normalizeItem(item), idleMessage: "已恢复为正常使用。" });
     } catch (error) { this.setData({ idleMessage: error.message || "恢复失败，请重试。" }); }
     finally { this.setData({ idleSaving: false }); }
-  }
+  },
+  openListingAssistant() { wx.navigateTo({ url: `/pages/listing-assistant/index?id=${encodeURIComponent(this.data.item.id)}` }); }
 });

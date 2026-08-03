@@ -175,6 +175,17 @@ module.exports = {
     saveItems(next);
     return next.find((item) => item.id === id);
   },
+  saveItemListing(id, data) {
+    const fields = {
+      listing_mode: data.mode, listing_condition: data.condition, listing_sale_price: data.salePrice,
+      listing_daily_rent: data.dailyRent, listing_deposit: data.deposit, listing_min_days: data.minDays,
+      listing_delivery: data.delivery, listing_note: data.note, listing_platform: data.platform,
+      listing_url: data.url, listing_status: data.status, listing_updated_at: new Date().toISOString()
+    };
+    const next = items().map((item) => item.id === id ? { ...item, ...fields } : item);
+    saveItems(next);
+    return next.find((item) => item.id === id);
+  },
   getWearLogs(id) {
     return wx.getStorageSync(`wardrobe_mock_wear_logs_${id}`) || [];
   },
