@@ -79,20 +79,43 @@ function isThicknessSuitable(item, weather) {
   return item.thickness !== "厚";
 }
 
-function recommend(items, weather) {
+function sceneFirst(items, scene) {
+  return items
+    .map((item, index) => ({ item, index, matchesScene: (item.scenes || []).includes(scene) }))
+    .sort((left, right) => Number(right.matchesScene) - Number(left.matchesScene) || left.index - right.index)
+    .map(({ item }) => item);
+}
+
+function pick(items, offset) {
+  return items.length ? items[offset % items.length] : null;
+}
+
+function recommend(items, weather, scene = "休闲", offset = 0) {
   const suitable = items.filter((item) => isSeasonSuitable(item, weather) && isThicknessSuitable(item, weather));
-  const dresses = suitable.filter((item) => item.category === "连衣裙");
-  const tops = suitable.filter((item) => ["上衣", "T恤", "衬衫", "针织衫"].includes(item.category));
-  const bottoms = suitable.filter((item) => ["裤子", "半身裙"].includes(item.category));
-  const outerwear = suitable.filter((item) => ["外套", "夹克", "风衣"].includes(item.category));
-  const base = dresses[0] ? [dresses[0]] : [tops[0], bottoms[0]].filter(Boolean);
-  if (weather.needsOuterwear && outerwear[0]) base.push(outerwear[0]);
+  const ranked = sceneFirst(suitable, scene);
+  const dresses = ranked.filter((item) => item.category === "连衣裙");
+  const tops = ranked.filter((item) => ["上衣", "T恤", "衬衫", "针织衫"].includes(item.category));
+  const bottoms = ranked.filter((item) => ["裤子", "半身裙"].includes(item.category));
+  const outerwear = ranked.filter((item) => ["外套", "夹克", "风衣"].includes(item.category));
+  const dress = pick(dresses, offset);
+  const base = dress ? [dress] : [pick(tops, offset), pick(bottoms, offset)].filter(Boolean);
+  const outerwearItem = pick(outerwear, offset);
+  if (weather.needsOuterwear && outerwearItem) base.push(outerwearItem);
   const missing = [];
   if (!base.length) missing.push("适合当前温度的衣物");
   if (!dresses.length && !tops.length) missing.push("上装或连衣裙");
   if (!dresses.length && !bottoms.length) missing.push("下装或连衣裙");
   if (weather.needsOuterwear && !outerwear.length) missing.push("轻外套");
-  return { items: base, suitableCount: suitable.length, missing };
+  const sceneMatchedCount = base.filter((item) => (item.scenes || []).includes(scene)).length;
+  return {
+    items: base,
+    suitableCount: suitable.length,
+    missing,
+    complete: missing.length === 0,
+    reason: sceneMatchedCount
+      ? `优先选择了适合${scene}、且符合当前演示温度的衣物。`
+      : `暂未找到标注为${scene}的合适衣物，已按当前演示温度推荐。`
+  };
 }
 
 module.exports = { provinces, cities, districts, search, getPath, loadLocation, saveLocation, getDemoWeather, recommend };
