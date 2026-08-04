@@ -12,6 +12,8 @@ test("套餐框架展示已确认价格，但不包含支付或自动续费入�
   assert.match(page, /不会发起支付，也不会自动续费/);
   assert.match(page, /购买功能准备中/);
   assert.doesNotMatch(api, /requestPayment|prepay_id|payment\/orders/);
+  assert.match(page, /近 30 天属性识别/);
+  assert.match(page, /当前仅统计和提醒，不限制功能/);
 });
 
 test("衣物识别前端按真实供应商分阶段调用", () => {
@@ -34,6 +36,8 @@ test("衣物识别前端按真实供应商分阶段调用", () => {
   assert.match(page, /基础抠图和手动录入长期保留/);
   assert.match(page, /仅抠图，手动填写/);
   assert.match(page, /AI 移除衣架（可选）/);
+  assert.match(script, /属性识别剩余/);
+  assert.match(page, /entitlement\.quotaText/);
   assert.match(page, /使用当前图片并继续识别/);
   assert.doesNotMatch(page, /按件 AI 测试额度/);
   assert.match(page, /不展示密钥、内部成本或模型思考过程/);
@@ -45,4 +49,18 @@ test("首页到期提示每个小程序会话最多自动显示一次", () => {
   assert.match(app, /entitlementPromptShown: false/);
   assert.match(home, /!app\.globalData\.entitlementPromptShown/);
   assert.match(home, /app\.globalData\.entitlementPromptShown = true/);
+});
+
+test("隐私和提审文本覆盖衣架移除与AI权益使用记录", () => {
+  const privacyPage = read("../miniprogram/pages/privacy/index.js");
+  const privacyGuide = read("../WECHAT_PRIVACY_GUIDE_DRAFT.md");
+  const reviewDraft = read("../WECHAT_REVIEW_SUBMISSION_DRAFT.md");
+  assert.match(privacyPage, /主动点击“AI 移除衣架”/);
+  assert.match(privacyPage, /AI 权益使用记录/);
+  assert.match(privacyPage, /不展示供应商密钥、内部单价、模型思考过程或管理员成本/);
+  assert.match(privacyGuide, /用户可以选择原抠图或修复图/);
+  assert.match(privacyGuide, /试用与权益剩余次数/);
+  assert.match(reviewDraft, /可选 AI 移除衣架/);
+  assert.match(reviewDraft, /2026-08-04-ai-quota-observe-v1/);
+  assert.doesNotMatch(reviewDraft, /2026-08-03-p1-listing-assistant-v2/);
 });

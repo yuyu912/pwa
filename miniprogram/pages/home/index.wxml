@@ -12,7 +12,7 @@
   </view>
 
   <view wx:if="{{entitlement}}" class="entitlement-card entitlement-{{entitlement.status}}" bindtap="toPlans">
-    <view><text class="entitlement-title">{{entitlement.title}}</text><text class="entitlement-note">{{entitlement.note}}</text></view>
+    <view><text class="entitlement-title">{{entitlement.title}}</text><text class="entitlement-note">{{entitlement.note}}</text><text wx:if="{{entitlement.quotaText}}" class="entitlement-quota {{entitlement.quotaWarning ? 'quota-warning' : ''}}">{{entitlement.quotaText}}</text></view>
     <text class="chevron">›</text>
   </view>
 

@@ -104,13 +104,25 @@ module.exports = {
       wx.setStorageSync("wardrobe_mock_trial_started_at", startedAt);
     }
     const trialEndsAt = new Date(Date.parse(startedAt) + 7 * 24 * 60 * 60 * 1000).toISOString();
-    return { status: Date.parse(trialEndsAt) > Date.now() ? "trialing" : "expired", trialStartedAt: startedAt, trialEndsAt, subscriptionEndsAt: null, serverTime: new Date().toISOString(), purchaseEnabled: false };
+    const status = Date.parse(trialEndsAt) > Date.now() ? "trialing" : "expired";
+    const limits = status === "trialing" ? { recognition: 20, hangerRemoval: 5 } : { recognition: 3, hangerRemoval: 1 };
+    const recognitionUsed = usage().successfulTasks;
+    const hangerRemovalUsed = Number(wx.getStorageSync("wardrobe_mock_hanger_removal_used") || 0);
+    return {
+      status, trialStartedAt: startedAt, trialEndsAt, subscriptionEndsAt: null, serverTime: new Date().toISOString(), purchaseEnabled: false,
+      quota: {
+        mode: status === "trialing" ? "trial" : "free", enforcement: "observe_only", windowType: status === "trialing" ? "trial" : "rolling_30_days", windowDays: status === "trialing" ? 7 : 30,
+        recognition: { limit: limits.recognition, used: recognitionUsed, remaining: Math.max(0, limits.recognition - recognitionUsed), exceeded: recognitionUsed >= limits.recognition },
+        hangerRemoval: { limit: limits.hangerRemoval, used: hangerRemovalUsed, remaining: Math.max(0, limits.hangerRemoval - hangerRemovalUsed), exceeded: hangerRemovalUsed >= limits.hangerRemoval },
+        action: "当前仅统计和提醒，暂不限制功能"
+      }
+    };
   },
   getPlans() {
     return { purchaseEnabled: false, plans: [
-      { id: "weekly", name: "周付体验", durationDays: 7, featured: true, price: 8.9, purchaseEnabled: false },
-      { id: "monthly", name: "月付会员", durationDays: 30, featured: false, price: 48.9, purchaseEnabled: false },
-      { id: "yearly", name: "年付会员", durationDays: 365, featured: false, price: 448.9, purchaseEnabled: false }
+      { id: "weekly", name: "周付体验", durationDays: 7, featured: true, price: 8.9, quota: { recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "rolling_30_days" }, purchaseEnabled: false },
+      { id: "monthly", name: "月付会员", durationDays: 30, featured: false, price: 48.9, quota: { recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "rolling_30_days" }, purchaseEnabled: false },
+      { id: "yearly", name: "年付会员", durationDays: 365, featured: false, price: 448.9, quota: { recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "rolling_30_days" }, purchaseEnabled: false }
     ] };
   },
   listItems() { return items(); },
@@ -132,6 +144,7 @@ module.exports = {
   },
   removeHanger(taskId) {
     const task = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};
+    if (!task.hangerEditUrl) wx.setStorageSync("wardrobe_mock_hanger_removal_used", Number(wx.getStorageSync("wardrobe_mock_hanger_removal_used") || 0) + 1);
     const next = { ...task, hangerEditUrl: task.hangerEditUrl || task.filePath, selectedImage: "hanger_edit" };
     wx.setStorageSync(`wardrobe_mock_task_${taskId}`, next);
     return { taskId, status: "hanger_edit_completed", stage: "awaiting_image_selection", providerName: "阿里云百炼", modelName: "qwen-image-2.0", actionText: "已移除衣架并保留原抠图", cutoutUrl: next.hangerEditUrl, originalCutoutUrl: task.filePath, hangerEditUrl: next.hangerEditUrl, selectedImage: "hanger_edit" };

@@ -3,7 +3,7 @@
   <text class="sub">{{entryMode === 'candidate' ? 'AI 识别后由你确认标签，再与真实衣橱和穿着记录进行比较。' : 'AI 先去除背景并生成候选标签，只有你确认后才会正式入库。'}}</text>
 
   <view wx:if="{{entitlement}}" class="entitlement entitlement-{{entitlement.status}}" bindtap="openPlans">
-    <view><text class="entitlement-title">{{entitlement.statusText}}</text><text class="entitlement-note">{{entitlement.status === 'trialing' ? '剩余约 ' + entitlement.remainingDays + ' 天；基础抠图和手动录入长期保留' : '基础抠图和手动录入仍可使用；增强权益暂未开始收费'}}</text></view>
+    <view><text class="entitlement-title">{{entitlement.statusText}}</text><text class="entitlement-note">{{entitlement.status === 'trialing' ? '剩余约 ' + entitlement.remainingDays + ' 天；基础抠图和手动录入长期保留' : '基础抠图和手动录入仍可使用；当前仅统计和提醒'}}</text><text wx:if="{{entitlement.quotaText}}" class="entitlement-quota {{entitlement.quotaWarning ? 'quota-warning' : ''}}">{{entitlement.quotaText}}</text></view>
     <text class="entitlement-link">查看套餐 ›</text>
   </view>
 

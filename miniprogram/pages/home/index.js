@@ -11,11 +11,14 @@ const HOME_WEATHER_TIPS = {
 
 const entitlementView = (entitlement) => {
   const remainingMs = Math.max(0, Date.parse(entitlement.trialEndsAt || "") - Date.parse(entitlement.serverTime || ""));
+  const quota = entitlement.quota;
   return {
     ...entitlement,
     remainingDays: entitlement.status === "trialing" ? Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000))) : 0,
     title: entitlement.status === "trialing" ? "7 天 AI 权益试用中" : entitlement.status === "active" ? "AI 会员有效" : "AI 权益试用已结束",
-    note: entitlement.status === "trialing" ? `剩余约 ${Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))} 天` : entitlement.status === "active" ? "查看当前权益" : "套餐购买功能准备中，当前功能不会被锁定"
+    note: entitlement.status === "trialing" ? `剩余约 ${Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))} 天` : entitlement.status === "active" ? "查看当前权益" : "免费保底额度使用中，当前功能不会被锁定",
+    quotaText: quota ? `属性识别 ${quota.recognition.remaining}/${quota.recognition.limit} · 移除衣架 ${quota.hangerRemoval.remaining}/${quota.hangerRemoval.limit}` : "",
+    quotaWarning: quota?.recognition.exceeded || quota?.hangerRemoval.exceeded
   };
 };
 

@@ -9,12 +9,16 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-04-hanger-edit-preview-v1";
+const BUILD_ID = "2026-08-04-ai-quota-observe-v1";
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });
+const FREE_QUOTA = Object.freeze({ recognitionLimit: 3, hangerRemovalLimit: 1, windowType: "rolling_30_days" });
+const PAID_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "rolling_30_days" });
 const PLAN_CATALOG = Object.freeze([
-  { id: "weekly", name: "周付体验", durationDays: 7, featured: true, price: 8.9, purchaseEnabled: false },
-  { id: "monthly", name: "月付会员", durationDays: 30, featured: false, price: 48.9, purchaseEnabled: false },
-  { id: "yearly", name: "年付会员", durationDays: 365, featured: false, price: 448.9, purchaseEnabled: false }
+  { id: "weekly", name: "周付体验", durationDays: 7, featured: true, price: 8.9, quota: PAID_QUOTA, purchaseEnabled: false },
+  { id: "monthly", name: "月付会员", durationDays: 30, featured: false, price: 48.9, quota: PAID_QUOTA, purchaseEnabled: false },
+  { id: "yearly", name: "年付会员", durationDays: 365, featured: false, price: 448.9, quota: PAID_QUOTA, purchaseEnabled: false }
 ]);
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
 const newId = () => crypto.randomUUID();
@@ -92,6 +96,64 @@ const entitlementSummary = (user, currentTime = Date.now()) => {
     serverTime: new Date(currentTime).toISOString(),
     purchaseEnabled: false
   };
+};
+const quotaWindow = (user, status, currentTime) => {
+  if (status === "trialing") {
+    return {
+      policy: TRIAL_QUOTA,
+      startsAt: Date.parse(user.trial_started_at || "") || currentTime,
+      endsAt: Date.parse(user.trial_ends_at || "") || currentTime + TRIAL_DURATION_MS
+    };
+  }
+  const rollingStart = currentTime - QUOTA_WINDOW_MS;
+  const trialEndsAt = Date.parse(user.trial_ends_at || "");
+  return {
+    policy: status === "active" ? PAID_QUOTA : FREE_QUOTA,
+    // 免费额度从试用结束后开始计算，试用期内已用次数不会挤占免费保底额度。
+    startsAt: status === "expired" && Number.isFinite(trialEndsAt) ? Math.max(rollingStart, trialEndsAt) : rollingStart,
+    endsAt: currentTime
+  };
+};
+const quotaSummary = (user, tasks, currentTime = Date.now()) => {
+  const entitlement = entitlementSummary(user, currentTime);
+  const window = quotaWindow(user, entitlement.status, currentTime);
+  const inWindow = tasks.filter((task) => {
+    const createdAt = Date.parse(task.created_at || "");
+    return Number.isFinite(createdAt) && createdAt >= window.startsAt && createdAt <= window.endsAt;
+  });
+  const recognitionUsed = inWindow.filter((task) => task.status === "completed"
+    && aiBudget.integer(task.prompt_tokens) + aiBudget.integer(task.completion_tokens) > 0).length;
+  const hangerRemovalUsed = inWindow.filter((task) => Boolean(task.hanger_edit_key)).length;
+  return {
+    mode: entitlement.status === "trialing" ? "trial" : entitlement.status === "active" ? "paid" : "free",
+    enforcement: "observe_only",
+    windowType: window.policy.windowType,
+    windowDays: window.policy.windowType === "rolling_30_days" ? 30 : 7,
+    windowStartsAt: new Date(window.startsAt).toISOString(),
+    windowEndsAt: new Date(window.endsAt).toISOString(),
+    recognition: {
+      limit: window.policy.recognitionLimit,
+      used: recognitionUsed,
+      remaining: Math.max(0, window.policy.recognitionLimit - recognitionUsed),
+      exceeded: recognitionUsed >= window.policy.recognitionLimit
+    },
+    hangerRemoval: {
+      limit: window.policy.hangerRemovalLimit,
+      used: hangerRemovalUsed,
+      remaining: Math.max(0, window.policy.hangerRemovalLimit - hangerRemovalUsed),
+      exceeded: hangerRemovalUsed >= window.policy.hangerRemovalLimit
+    },
+    action: "当前仅统计和提醒，暂不限制功能"
+  };
+};
+const entitlementWithQuota = async (user, currentTime = Date.now()) => {
+  const entitlement = entitlementSummary(user, currentTime);
+  const window = quotaWindow(user, entitlement.status, currentTime);
+  const tasks = await repository.findMany("aiUsage", {
+    user_id: String(user.id),
+    created_at: repository.command().gte(new Date(window.startsAt).toISOString())
+  }, { limit: 1000 });
+  return { ...entitlement, quota: quotaSummary(user, tasks, currentTime) };
 };
 const newTrialFields = (startedAt = now()) => ({
   entitlement_initialized_at: startedAt,
@@ -946,7 +1008,7 @@ const route = async (event) => {
     return response(event, 200, await budgetSummary());
   }
   if (method === "GET" && path === "/api/entitlements/me") {
-    return response(event, 200, entitlementSummary(await ensureEntitlement(userId)));
+    return response(event, 200, await entitlementWithQuota(await ensureEntitlement(userId)));
   }
   if (method === "GET" && path === "/api/plans") {
     return response(event, 200, {
@@ -1639,4 +1701,4 @@ exports.main = async (event) => {
   }
 };
 
-exports._test = { cleanText, entitlementSummary, parseArray, parseBody, sanitizeTags };
+exports._test = { cleanText, entitlementSummary, parseArray, parseBody, quotaSummary, sanitizeTags };

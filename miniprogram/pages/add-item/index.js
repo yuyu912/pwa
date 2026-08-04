@@ -23,10 +23,13 @@ const listFromText = (value) => String(value || "").split(/[、,，]/).map((item
 const entitlementView = (entitlement) => {
   if (!entitlement) return null;
   const remainingMs = Math.max(0, Date.parse(entitlement.trialEndsAt || "") - Date.parse(entitlement.serverTime || ""));
+  const quota = entitlement.quota;
   return {
     ...entitlement,
     remainingDays: entitlement.status === "trialing" ? Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000))) : 0,
-    statusText: entitlement.status === "trialing" ? "7 天 AI 权益试用中" : entitlement.status === "active" ? "AI 会员有效" : "AI 权益试用已结束"
+    statusText: entitlement.status === "trialing" ? "7 天 AI 权益试用中" : entitlement.status === "active" ? "AI 会员有效" : "免费保底额度",
+    quotaText: quota ? `属性识别剩余 ${quota.recognition.remaining}/${quota.recognition.limit} · 移除衣架 ${quota.hangerRemoval.remaining}/${quota.hangerRemoval.limit}` : "",
+    quotaWarning: quota?.recognition.exceeded || quota?.hangerRemoval.exceeded
   };
 };
 
@@ -350,6 +353,7 @@ Page({
           usageText: "本次图片编辑已完成；原抠图仍保留，可随时切回。"
         }
       });
+      this.refreshEntitlement();
     } catch (error) {
       this.setData({
         hangerEditBusy: false,
@@ -469,6 +473,7 @@ Page({
       needsConfirmation: tags.needsConfirmation || []
     });
     this.updateCurrentBatch({ taskId: this.data.taskId, draftId: result.draftId, status: "confirming", errorText: "" });
+    this.refreshEntitlement();
   },
 
   onFieldInput(event) {

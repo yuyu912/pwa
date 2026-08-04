@@ -169,9 +169,22 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(_test.entitlementSummary({ trial_ends_at: "2026-08-02T23:59:59.999Z" }, fixedNow).status, "expired");
   assert.equal(_test.entitlementSummary({ trial_ends_at: "2026-08-10T00:00:00.000Z" }, fixedNow).status, "trialing");
   assert.equal(_test.entitlementSummary({ trial_ends_at: "2026-08-02T00:00:00.000Z", subscription_ends_at: "2026-09-01T00:00:00.000Z" }, fixedNow).status, "active");
+  const trialQuota = _test.quotaSummary({ trial_started_at: "2026-08-01T00:00:00.000Z", trial_ends_at: "2026-08-08T00:00:00.000Z" }, [
+    { status: "completed", prompt_tokens: 10, completion_tokens: 5, hanger_edit_key: "edit.png", created_at: "2026-08-02T00:00:00.000Z" },
+    { status: "failed_retryable", prompt_tokens: 10, completion_tokens: 0, created_at: "2026-08-02T01:00:00.000Z" }
+  ], fixedNow);
+  assert.equal(trialQuota.mode, "trial");
+  assert.equal(trialQuota.recognition.used, 1);
+  assert.equal(trialQuota.recognition.remaining, 19);
+  assert.equal(trialQuota.hangerRemoval.remaining, 4);
+  assert.equal(trialQuota.enforcement, "observe_only");
+  const freeQuota = _test.quotaSummary({ trial_ends_at: "2026-07-20T00:00:00.000Z" }, [], fixedNow);
+  assert.equal(freeQuota.mode, "free");
+  assert.equal(freeQuota.recognition.limit, 3);
+  assert.equal(freeQuota.hangerRemoval.limit, 1);
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-04-hanger-edit-preview-v1");
+  assert.equal(health.body.buildId, "2026-08-04-ai-quota-observe-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -221,6 +234,9 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const repeatedEntitlement = readResponse(await main(makeEvent("/api/entitlements/me", "GET", null, authorization)));
   assert.equal(firstEntitlement.status, 200);
   assert.equal(firstEntitlement.body.status, "trialing");
+  assert.equal(firstEntitlement.body.quota.recognition.limit, 20);
+  assert.equal(firstEntitlement.body.quota.hangerRemoval.limit, 5);
+  assert.equal(firstEntitlement.body.quota.enforcement, "observe_only");
   assert.equal(Date.parse(firstEntitlement.body.trialEndsAt) - Date.parse(firstEntitlement.body.trialStartedAt), 7 * 24 * 60 * 60 * 1000);
   assert.equal(repeatedEntitlement.body.trialStartedAt, firstEntitlement.body.trialStartedAt);
   assert.equal(repeatedEntitlement.body.trialEndsAt, firstEntitlement.body.trialEndsAt);
@@ -231,6 +247,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.deepEqual(plans.body.plans.map((plan) => plan.id), ["weekly", "monthly", "yearly"]);
   assert.deepEqual(plans.body.plans.map((plan) => plan.price), [8.9, 48.9, 448.9]);
   assert.ok(plans.body.plans.every((plan) => plan.purchaseEnabled === false));
+  assert.ok(plans.body.plans.every((plan) => plan.quota.recognitionLimit === 20 && plan.quota.hangerRemovalLimit === 5));
   const budget = readResponse(await main(makeEvent("/api/ai-budget", "GET", null, authorization)));
   assert.equal(budget.status, 200);
   assert.equal(budget.body.remainingTasks, 1000);
@@ -390,6 +407,9 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(recognition.body.providerName, "阿里云百炼");
   assert.equal(recognition.body.modelName, "qwen3-vl-plus");
   assert.equal(lastRecognitionKey, "cutouts/new-item-no-hanger.png");
+  const quotaAfterRecognition = readResponse(await main(makeEvent("/api/entitlements/me", "GET", null, authorization)));
+  assert.equal(quotaAfterRecognition.body.quota.recognition.used, 1);
+  assert.equal(quotaAfterRecognition.body.quota.hangerRemoval.used, 1);
 
   const replay = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/recognition`, "POST", {}, authorization)));
   assert.equal(replay.status, 200);
@@ -416,7 +436,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-04-hanger-edit-preview-v1");
+  assert.equal(failedRecognition.body.buildId, "2026-08-04-ai-quota-observe-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
