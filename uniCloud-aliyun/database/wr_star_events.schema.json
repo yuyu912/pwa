@@ -1,0 +1,22 @@
+{
+  "bsonType": "object",
+  "description": "星星发放与未来兑换流水，仅允许云函数访问",
+  "required": ["user_id", "type", "day_key", "month_key", "points", "balance_after", "created_at"],
+  "permission": {
+    "read": false,
+    "create": false,
+    "update": false,
+    "delete": false,
+    "count": false
+  },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "type": { "bsonType": "string", "enum": ["daily_checkin", "seven_day_bonus", "redemption"] },
+    "day_key": { "bsonType": "string" },
+    "month_key": { "bsonType": "string" },
+    "points": { "bsonType": "int" },
+    "balance_after": { "bsonType": "int", "minimum": 0 },
+    "created_at": { "bsonType": "string" }
+  }
+}

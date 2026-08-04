@@ -178,13 +178,33 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(trialQuota.recognition.remaining, 19);
   assert.equal(trialQuota.hangerRemoval.remaining, 4);
   assert.equal(trialQuota.enforcement, "observe_only");
+  assert.equal(_test.shanghaiDayKey("2026-08-03T16:30:00.000Z"), "2026-08-04");
+  const seventhDayReward = _test.nextStarAccount({
+    user_id: "user-1", balance: 6, total_earned: 6, current_streak: 6, longest_streak: 6,
+    last_checkin_day: "2026-08-06", month_key: "2026-08", month_checkin_days: 6,
+    month_earned: 6, weekly_bonus_month: "", created_at: "2026-08-01T00:00:00.000Z"
+  }, "2026-08-07", "2026-08-07T00:00:00.000Z");
+  assert.equal(seventhDayReward.dailyPoints, 1);
+  assert.equal(seventhDayReward.bonusPoints, 3);
+  assert.equal(seventhDayReward.account.balance, 10);
+  assert.equal(seventhDayReward.account.current_streak, 7);
+  const eighthDayReward = _test.nextStarAccount(seventhDayReward.account, "2026-08-08", "2026-08-08T00:00:00.000Z");
+  assert.equal(eighthDayReward.dailyPoints, 1);
+  assert.equal(eighthDayReward.bonusPoints, 0);
+  const cappedReward = _test.nextStarAccount({
+    user_id: "user-1", balance: 34, total_earned: 34, current_streak: 6, longest_streak: 6,
+    last_checkin_day: "2026-08-06", month_key: "2026-08", month_checkin_days: 31,
+    month_earned: 34, weekly_bonus_month: "", created_at: "2026-08-01T00:00:00.000Z"
+  }, "2026-08-07", "2026-08-07T00:00:00.000Z");
+  assert.equal(cappedReward.awardedPoints, 1);
+  assert.equal(cappedReward.account.month_earned, 35);
   const freeQuota = _test.quotaSummary({ trial_ends_at: "2026-07-20T00:00:00.000Z" }, [], fixedNow);
   assert.equal(freeQuota.mode, "free");
   assert.equal(freeQuota.recognition.limit, 3);
   assert.equal(freeQuota.hangerRemoval.limit, 1);
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-04-ai-quota-observe-v1");
+  assert.equal(health.body.buildId, "2026-08-04-star-rewards-observe-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -313,6 +333,16 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
 
   const wear = readResponse(await main(makeEvent("/api/items/1/wear-logs", "POST", { scene: "日常", comfort: "舒适" }, authorization)));
   assert.equal(wear.status, 201);
+  assert.equal(wear.body.reward.awardedPoints, 1);
+  assert.equal(wear.body.reward.balance, 1);
+
+  const firstRewardSummary = readResponse(await main(makeEvent("/api/rewards/me", "GET", null, authorization)));
+  assert.equal(firstRewardSummary.status, 200);
+  assert.equal(firstRewardSummary.body.balance, 1);
+  assert.equal(firstRewardSummary.body.monthCheckinDays, 1);
+  assert.equal(firstRewardSummary.body.events[0].type, "daily_checkin");
+  assert.equal(firstRewardSummary.body.exchangeEnabled, false);
+  assert.ok(firstRewardSummary.body.rewards.every((reward) => reward.exchangeEnabled === false));
 
   const wearHistory = readResponse(await main(makeEvent("/api/items/1/wear-logs", "GET", null, authorization)));
   assert.equal(wearHistory.status, 200);
@@ -337,6 +367,23 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
 
   const updatedItems = readResponse(await main(makeEvent("/api/items", "GET", null, authorization)));
   assert.equal(updatedItems.body.find((item) => item.id === "1").wear_count, 7);
+
+  const sameDayWear = readResponse(await main(makeEvent("/api/items/1/wear-logs", "POST", { scene: "休闲", comfort: "舒适" }, authorization)));
+  assert.equal(sameDayWear.status, 201);
+  assert.equal(sameDayWear.body.reward.awardedPoints, 0);
+  assert.equal(sameDayWear.body.reward.duplicateDay, true);
+  const sameDayRewardSummary = readResponse(await main(makeEvent("/api/rewards/me", "GET", null, authorization)));
+  assert.equal(sameDayRewardSummary.body.balance, 1);
+  assert.equal(sameDayRewardSummary.body.monthCheckinDays, 1);
+  const starAdminSummary = readResponse(await main(makeEvent("/api/admin/star-summary?start=2026-01-01T00:00:00.000Z&end=2030-01-01T00:00:00.000Z", "GET", null, { "x-admin-token": "test-admin-token" })));
+  assert.equal(starAdminSummary.status, 200);
+  assert.equal(starAdminSummary.body.activeUsers, 1);
+  assert.equal(starAdminSummary.body.checkinEvents, 1);
+  assert.equal(starAdminSummary.body.totalIssued, 1);
+  assert.equal(starAdminSummary.body.redemptionEvents, 0);
+  assert.equal(starAdminSummary.body.exchangeEnabled, false);
+  const ordinaryUserCannotReadStarCosts = readResponse(await main(makeEvent("/api/admin/star-summary", "GET", null, authorization)));
+  assert.equal(ordinaryUserCannotReadStarCosts.status, 401);
 
   const markedIdle = readResponse(await main(makeEvent("/api/items/1/idle", "POST", { reason: "很少穿", note: "先放进私人清单观察。" }, authorization)));
   assert.equal(markedIdle.status, 200);
@@ -436,7 +483,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-04-ai-quota-observe-v1");
+  assert.equal(failedRecognition.body.buildId, "2026-08-04-star-rewards-observe-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

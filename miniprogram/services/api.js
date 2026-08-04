@@ -120,6 +120,7 @@ module.exports = {
   getMonthlyWearLogs: (start, end) => config.USE_MOCK
     ? Promise.resolve(mock.getMonthlyWearLogs(start, end))
     : request(`/api/wear-logs?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  getRewards: () => config.USE_MOCK ? Promise.resolve(mock.getRewards()) : request("/api/rewards/me"),
   addWearLog: (id, data) => config.USE_MOCK ? Promise.resolve(mock.addWearLog(id, data)) : request(`/api/items/${id}/wear-logs`, "POST", data),
   createCandidate: (data) => config.USE_MOCK ? Promise.resolve(mock.createCandidate(data)) : request("/api/candidates", "POST", data),
   getCandidate: (id) => config.USE_MOCK ? Promise.resolve(mock.getCandidate(id)) : request(`/api/candidates/${id}`),

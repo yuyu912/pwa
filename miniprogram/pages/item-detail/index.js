@@ -164,7 +164,7 @@ Page({
     if (!this.data.item) return;
     this.setData({ saving: true, message: "" });
     try {
-      await api.addWearLog(this.data.item.id, {
+      const result = await api.addWearLog(this.data.item.id, {
         scene: this.data.scene,
         comfort: this.data.comfort,
         note: this.data.note
@@ -178,8 +178,11 @@ Page({
         item: normalizeItem(item),
         wearLogs: wearLogs.map(formatWearLog),
         note: "",
-        message: "穿着记录已保存。"
+        message: result.reward?.awardedPoints
+          ? `穿着记录已保存，获得 ${result.reward.awardedPoints} 颗星。`
+          : "穿着记录已保存，今天的打卡星星已经领取。"
       });
+      if (result.reward?.awardedPoints) wx.showToast({ title: `获得 ${result.reward.awardedPoints} 颗星`, icon: "success" });
     } catch (error) { this.setData({ message: error.message || "记录失败，请重试。" }); }
     finally { this.setData({ saving: false }); }
   },

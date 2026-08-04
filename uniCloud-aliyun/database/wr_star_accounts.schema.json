@@ -1,0 +1,27 @@
+{
+  "bsonType": "object",
+  "description": "用户星星余额与连续打卡汇总，仅允许云函数访问",
+  "required": ["user_id", "balance", "total_earned", "current_streak", "longest_streak", "last_checkin_day", "month_key", "month_checkin_days", "month_earned", "created_at", "updated_at"],
+  "permission": {
+    "read": false,
+    "create": false,
+    "update": false,
+    "delete": false,
+    "count": false
+  },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "balance": { "bsonType": "int", "minimum": 0 },
+    "total_earned": { "bsonType": "int", "minimum": 0 },
+    "current_streak": { "bsonType": "int", "minimum": 0 },
+    "longest_streak": { "bsonType": "int", "minimum": 0 },
+    "last_checkin_day": { "bsonType": "string" },
+    "month_key": { "bsonType": "string" },
+    "month_checkin_days": { "bsonType": "int", "minimum": 0 },
+    "month_earned": { "bsonType": "int", "minimum": 0, "maximum": 35 },
+    "weekly_bonus_month": { "bsonType": "string" },
+    "created_at": { "bsonType": "string" },
+    "updated_at": { "bsonType": "string" }
+  }
+}

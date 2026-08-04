@@ -9,7 +9,7 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-04-ai-quota-observe-v1";
+const BUILD_ID = "2026-08-04-star-rewards-observe-v1";
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });
@@ -38,7 +38,57 @@ const allowedThicknesses = ["薄", "适中", "厚"];
 const allowedIdleReasons = ["很少穿", "不合适", "重复", "风格变化", "其他"];
 const allowedListingModes = ["sale", "rent"];
 const allowedListingStatuses = ["draft", "listed", "delisted", "completed"];
+const STAR_MONTHLY_LIMIT = 35;
+const STAR_REWARD_CATALOG = Object.freeze([
+  { id: "capsule_slot", name: "额外胶囊计划槽位", stars: 8, kind: "feature", exchangeEnabled: false },
+  { id: "growth_badge", name: "月度成长徽章", stars: 10, kind: "feature", exchangeEnabled: false },
+  { id: "outfit_summary", name: "个人穿搭总结卡", stars: 10, kind: "feature", exchangeEnabled: false },
+  { id: "smart_entry", name: "AI 智能录入 1 次", stars: 20, kind: "ai", exchangeEnabled: false },
+  { id: "hanger_removal", name: "AI 移除衣架 1 次", stars: 35, kind: "ai", exchangeEnabled: false }
+]);
 const budgetId = "global-ai-budget";
+
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const shanghaiDayKey = (value = Date.now()) => {
+  const timestamp = typeof value === "number" ? value : Date.parse(value);
+  return new Date(timestamp + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+};
+const shiftDayKey = (dayKey, offset) => new Date(Date.parse(`${dayKey}T00:00:00.000Z`) + offset * DAY_MS).toISOString().slice(0, 10);
+const starEventId = (userId, type, key) => crypto.createHash("sha256").update(`${userId}:${type}:${key}`).digest("hex");
+const nextStarAccount = (account, dayKey, timestamp) => {
+  const monthKey = dayKey.slice(0, 7);
+  const sameMonth = account?.month_key === monthKey;
+  const previousDay = shiftDayKey(dayKey, -1);
+  const currentStreak = account?.last_checkin_day === previousDay ? Number(account.current_streak || 0) + 1 : 1;
+  const monthEarned = sameMonth ? Number(account.month_earned || 0) : 0;
+  const monthCheckinDays = sameMonth ? Number(account.month_checkin_days || 0) : 0;
+  const remaining = Math.max(0, STAR_MONTHLY_LIMIT - monthEarned);
+  const dailyPoints = Math.min(1, remaining);
+  const bonusEligible = currentStreak >= 7 && currentStreak % 7 === 0 && account?.weekly_bonus_month !== monthKey;
+  const bonusPoints = bonusEligible ? Math.min(3, Math.max(0, remaining - dailyPoints)) : 0;
+  const awardedPoints = dailyPoints + bonusPoints;
+  const balance = Number(account?.balance || 0) + awardedPoints;
+  return {
+    account: {
+      user_id: account?.user_id || "",
+      balance,
+      total_earned: Number(account?.total_earned || 0) + awardedPoints,
+      current_streak: currentStreak,
+      longest_streak: Math.max(Number(account?.longest_streak || 0), currentStreak),
+      last_checkin_day: dayKey,
+      month_key: monthKey,
+      month_checkin_days: monthCheckinDays + 1,
+      month_earned: monthEarned + awardedPoints,
+      weekly_bonus_month: bonusPoints ? monthKey : account?.weekly_bonus_month || "",
+      created_at: account?.created_at || timestamp,
+      updated_at: timestamp
+    },
+    dailyPoints,
+    bonusPoints,
+    awardedPoints
+  };
+};
 const requiredEnv = (names) => {
   const missing = names.filter((name) => !process.env[name]);
   if (missing.length) throw Object.assign(new Error(`云函数缺少配置：${missing.join(", ")}`), { status: 503 });
@@ -939,6 +989,105 @@ const aiUsageSummary = async (query) => {
   };
 };
 
+const awardDailyCheckin = async (tx, userId, timestamp) => {
+  const dayKey = shanghaiDayKey(timestamp);
+  const dailyEventId = starEventId(userId, "daily_checkin", dayKey);
+  const existingEvent = await tx.getById("starEvents", dailyEventId);
+  const account = await tx.getById("starAccounts", userId);
+  if (existingEvent) {
+    return { awardedPoints: 0, balance: Number(account?.balance || 0), duplicateDay: true };
+  }
+  const decision = nextStarAccount(account, dayKey, timestamp);
+  decision.account.user_id = userId;
+  await tx.add("starEvents", {
+    user_id: userId,
+    type: "daily_checkin",
+    day_key: dayKey,
+    month_key: dayKey.slice(0, 7),
+    points: decision.dailyPoints,
+    balance_after: Number(account?.balance || 0) + decision.dailyPoints,
+    created_at: timestamp
+  }, dailyEventId);
+  if (decision.bonusPoints) {
+    await tx.add("starEvents", {
+      user_id: userId,
+      type: "seven_day_bonus",
+      day_key: dayKey,
+      month_key: dayKey.slice(0, 7),
+      points: decision.bonusPoints,
+      balance_after: decision.account.balance,
+      created_at: timestamp
+    }, starEventId(userId, "seven_day_bonus", dayKey.slice(0, 7)));
+  }
+  if (account) await tx.update("starAccounts", userId, decision.account);
+  else await tx.add("starAccounts", decision.account, userId);
+  return { awardedPoints: decision.awardedPoints, balance: decision.account.balance, duplicateDay: false };
+};
+
+const starSummary = async (userId, currentTime = Date.now()) => {
+  const account = await repository.getById("starAccounts", userId);
+  const events = await repository.findMany("starEvents", { user_id: userId }, { orderBy: "created_at", order: "desc", limit: 50 });
+  const today = shanghaiDayKey(currentTime);
+  const activeStreak = account && [today, shiftDayKey(today, -1)].includes(account.last_checkin_day)
+    ? Number(account.current_streak || 0)
+    : 0;
+  const eventLabels = { daily_checkin: "当天首次记录穿着", seven_day_bonus: "连续 7 天奖励", redemption: "兑换权益" };
+  const totalEarned = Number(account?.total_earned || 0);
+  return {
+    balance: Number(account?.balance || 0),
+    totalEarned,
+    currentStreak: activeStreak,
+    longestStreak: Number(account?.longest_streak || 0),
+    monthCheckinDays: account?.month_key === today.slice(0, 7) ? Number(account.month_checkin_days || 0) : 0,
+    monthEarned: account?.month_key === today.slice(0, 7) ? Number(account.month_earned || 0) : 0,
+    monthlyLimit: STAR_MONTHLY_LIMIT,
+    badges: [
+      { id: "first", name: "衣橱起步", unlocked: totalEarned >= 1, note: "完成首次真实穿着记录" },
+      { id: "seven", name: "七日坚持", unlocked: Number(account?.longest_streak || 0) >= 7, note: "连续记录 7 天" },
+      { id: "thirty", name: "成长记录者", unlocked: totalEarned >= 30, note: "累计获得 30 颗星" }
+    ],
+    rewards: STAR_REWARD_CATALOG,
+    exchangeEnabled: false,
+    events: events.map((event) => ({
+      id: String(event.id),
+      type: event.type,
+      label: eventLabels[event.type] || "星星变动",
+      points: Number(event.points || 0),
+      balanceAfter: Number(event.balance_after || 0),
+      dayKey: event.day_key,
+      createdAt: event.created_at
+    }))
+  };
+};
+
+const adminStarSummary = async (query) => {
+  const start = String(query.start || "1970-01-01T00:00:00.000Z");
+  const end = String(query.end || now());
+  const startTime = Date.parse(start);
+  const endTime = Date.parse(end);
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) {
+    throw Object.assign(new Error("请提供有效的星星统计时间范围。"), { status: 400 });
+  }
+  const range = repository.command().gte(start).and(repository.command().lt(end));
+  const events = await repository.findMany("starEvents", { created_at: range }, { orderBy: "created_at", order: "desc", limit: 5000 });
+  const issuedEvents = events.filter((event) => Number(event.points || 0) > 0);
+  const totalIssued = issuedEvents.reduce((total, event) => total + Number(event.points || 0), 0);
+  const theoreticalMaxAiCostYuan = totalIssued * (0.25 / 35);
+  return {
+    start,
+    end,
+    activeUsers: new Set(issuedEvents.map((event) => String(event.user_id))).size,
+    checkinEvents: issuedEvents.filter((event) => event.type === "daily_checkin").length,
+    sevenDayBonuses: issuedEvents.filter((event) => event.type === "seven_day_bonus").length,
+    totalIssued,
+    redemptionEvents: events.filter((event) => event.type === "redemption").length,
+    theoreticalMaxAiCostYuan: Number(theoreticalMaxAiCostYuan.toFixed(2)),
+    exchangeEnabled: false,
+    partial: events.length >= 5000,
+    rowLimit: 5000
+  };
+};
+
 const route = async (event) => {
   const method = String(event.httpMethod || "GET").toUpperCase();
   const path = String(event.path || "/").replace(/\/+$/, "") || "/";
@@ -1000,6 +1149,10 @@ const route = async (event) => {
     requireAdmin(event);
     return response(event, 200, await aiUsageSummary(query));
   }
+  if (method === "GET" && path === "/api/admin/star-summary") {
+    requireAdmin(event);
+    return response(event, 200, await adminStarSummary(query));
+  }
 
   const user = await requireActiveUser(event);
   const userId = String(user.id);
@@ -1015,6 +1168,9 @@ const route = async (event) => {
       purchaseEnabled: false,
       plans: PLAN_CATALOG
     });
+  }
+  if (method === "GET" && path === "/api/rewards/me") {
+    return response(event, 200, await starSummary(userId));
   }
 
   if (method === "POST" && path === "/api/auth/delete-request") {
@@ -1538,7 +1694,7 @@ const route = async (event) => {
   if (method === "POST" && wearMatch) {
     const itemId = decodeURIComponent(wearMatch[1]);
     const wornAt = now();
-    await repository.withTransaction(async (tx) => {
+    const reward = await repository.withTransaction(async (tx) => {
       const item = await tx.getById("clothing", itemId);
       if (!item || item.user_id !== userId || item.status !== "active") throw Object.assign(new Error("未找到衣物。"), { status: 404 });
       await tx.add("wearLogs", {
@@ -1550,8 +1706,9 @@ const route = async (event) => {
         worn_at: wornAt
       }, newId());
       await tx.update("clothing", itemId, { wear_count: repository.command().inc(1), last_worn_at: wornAt });
+      return awardDailyCheckin(tx, userId, wornAt);
     });
-    return response(event, 201, { ok: true });
+    return response(event, 201, { ok: true, reward });
   }
 
   if (method === "POST" && path === "/api/candidates") {
@@ -1701,4 +1858,4 @@ exports.main = async (event) => {
   }
 };
 
-exports._test = { cleanText, entitlementSummary, parseArray, parseBody, quotaSummary, sanitizeTags };
+exports._test = { cleanText, entitlementSummary, nextStarAccount, parseArray, parseBody, quotaSummary, sanitizeTags, shanghaiDayKey, shiftDayKey };

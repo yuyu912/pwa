@@ -248,6 +248,27 @@ module.exports = {
         item: { id: item.id, name: item.name, category: item.category, color: item.color, active: true, imageUrl: item.imageUrl || "" }
       })));
   },
+  getRewards() {
+    const account = wx.getStorageSync("wardrobe_mock_star_account") || {};
+    return {
+      balance: Number(account.balance || 0), totalEarned: Number(account.totalEarned || 0),
+      currentStreak: Number(account.currentStreak || 0), longestStreak: Number(account.longestStreak || 0),
+      monthCheckinDays: Number(account.monthCheckinDays || 0), monthEarned: Number(account.monthEarned || 0), monthlyLimit: 35,
+      badges: [
+        { id: "first", name: "衣橱起步", unlocked: Number(account.totalEarned || 0) >= 1, note: "完成首次真实穿着记录" },
+        { id: "seven", name: "七日坚持", unlocked: Number(account.longestStreak || 0) >= 7, note: "连续记录 7 天" },
+        { id: "thirty", name: "成长记录者", unlocked: Number(account.totalEarned || 0) >= 30, note: "累计获得 30 颗星" }
+      ],
+      rewards: [
+        { id: "capsule_slot", name: "额外胶囊计划槽位", stars: 8, kind: "feature", exchangeEnabled: false },
+        { id: "growth_badge", name: "月度成长徽章", stars: 10, kind: "feature", exchangeEnabled: false },
+        { id: "outfit_summary", name: "个人穿搭总结卡", stars: 10, kind: "feature", exchangeEnabled: false },
+        { id: "smart_entry", name: "AI 智能录入 1 次", stars: 20, kind: "ai", exchangeEnabled: false },
+        { id: "hanger_removal", name: "AI 移除衣架 1 次", stars: 35, kind: "ai", exchangeEnabled: false }
+      ],
+      exchangeEnabled: false, events: wx.getStorageSync("wardrobe_mock_star_events") || []
+    };
+  },
   addWearLog(id, data) {
     const wornAt = new Date().toISOString();
     const next = items().map((item) => item.id === id ? { ...item, wearCount: item.wearCount + 1, last_worn_at: wornAt } : item);
@@ -263,7 +284,19 @@ module.exports = {
       wornAt
     });
     wx.setStorageSync(key, logs.slice(0, 50));
-    return { ok: true };
+    const dayKey = wornAt.slice(0, 10);
+    const rewardKey = `wardrobe_mock_star_day_${dayKey}`;
+    const account = wx.getStorageSync("wardrobe_mock_star_account") || { balance: 0, totalEarned: 0, currentStreak: 0, longestStreak: 0, monthCheckinDays: 0, monthEarned: 0 };
+    if (!wx.getStorageSync(rewardKey)) {
+      wx.setStorageSync(rewardKey, true);
+      const next = { ...account, balance: account.balance + 1, totalEarned: account.totalEarned + 1, currentStreak: Math.max(1, account.currentStreak), longestStreak: Math.max(1, account.longestStreak), monthCheckinDays: account.monthCheckinDays + 1, monthEarned: account.monthEarned + 1 };
+      wx.setStorageSync("wardrobe_mock_star_account", next);
+      const events = wx.getStorageSync("wardrobe_mock_star_events") || [];
+      events.unshift({ id: `star-${dayKey}`, label: "当天首次记录穿着", points: 1, balanceAfter: next.balance, dayKey, createdAt: wornAt });
+      wx.setStorageSync("wardrobe_mock_star_events", events.slice(0, 50));
+      return { ok: true, reward: { awardedPoints: 1, balance: next.balance, duplicateDay: false } };
+    }
+    return { ok: true, reward: { awardedPoints: 0, balance: account.balance, duplicateDay: true } };
   },
   createCandidate(data) {
     const id = `candidate-${Date.now()}`;

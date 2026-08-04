@@ -104,6 +104,7 @@ Page({
   openReport() {
     wx.navigateTo({ url: `/pages/wardrobe-report/index?year=${this.data.year}&month=${this.data.month}` });
   },
+  openRewards() { wx.navigateTo({ url: "/pages/rewards/index" }); },
   onImageError(event) { this.setData({ [`imageFailures.${event.currentTarget.dataset.id}`]: true }); },
   retry() { this.loadMonth(); }
 });

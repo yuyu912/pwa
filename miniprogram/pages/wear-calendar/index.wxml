@@ -17,6 +17,7 @@
       <view class="summary-card"><text class="summary-number">{{distinctItemCount}}</text><text class="summary-label">不同衣物</text></view>
     </view>
     <view class="report-entry card" bindtap="openReport"><view><text class="report-entry-title">查看本月衣橱报表</text><text class="report-entry-copy">高低频衣物与品类使用分布</text></view><text class="row-arrow">›</text></view>
+    <view class="report-entry card" bindtap="openRewards"><view><text class="report-entry-title">星星与成长</text><text class="report-entry-copy">查看打卡、连续天数和奖励观察计划</text></view><text class="row-arrow">›</text></view>
 
     <view class="card calendar-card">
       <view class="weekday-row"><text wx:for="{{weekdays}}" wx:key="*this" class="weekday">{{item}}</text></view>

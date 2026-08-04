@@ -1,0 +1,21 @@
+<view class="page rewards-page">
+  <text class="eyebrow">WARDROBE GROWTH</text>
+  <text class="page-title">星星与成长</text>
+  <text class="muted">坚持记录真实穿着，逐步解锁更多衣橱能力。</text>
+  <view wx:if="{{loading}}" class="card state-card"><text class="muted">正在读取成长记录…</text></view>
+  <view wx:elif="{{error}}" class="card state-card"><text class="error-text">{{error}}</text><button class="secondary" bindtap="load">重新加载</button></view>
+  <block wx:elif="{{summary}}">
+    <view class="balance-card"><text class="balance-number">★ {{summary.balance}}</text><text class="balance-label">当前星星</text><text class="balance-note">本月已获得 {{summary.monthEarned}} / {{summary.monthlyLimit}}</text></view>
+    <view class="summary-grid"><view class="summary-card"><text class="summary-number">{{summary.currentStreak}}</text><text class="summary-label">当前连续天数</text></view><view class="summary-card"><text class="summary-number">{{summary.monthCheckinDays}}</text><text class="summary-label">本月打卡天数</text></view><view class="summary-card"><text class="summary-number">{{summary.longestStreak}}</text><text class="summary-label">最长连续天数</text></view></view>
+    <view class="rule-card card"><text class="section-title">获得规则</text><text>每天首次记录穿着 +1 星；同日多件不重复；每连续满 7 天且当月首次额外 +3 星；每月最多 35 星。</text></view>
+    <text class="section-title section-gap">成长徽章</text>
+    <view class="badge-list"><view wx:for="{{summary.badges}}" wx:key="id" class="badge {{item.unlocked ? 'unlocked' : ''}}"><text class="badge-icon">{{item.unlocked ? '★' : '☆'}}</text><view><text class="badge-name">{{item.name}}</text><text class="badge-note">{{item.note}}</text></view></view></view>
+    <text class="section-title section-gap">星星权益观察</text>
+    <text class="muted">以下价格用于观察发行量和商业成本，当前不能兑换。</text>
+    <view class="reward-list"><view wx:for="{{summary.rewards}}" wx:key="id" class="reward-card card"><view><text class="reward-name">{{item.name}}</text><text class="reward-cost">{{item.stars}} 颗星</text></view><button class="disabled-button" bindtap="explainExchange">准备中</button></view></view>
+    <text class="section-title section-gap">最近星星流水</text>
+    <view wx:if="{{summary.events.length}}"><view wx:for="{{summary.events}}" wx:key="id" class="event-row card"><view><text class="event-name">{{item.label}}</text><text class="event-date">{{item.dayKey}}</text></view><text class="event-points">{{item.points > 0 ? '+' : ''}}{{item.points}}</text></view></view>
+    <view wx:else class="card empty-card"><text class="muted">完成当天首次穿着记录后，这里会显示星星流水。</text></view>
+  </block>
+  <button class="ghost" bindtap="goBack">返回</button>
+</view>

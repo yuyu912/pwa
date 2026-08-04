@@ -57,10 +57,12 @@ test("隐私和提审文本覆盖衣架移除与AI权益使用记录", () => {
   const reviewDraft = read("../WECHAT_REVIEW_SUBMISSION_DRAFT.md");
   assert.match(privacyPage, /主动点击“AI 移除衣架”/);
   assert.match(privacyPage, /AI 权益使用记录/);
+  assert.match(privacyPage, /穿着打卡与星星流水/);
   assert.match(privacyPage, /不展示供应商密钥、内部单价、模型思考过程或管理员成本/);
   assert.match(privacyGuide, /用户可以选择原抠图或修复图/);
   assert.match(privacyGuide, /试用与权益剩余次数/);
   assert.match(reviewDraft, /可选 AI 移除衣架/);
-  assert.match(reviewDraft, /2026-08-04-ai-quota-observe-v1/);
+  assert.match(reviewDraft, /2026-08-04-star-rewards-observe-v1/);
+  assert.match(reviewDraft, /兑换功能当前未开放/);
   assert.doesNotMatch(reviewDraft, /2026-08-03-p1-listing-assistant-v2/);
 });
