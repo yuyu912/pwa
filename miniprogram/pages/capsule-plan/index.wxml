@@ -1,0 +1,30 @@
+<view class="page">
+  <text class="eyebrow">7-DAY CAPSULE</text>
+  <text class="heading">7 天衣橱胶囊</text>
+  <text class="intro">从真实衣橱挑选一组可以反复组合的衣物，优先激活适合场景但穿着较少的单品。</text>
+  <view class="scene-field">
+    <text>本周主要场景</text>
+    <picker mode="selector" range="{{scenes}}" value="{{sceneIndex}}" bindchange="onSceneChange"><view class="scene-picker">{{scene}} ›</view></picker>
+  </view>
+  <text wx:if="{{loading}}" class="state">正在读取衣橱…</text>
+  <text wx:if="{{error}}" class="state error">{{error}}</text>
+  <block wx:if="{{plan}}">
+    <view class="summary-card">
+      <view><text class="summary-number">{{plan.itemCount}}</text><text class="summary-label">件核心衣物</text></view>
+      <view><text class="summary-number">{{plan.combinationCount}}</text><text class="summary-label">套基础组合</text></view>
+      <view><text class="summary-number">{{plan.sceneMatchedCount}}</text><text class="summary-label">件匹配{{scene}}</text></view>
+    </view>
+    <text class="coverage {{plan.coversSevenDays ? 'ready' : ''}}">{{plan.coversSevenDays ? '现有结构可以覆盖 7 天轮换' : '当前组合不足 7 套，请结合实际重复穿着'}}</text>
+    <view wx:if="{{plan.items.length}}" class="item-list">
+      <view wx:for="{{plan.items}}" wx:key="id" class="item-card">
+        <image wx:if="{{item.imageUrl}}" src="{{item.imageUrl}}" mode="aspectFit"/>
+        <view class="item-copy"><text class="item-name">{{item.name}}</text><text class="item-meta">{{item.category}}{{item.color ? ' · ' + item.color : ''}}</text><text class="item-reason">{{item.capsuleReason}}</text></view>
+      </view>
+    </view>
+    <view wx:if="{{plan.missing.length}}" class="gap-card"><text class="gap-title">组成完整搭配还缺</text><text>{{plan.missing.join('、')}}</text></view>
+    <view wx:if="{{plan.optionalMissing.length}}" class="optional-card"><text>可选补充：{{plan.optionalMissing.join('、')}}。这里只提示衣橱结构，不代表建议购买。</text></view>
+    <button wx:if="{{plan.items.length}}" class="secondary" bindtap="changePlan">换一组胶囊</button>
+  </block>
+  <button class="primary" bindtap="toWardrobe">去衣橱调整</button>
+  <button class="ghost" bindtap="goBack">返回</button>
+</view>

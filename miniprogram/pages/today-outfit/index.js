@@ -25,6 +25,7 @@ Page({
     this.setData({ outfitOffset: this.data.outfitOffset + 1 });
     this.generateOutfit();
   },
+  toCapsulePlan() { wx.navigateTo({ url: `/pages/capsule-plan/index?scene=${encodeURIComponent(this.data.scene)}` }); },
   chooseRegion() { wx.navigateTo({ url: "/pages/region-picker/index" }); },
   toWardrobe() { wx.navigateTo({ url: "/pages/wardrobe/index" }); },
   goBack() { wx.navigateBack(); }

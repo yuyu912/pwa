@@ -15,6 +15,10 @@ vm.runInNewContext(weatherSource, {
   require: () => ({ areaList: { province_list: {}, city_list: {}, county_list: {} } })
 });
 const { recommend } = weatherModule.exports;
+const capsuleSource = fs.readFileSync(new URL("../miniprogram/utils/capsule-plan.js", import.meta.url), "utf8");
+const capsuleModule = { exports: {} };
+vm.runInNewContext(capsuleSource, { module: capsuleModule, exports: capsuleModule.exports, Number, Array });
+const { buildCapsulePlan } = capsuleModule.exports;
 const items = [
   { id: "1", name: "白色针织上衣", category: "上衣", season: "春秋", thickness: "适中", material: "针织", styles: ["温柔"], scenes: ["通勤"], monthlyWearCount: 3, idleStatus: "active" },
   { id: "2", name: "蓝色牛仔裤", category: "裤子", season: "多季", thickness: "适中", material: "牛仔", styles: ["休闲"], scenes: ["旅行"], monthlyWearCount: 0, idleStatus: "considering" },
@@ -77,5 +81,39 @@ test("缺少下装时返回真实单品并给出缺失提示", () => {
   const result = structuredClone(recommend(outfitItems.slice(0, 2), outfitWeather, "通勤"));
   assert.deepEqual(result.items.map((item) => item.id), ["2"]);
   assert.equal(result.complete, false);
+  assert.deepEqual(result.missing, ["下装或连衣裙"]);
+});
+
+test("7 天胶囊按品类限额选择真实衣物并计算基础组合", () => {
+  const capsuleItems = [
+    ...Array.from({ length: 4 }, (_, index) => ({ id: `t${index}`, name: `上衣${index}`, category: "上衣", scenes: ["通勤"], wear_count: index })),
+    ...Array.from({ length: 3 }, (_, index) => ({ id: `b${index}`, name: `下装${index}`, category: "裤子", scenes: ["通勤"], wear_count: index })),
+    { id: "o1", name: "外套", category: "外套", scenes: ["通勤"], wear_count: 1 },
+    { id: "s1", name: "鞋子", category: "鞋子", scenes: ["通勤"], wear_count: 1 }
+  ];
+  const result = structuredClone(buildCapsulePlan(capsuleItems, "通勤"));
+  assert.equal(result.itemCount, 7);
+  assert.equal(result.combinationCount, 6);
+  assert.deepEqual(result.missing, []);
+  assert.equal(result.items.filter((item) => item.category === "上衣").length, 3);
+  assert.equal(result.items.filter((item) => item.category === "裤子").length, 2);
+});
+
+test("胶囊优先场景匹配和较少穿着的衣物", () => {
+  const result = structuredClone(buildCapsulePlan([
+    { id: "frequent", name: "高频通勤上衣", category: "上衣", scenes: ["通勤"], wear_count: 20 },
+    { id: "low", name: "低频通勤上衣", category: "上衣", scenes: ["通勤"], wear_count: 1 },
+    { id: "other", name: "休闲上衣", category: "上衣", scenes: ["休闲"], wear_count: 0 },
+    { id: "bottom", name: "通勤裤", category: "裤子", scenes: ["通勤"], wear_count: 2 }
+  ], "通勤"));
+  assert.deepEqual(result.items.slice(0, 3).map((item) => item.id), ["low", "frequent", "other"]);
+});
+
+test("胶囊衣物不足时不伪造组合并说明结构缺口", () => {
+  const result = structuredClone(buildCapsulePlan([
+    { id: "top", name: "唯一上衣", category: "上衣", scenes: ["休闲"], wear_count: 0 }
+  ], "休闲"));
+  assert.equal(result.combinationCount, 0);
+  assert.equal(result.coversSevenDays, false);
   assert.deepEqual(result.missing, ["下装或连衣裙"]);
 });
