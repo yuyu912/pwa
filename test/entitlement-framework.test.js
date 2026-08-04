@@ -51,6 +51,19 @@ test("首页到期提示每个小程序会话最多自动显示一次", () => {
   assert.match(home, /app\.globalData\.entitlementPromptShown = true/);
 });
 
+test("新衣观望清单可从首页进入并只允许观望记录完成最终决定", () => {
+  const app = read("../miniprogram/app.json");
+  const home = read("../miniprogram/pages/home/index.wxml");
+  const api = read("../miniprogram/services/api.js");
+  const waitlist = read("../miniprogram/pages/candidate-waitlist/index.js");
+  const candidate = read("../miniprogram/pages/candidate/index.wxml");
+  assert.match(app, /pages\/candidate-waitlist\/index/);
+  assert.match(home, /新衣观望清单/);
+  assert.match(api, /listWaitingCandidates/);
+  assert.match(waitlist, /api\.listWaitingCandidates\(\)/);
+  assert.match(candidate, /wx:if="\{\{!reviewingWait\}\}"/);
+});
+
 test("隐私和提审文本覆盖衣架移除与AI权益使用记录", () => {
   const privacyPage = read("../miniprogram/pages/privacy/index.js");
   const privacyGuide = read("../WECHAT_PRIVACY_GUIDE_DRAFT.md");
@@ -58,11 +71,12 @@ test("隐私和提审文本覆盖衣架移除与AI权益使用记录", () => {
   assert.match(privacyPage, /主动点击“AI 移除衣架”/);
   assert.match(privacyPage, /AI 权益使用记录/);
   assert.match(privacyPage, /穿着打卡与星星流水/);
+  assert.match(privacyPage, /观望起始时间/);
   assert.match(privacyPage, /不展示供应商密钥、内部单价、模型思考过程或管理员成本/);
   assert.match(privacyGuide, /用户可以选择原抠图或修复图/);
   assert.match(privacyGuide, /试用与权益剩余次数/);
   assert.match(reviewDraft, /可选 AI 移除衣架/);
-  assert.match(reviewDraft, /2026-08-04-star-rewards-observe-v1/);
+  assert.match(reviewDraft, /2026-08-04-candidate-waitlist-v1/);
   assert.match(reviewDraft, /兑换功能当前未开放/);
   assert.doesNotMatch(reviewDraft, /2026-08-03-p1-listing-assistant-v2/);
 });

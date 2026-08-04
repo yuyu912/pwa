@@ -123,6 +123,7 @@ module.exports = {
   getRewards: () => config.USE_MOCK ? Promise.resolve(mock.getRewards()) : request("/api/rewards/me"),
   addWearLog: (id, data) => config.USE_MOCK ? Promise.resolve(mock.addWearLog(id, data)) : request(`/api/items/${id}/wear-logs`, "POST", data),
   createCandidate: (data) => config.USE_MOCK ? Promise.resolve(mock.createCandidate(data)) : request("/api/candidates", "POST", data),
+  listWaitingCandidates: () => config.USE_MOCK ? Promise.resolve(mock.listWaitingCandidates()) : request("/api/candidates?decision=wait"),
   getCandidate: (id) => config.USE_MOCK ? Promise.resolve(mock.getCandidate(id)) : request(`/api/candidates/${id}`),
   analyzeCandidate: (id) => config.USE_MOCK ? Promise.resolve(mock.analyzeCandidate(id)) : request(`/api/candidates/${id}/analyze`, "POST"),
   recordDecision: (id, decision) => config.USE_MOCK ? Promise.resolve(mock.recordDecision(id, decision)) : request(`/api/candidates/${id}/decision`, "POST", { decision }),

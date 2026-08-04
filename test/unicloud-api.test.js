@@ -198,13 +198,20 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   }, "2026-08-07", "2026-08-07T00:00:00.000Z");
   assert.equal(cappedReward.awardedPoints, 1);
   assert.equal(cappedReward.account.month_earned, 35);
+  const coolingOff = _test.candidateWaitSummary(
+    { wait_started_at: "2026-08-01T00:00:00.000Z" },
+    Date.parse("2026-08-08T00:00:00.000Z")
+  );
+  assert.equal(coolingOff.waitDays, 7);
+  assert.equal(coolingOff.daysRemaining, 0);
+  assert.equal(coolingOff.coolingOffComplete, true);
   const freeQuota = _test.quotaSummary({ trial_ends_at: "2026-07-20T00:00:00.000Z" }, [], fixedNow);
   assert.equal(freeQuota.mode, "free");
   assert.equal(freeQuota.recognition.limit, 3);
   assert.equal(freeQuota.hangerRemoval.limit, 1);
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-04-star-rewards-observe-v1");
+  assert.equal(health.body.buildId, "2026-08-04-candidate-waitlist-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -483,7 +490,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-04-star-rewards-observe-v1");
+  assert.equal(failedRecognition.body.buildId, "2026-08-04-candidate-waitlist-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
@@ -630,6 +637,37 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.match(duplicateAnalysis.body.similar[0].matchSummary, /同颜色 \+25/);
   assert.match(duplicateAnalysis.body.similar[0].matchSummary, /共同场景（休闲）\+10/);
 
+  const waitDecision = readResponse(await main(makeEvent(`/api/candidates/${duplicateCandidate.body.id}/decision`, "POST", {
+    decision: "wait"
+  }, authorization)));
+  assert.equal(waitDecision.status, 200);
+  assert.equal(waitDecision.body.addedToWardrobe, false);
+
+  const waitingCandidates = readResponse(await main(makeEvent("/api/candidates?decision=wait", "GET", null, authorization)));
+  assert.equal(waitingCandidates.status, 200);
+  assert.equal(waitingCandidates.body.length, 1);
+  assert.equal(waitingCandidates.body[0].id, duplicateCandidate.body.id);
+  assert.equal(waitingCandidates.body[0].waitDays, 0);
+  assert.equal(waitingCandidates.body[0].daysRemaining, 7);
+  assert.equal(waitingCandidates.body[0].coolingOffComplete, false);
+
+  // 观望只是一种中间状态：再次打开会按当前衣橱重算，并可完成最终购买决定。
+  const waitReanalysis = readResponse(await main(makeEvent(`/api/candidates/${duplicateCandidate.body.id}/analyze`, "POST", {}, authorization)));
+  assert.equal(waitReanalysis.status, 200);
+  assert.equal(waitReanalysis.body.conclusion, "高度重复，不建议购买");
+  const waitPurchase = readResponse(await main(makeEvent(`/api/candidates/${duplicateCandidate.body.id}/decision`, "POST", {
+    decision: "purchased"
+  }, authorization)));
+  assert.equal(waitPurchase.status, 200);
+  assert.equal(waitPurchase.body.addedToWardrobe, true);
+  const repeatedWaitPurchase = readResponse(await main(makeEvent(`/api/candidates/${duplicateCandidate.body.id}/decision`, "POST", {
+    decision: "purchased"
+  }, authorization)));
+  assert.equal(repeatedWaitPurchase.status, 409);
+  const waitingAfterDecision = readResponse(await main(makeEvent("/api/candidates?decision=wait", "GET", null, authorization)));
+  assert.equal(waitingAfterDecision.status, 200);
+  assert.equal(waitingAfterDecision.body.length, 0);
+
   const candidateDecision = readResponse(await main(makeEvent(`/api/candidates/${candidateCreated.body.id}/decision`, "POST", {
     decision: "purchased"
   }, authorization)));
@@ -637,6 +675,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(candidateDecision.body.addedToWardrobe, true);
 
   const afterPurchase = readResponse(await main(makeEvent("/api/items", "GET", null, authorization)));
+  assert.equal(afterPurchase.body.filter((item) => item.name === "重复候选上衣").length, 1);
   const purchasedItem = afterPurchase.body.find((item) => item.name === "候选浅紫衬衫");
   assert.equal(purchasedItem.material, "棉混纺");
   assert.equal(purchasedItem.season, "春夏");

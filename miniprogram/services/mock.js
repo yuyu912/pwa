@@ -302,16 +302,31 @@ module.exports = {
     const id = `candidate-${Date.now()}`;
     const taskId = String(data.draftId || "").replace(/^draft-/, "");
     const task = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};
-    const next = { id, ...data, imageUrl: task.filePath, decision: null };
+    const next = { id, ...data, imageUrl: task.filePath, decision: null, created_at: new Date().toISOString() };
     wx.setStorageSync(`wardrobe_mock_candidate_${id}`, next);
+    const candidates = wx.getStorageSync("wardrobe_mock_candidates") || [];
+    wx.setStorageSync("wardrobe_mock_candidates", [next, ...candidates]);
     return next;
+  },
+  listWaitingCandidates() {
+    return (wx.getStorageSync("wardrobe_mock_candidates") || []).filter((item) => item.decision === "wait").map((item) => {
+      const waitStartedAt = item.wait_started_at || item.decision_at || item.created_at;
+      const waitDays = Math.max(0, Math.floor((Date.now() - Date.parse(waitStartedAt)) / (24 * 60 * 60 * 1000)));
+      return { ...item, waitStartedAt, waitDays, daysRemaining: Math.max(0, 7 - waitDays), coolingOffComplete: waitDays >= 7 };
+    });
   },
   getCandidate(id) { return wx.getStorageSync(`wardrobe_mock_candidate_${id}`) || candidate(); },
   analyzeCandidate(id) { return analysis(id); },
   recordDecision(id, decision) {
     const key = `wardrobe_mock_candidate_${id}`;
     const selected = wx.getStorageSync(key) || candidate();
-    wx.setStorageSync(key, { ...selected, decision });
+    if (["purchased", "declined"].includes(selected.decision)) throw new Error("这件候选新衣已经完成最终决定。");
+    if (selected.decision === "wait" && decision === "wait") throw new Error("这件候选新衣已经在观望清单中。");
+    const decisionAt = new Date().toISOString();
+    const next = { ...selected, decision, decision_at: decisionAt, ...(decision === "wait" && !selected.wait_started_at ? { wait_started_at: decisionAt } : {}) };
+    wx.setStorageSync(key, next);
+    const candidates = wx.getStorageSync("wardrobe_mock_candidates") || [];
+    wx.setStorageSync("wardrobe_mock_candidates", candidates.map((item) => item.id === id ? next : item));
     if (decision === "purchased") saveMockItem(selected, selected.imageUrl);
     return { ok: true, addedToWardrobe: decision === "purchased" };
   }

@@ -24,6 +24,8 @@
     "scenes": { "bsonType": "array", "arrayType": "string" },
     "price": { "description": "可选价格" },
     "decision": { "description": "购买决定" },
+    "wait_started_at": { "bsonType": "string", "description": "首次进入观望清单的时间" },
+    "decision_at": { "bsonType": "string", "description": "最近一次购买决定时间" },
     "analysis": { "description": "规则分析结果" },
     "created_at": { "bsonType": "string" }
   }

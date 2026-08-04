@@ -9,7 +9,7 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-04-star-rewards-observe-v1";
+const BUILD_ID = "2026-08-04-candidate-waitlist-v1";
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });
@@ -261,6 +261,21 @@ const mapCandidate = (candidate) => ({
   styles: sanitizeTags(candidate.styles),
   scenes: sanitizeTags(candidate.scenes, allowedScenes),
   imageUrl: cloud.signedUrl(candidate.image_key, "GET", 3600)
+});
+const candidateWaitSummary = (candidate, currentTime = Date.now()) => {
+  const waitStartedAt = candidate.wait_started_at || candidate.decision_at || candidate.created_at;
+  const elapsed = Math.max(0, currentTime - Date.parse(waitStartedAt || ""));
+  const waitDays = Number.isFinite(elapsed) ? Math.floor(elapsed / DAY_MS) : 0;
+  return {
+    waitStartedAt,
+    waitDays,
+    daysRemaining: Math.max(0, 7 - waitDays),
+    coolingOffComplete: waitDays >= 7
+  };
+};
+const mapWaitingCandidate = (candidate, currentTime = Date.now()) => ({
+  ...mapCandidate(candidate),
+  ...candidateWaitSummary(candidate, currentTime)
 });
 const outfitTokenHash = (token) => crypto.createHash("sha256").update(String(token)).digest("hex");
 const outfitToken = () => crypto.randomBytes(24).toString("base64url");
@@ -1711,6 +1726,16 @@ const route = async (event) => {
     return response(event, 201, { ok: true, reward });
   }
 
+  if (method === "GET" && path === "/api/candidates") {
+    if (query.decision !== "wait") throw Object.assign(new Error("候选新衣筛选条件无效。"), { status: 400 });
+    const candidates = await repository.findMany("candidates", { user_id: userId, decision: "wait" }, {
+      orderBy: "wait_started_at",
+      order: "asc",
+      limit: 100
+    });
+    return response(event, 200, candidates.map((candidate) => mapWaitingCandidate(candidate)));
+  }
+
   if (method === "POST" && path === "/api/candidates") {
     const draft = body.draftId ? await repository.getById("drafts", body.draftId) : null;
     if (!draft || draft.user_id !== userId) throw Object.assign(new Error("未找到候选新衣识别结果，请重新识别。"), { status: 400 });
@@ -1794,11 +1819,20 @@ const route = async (event) => {
       throw Object.assign(new Error("单个测试账号最多保存 100 件衣物。"), { status: 429 });
     }
     const candidateId = decodeURIComponent(decisionMatch[1]);
+    const decisionAt = now();
     await repository.withTransaction(async (tx) => {
       const candidate = await tx.getById("candidates", candidateId);
       if (!candidate || candidate.user_id !== userId) throw Object.assign(new Error("购买决定无效。"), { status: 400 });
-      if (candidate.decision) throw Object.assign(new Error("这件候选新衣已经记录过购买决定。"), { status: 409 });
-      await tx.update("candidates", candidate.id, { decision });
+      if (["purchased", "declined"].includes(candidate.decision)) {
+        throw Object.assign(new Error("这件候选新衣已经完成最终决定。"), { status: 409 });
+      }
+      if (candidate.decision === "wait" && decision === "wait") {
+        throw Object.assign(new Error("这件候选新衣已经在观望清单中。"), { status: 409 });
+      }
+      const changes = { decision, decision_at: decisionAt };
+      // “先观望”是中间状态；首次进入时固定起点，之后复盘不会重置 7 天计时。
+      if (decision === "wait" && !candidate.wait_started_at) changes.wait_started_at = decisionAt;
+      await tx.update("candidates", candidate.id, changes);
       if (decision === "purchased") await tx.add("clothing", {
         user_id: userId,
         image_key: candidate.image_key,
@@ -1858,4 +1892,4 @@ exports.main = async (event) => {
   }
 };
 
-exports._test = { cleanText, entitlementSummary, nextStarAccount, parseArray, parseBody, quotaSummary, sanitizeTags, shanghaiDayKey, shiftDayKey };
+exports._test = { candidateWaitSummary, cleanText, entitlementSummary, nextStarAccount, parseArray, parseBody, quotaSummary, sanitizeTags, shanghaiDayKey, shiftDayKey };

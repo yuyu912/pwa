@@ -1,0 +1,13 @@
+<view class="page wait-page">
+  <text class="eyebrow">7-DAY COOLING-OFF</text><text class="page-title">新衣观望清单</text>
+  <text class="muted">这里不再调用 AI。打开候选新衣时，会按你当前的衣橱与穿着记录重新计算标签规则分析。</text>
+  <view wx:if="{{loading}}" class="empty">正在读取观望清单…</view>
+  <view wx:elif="{{error}}" class="empty"><text>{{error}}</text><button class="secondary retry" bindtap="loadItems">重新加载</button></view>
+  <view wx:elif="{{items.length === 0}}" class="card empty-card"><text class="empty-title">还没有观望中的新衣</text><text class="muted">完成一次新衣分析后选择“先观望”，它就会出现在这里。</text><button class="secondary start-button" bindtap="startAnalysis">分析一件新衣</button></view>
+  <view wx:else class="wait-list">
+    <view wx:for="{{items}}" wx:key="id" class="card wait-item" data-id="{{item.id}}" bindtap="openCandidate">
+      <image wx:if="{{item.imageUrl && !imageFailures[item.id]}}" class="item-image" src="{{item.imageUrl}}" mode="aspectFit" data-id="{{item.id}}" binderror="onImageError"/><view wx:else class="item-placeholder">候</view>
+      <view class="item-copy"><text class="item-name">{{item.name}}</text><text class="meta">{{item.category}} · {{item.color || '颜色未填写'}} · {{item.price === null || item.price === undefined || item.price === '' ? '价格未填写' : '¥' + item.price}}</text><text class="wait-days">{{item.waitText}}</text><text class="status {{item.coolingOffComplete ? 'ready' : ''}}">{{item.statusText}}</text><text class="action">打开并按当前衣橱重新复盘 ›</text></view>
+    </view>
+  </view>
+</view>

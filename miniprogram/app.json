@@ -17,6 +17,7 @@
     "pages/wardrobe-report/index",
     "pages/plans/index",
     "pages/candidate/index",
+    "pages/candidate-waitlist/index",
     "pages/privacy/index",
     "pages/account/index",
     "pages/agreement/index",

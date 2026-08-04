@@ -28,6 +28,7 @@
   </view>
 
   <view class="calendar-entry" bindtap="toWearCalendar"><view class="calendar-entry-icon"><text class="calendar-entry-month">月</text><text class="calendar-entry-day">日</text></view><view class="calendar-entry-copy"><text class="calendar-entry-title">穿着日历</text><text class="calendar-entry-subtitle">按月回看真实穿着记录</text></view><text class="chevron">›</text></view>
+  <view class="calendar-entry" bindtap="toCandidateWaitlist"><view class="calendar-entry-icon waitlist-icon"><text>候</text></view><view class="calendar-entry-copy"><text class="calendar-entry-title">新衣观望清单</text><text class="calendar-entry-subtitle">冷静 7 天后，按当前衣橱重新复盘</text></view><text class="chevron">›</text></view>
 
   <view class="progress-card" bindtap="toWardrobe"><image wx:if="{{!imageErrors.progress}}" class="progress-art" src="/assets/progress-wardrobe-v2.jpg" mode="aspectFit" data-id="progress" binderror="onActionImageError"/><view wx:else class="mini-closet">▥</view><text class="progress-copy">已录入 <text class="count">{{itemCount}}</text> 件 · 再添 <text class="count">2</text> 件解锁完整分析</text><text class="chevron">›</text></view>
 
