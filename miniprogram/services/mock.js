@@ -97,6 +97,22 @@ function saveMockItem(data, imageUrl) {
 module.exports = {
   login(username) { return { user: { ...user(), username: username || user().username }, token: "demo-token" }; },
   getMe() { return { user: user() }; },
+  getEntitlement() {
+    let startedAt = wx.getStorageSync("wardrobe_mock_trial_started_at");
+    if (!startedAt) {
+      startedAt = new Date().toISOString();
+      wx.setStorageSync("wardrobe_mock_trial_started_at", startedAt);
+    }
+    const trialEndsAt = new Date(Date.parse(startedAt) + 7 * 24 * 60 * 60 * 1000).toISOString();
+    return { status: Date.parse(trialEndsAt) > Date.now() ? "trialing" : "expired", trialStartedAt: startedAt, trialEndsAt, subscriptionEndsAt: null, serverTime: new Date().toISOString(), purchaseEnabled: false };
+  },
+  getPlans() {
+    return { purchaseEnabled: false, plans: [
+      { id: "weekly", name: "周付体验", durationDays: 7, featured: true, price: 8.9, purchaseEnabled: false },
+      { id: "monthly", name: "月付会员", durationDays: 30, featured: false, price: 48.9, purchaseEnabled: false },
+      { id: "yearly", name: "年付会员", durationDays: 365, featured: false, price: 448.9, purchaseEnabled: false }
+    ] };
+  },
   listItems() { return items(); },
   getItem(id) { return items().find((item) => item.id === id); },
   getAiBudget() { return budget(); },
@@ -110,6 +126,23 @@ module.exports = {
     wx.setStorageSync(`wardrobe_mock_task_${upload.taskId}`, { ...task, filePath });
     return { ok: true };
   },
+  mattingItem(taskId) {
+    const task = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};
+    return { taskId, status: "matting_completed", stage: task.mode === "manual" ? "awaiting_manual_fields" : "awaiting_recognition", providerName: "腾讯数据万象", modelName: "商品抠图", actionText: "已完成衣物背景去除", cutoutUrl: task.filePath, originalCutoutUrl: task.filePath, hangerEditUrl: task.hangerEditUrl || "", selectedImage: task.selectedImage || "original" };
+  },
+  removeHanger(taskId) {
+    const task = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};
+    const next = { ...task, hangerEditUrl: task.hangerEditUrl || task.filePath, selectedImage: "hanger_edit" };
+    wx.setStorageSync(`wardrobe_mock_task_${taskId}`, next);
+    return { taskId, status: "hanger_edit_completed", stage: "awaiting_image_selection", providerName: "阿里云百炼", modelName: "qwen-image-2.0", actionText: "已移除衣架并保留原抠图", cutoutUrl: next.hangerEditUrl, originalCutoutUrl: task.filePath, hangerEditUrl: next.hangerEditUrl, selectedImage: "hanger_edit" };
+  },
+  selectTaskImage(taskId, choice) {
+    const task = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};
+    const selectedImage = choice === "hanger_edit" && task.hangerEditUrl ? "hanger_edit" : "original";
+    const next = { ...task, selectedImage };
+    wx.setStorageSync(`wardrobe_mock_task_${taskId}`, next);
+    return { taskId, selectedImage, cutoutUrl: selectedImage === "hanger_edit" ? task.hangerEditUrl : task.filePath, originalCutoutUrl: task.filePath, hangerEditUrl: task.hangerEditUrl || "" };
+  },
   recognizeItem(taskId) {
     const current = usage();
     const next = { successfulTasks: current.successfulTasks + 1, spentYuan: Number((current.spentYuan + 0.03).toFixed(2)) };
@@ -118,7 +151,7 @@ module.exports = {
     return {
       taskId,
       draftId: `draft-${taskId}`,
-      cutoutUrl: task.filePath,
+      cutoutUrl: task.selectedImage === "hanger_edit" && task.hangerEditUrl ? task.hangerEditUrl : task.filePath,
       isDemo: true,
       tags: {
         name: "演示识别·浅紫上衣",
@@ -138,11 +171,11 @@ module.exports = {
   createItem(data) {
     const taskId = String(data.draftId || "").replace(/^draft-/, "");
     const task = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};
-    return saveMockItem(data, task.filePath);
+    return saveMockItem(data, task.selectedImage === "hanger_edit" && task.hangerEditUrl ? task.hangerEditUrl : task.filePath);
   },
   createManualItem(data) {
     const task = wx.getStorageSync(`wardrobe_mock_task_${data.taskId}`) || {};
-    return saveMockItem(data, task.filePath);
+    return saveMockItem(data, task.selectedImage === "hanger_edit" && task.hangerEditUrl ? task.hangerEditUrl : task.filePath);
   },
   updateItem(id, data) {
     // 模拟模式与云端保持相同语义：只更新可编辑字段，不改图片和穿着次数。

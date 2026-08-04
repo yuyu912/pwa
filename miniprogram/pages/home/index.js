@@ -9,13 +9,38 @@ const HOME_WEATHER_TIPS = {
   "降温": "适合叠穿保暖"
 };
 
+const entitlementView = (entitlement) => {
+  const remainingMs = Math.max(0, Date.parse(entitlement.trialEndsAt || "") - Date.parse(entitlement.serverTime || ""));
+  return {
+    ...entitlement,
+    remainingDays: entitlement.status === "trialing" ? Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000))) : 0,
+    title: entitlement.status === "trialing" ? "7 天 AI 权益试用中" : entitlement.status === "active" ? "AI 会员有效" : "AI 权益试用已结束",
+    note: entitlement.status === "trialing" ? `剩余约 ${Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))} 天` : entitlement.status === "active" ? "查看当前权益" : "套餐购买功能准备中，当前功能不会被锁定"
+  };
+};
+
 Page({
-  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "设置所在地后获取演示天气", weatherTip: "按衣橱推荐今天穿什么", hasLocation: false, imageErrors: {} },
+  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "设置所在地后获取演示天气", weatherTip: "按衣橱推荐今天穿什么", hasLocation: false, imageErrors: {}, entitlement: null },
   async onShow() {
     const { user, token } = session.restore();
     if (!user || !token) return wx.redirectTo({ url: "/pages/login/index" });
     try { this.setData({ itemCount: (await api.listItems()).length }); }
     catch { this.setData({ itemCount: 0 }); }
+    try {
+      const entitlement = entitlementView(await api.getEntitlement());
+      this.setData({ entitlement });
+      const app = getApp();
+      if (entitlement.status === "expired" && !app.globalData.entitlementPromptShown) {
+        app.globalData.entitlementPromptShown = true;
+        wx.showModal({
+          title: "7 天试用已结束",
+          content: "周、月、年套餐正在准备中。本阶段不会收费，也不会锁定现有功能。",
+          confirmText: "查看套餐",
+          cancelText: "稍后",
+          success: ({ confirm }) => { if (confirm) this.toPlans(); }
+        });
+      }
+    } catch {}
     const location = weatherService.loadLocation();
     if (location) {
       const weather = weatherService.getDemoWeather(location);
@@ -31,6 +56,7 @@ Page({
   toFriends() { wx.navigateTo({ url: "/pages/friends/index" }); },
   toWearCalendar() { wx.navigateTo({ url: "/pages/wear-calendar/index" }); },
   toMine() { wx.navigateTo({ url: "/pages/account/index" }); },
+  toPlans() { wx.navigateTo({ url: "/pages/plans/index" }); },
   onActionImageError(event) {
     const id = event.currentTarget.dataset.id;
     this.setData({ [`imageErrors.${id}`]: true });

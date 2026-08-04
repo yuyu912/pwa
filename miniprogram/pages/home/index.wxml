@@ -11,6 +11,11 @@
     <view class="weather-card" bindtap="toWeather"><text class="weather-icon">{{hasLocation ? '☁︎' : '⌖'}}</text><view class="weather-content"><text class="weather-temp">{{weatherTemp}}</text><text class="weather-copy">{{weatherCopy}}</text><text class="weather-tip">{{weatherTip}}</text></view><text class="card-arrow">›</text></view>
   </view>
 
+  <view wx:if="{{entitlement}}" class="entitlement-card entitlement-{{entitlement.status}}" bindtap="toPlans">
+    <view><text class="entitlement-title">{{entitlement.title}}</text><text class="entitlement-note">{{entitlement.note}}</text></view>
+    <text class="chevron">›</text>
+  </view>
+
   <view class="today-card" bindtap="toTodayOutfit">
     <image wx:if="{{!imageErrors.today}}" class="today-bg" src="/assets/today-card-bg-v2.jpg" mode="aspectFill" data-id="today" binderror="onActionImageError" />
     <view class="today-copy"><text class="hanger">⌁</text><text class="today-title">今天穿什么</text><text class="today-arrow">⟶</text></view>

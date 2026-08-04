@@ -1,5 +1,5 @@
 <view class="page">
-  <view wx:if="{{loading}}" class="empty">正在生成候选报告…</view>
+  <view wx:if="{{loading}}" class="empty">正在使用已确认标签与衣橱记录进行规则比较…</view>
   <view wx:elif="{{error}}" class="empty"><text>{{error}}</text><button class="secondary retry" bindtap="load">重新尝试</button></view>
   <block wx:else>
     <view class="card candidate-card">

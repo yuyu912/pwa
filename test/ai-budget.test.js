@@ -11,6 +11,7 @@ test("默认AI预算为50元、1000次、单任务预留0.05元", () => {
   assert.equal(limits.taskLimit, 1000);
   assert.equal(limits.taskReservationMicros, 50_000);
   assert.equal(limits.mattingCostMicros, 10_000);
+  assert.equal(limits.imageEditCostMicros, 200_000);
 });
 
 test("预算摘要在40元预警、45元强提醒、50元停止", () => {

@@ -5,6 +5,7 @@ const DEFAULT_LIMIT_MICROS = 50 * 1000 * 1000;
 const DEFAULT_TASK_LIMIT = 1000;
 const DEFAULT_TASK_RESERVATION_MICROS = 50 * 1000;
 const DEFAULT_MATTING_COST_MICROS = 10 * 1000;
+const DEFAULT_IMAGE_EDIT_COST_MICROS = 200 * 1000;
 
 const integer = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -15,7 +16,8 @@ const limitsFromEnv = (env = process.env) => ({
   totalMicros: integer(env.AI_BUDGET_TOTAL_MICROS, DEFAULT_LIMIT_MICROS),
   taskLimit: integer(env.AI_BUDGET_TASK_LIMIT, DEFAULT_TASK_LIMIT),
   taskReservationMicros: integer(env.AI_TASK_RESERVATION_MICROS, DEFAULT_TASK_RESERVATION_MICROS),
-  mattingCostMicros: integer(env.AI_MATTING_COST_MICROS, DEFAULT_MATTING_COST_MICROS)
+  mattingCostMicros: integer(env.AI_MATTING_COST_MICROS, DEFAULT_MATTING_COST_MICROS),
+  imageEditCostMicros: integer(env.AI_IMAGE_EDIT_COST_MICROS, DEFAULT_IMAGE_EDIT_COST_MICROS)
 });
 
 // 千问返回实际输入/输出 Token 后才计算模型成本；单价由云端环境变量提供，不能写死在客户端。
@@ -61,6 +63,7 @@ module.exports = {
   DEFAULT_TASK_LIMIT,
   DEFAULT_TASK_RESERVATION_MICROS,
   DEFAULT_MATTING_COST_MICROS,
+  DEFAULT_IMAGE_EDIT_COST_MICROS,
   estimateQwenCostMicros,
   integer,
   limitsFromEnv,

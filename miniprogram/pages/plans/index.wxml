@@ -1,0 +1,23 @@
+<view class="page">
+  <text class="heading">AI 权益套餐</text>
+  <text class="sub">当前仅用于体验和验证套餐结构，不会发起支付，也不会自动续费。</text>
+
+  <view wx:if="{{entitlement}}" class="status status-{{entitlement.status}}">
+    <text class="status-title">{{entitlement.status === 'trialing' ? '7 天试用进行中' : (entitlement.status === 'active' ? '会员权益有效' : '7 天试用已结束')}}</text>
+    <text class="status-note">{{entitlement.status === 'trialing' ? '试用截止：' + entitlement.trialEndsText : '本阶段现有功能仍可继续使用。'}}</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="empty">正在读取套餐框架…</view>
+  <view wx:elif="{{error}}" class="empty error"><text>{{error}}</text><button class="retry" bindtap="load">重新加载</button></view>
+  <view wx:else class="plan-list">
+    <view wx:for="{{plans}}" wx:key="id" class="plan-card {{item.featured ? 'featured' : ''}}">
+      <view class="plan-head"><text class="plan-name">{{item.name}}</text><text wx:if="{{item.featured}}" class="recommended">主推</text></view>
+      <text class="duration">{{item.durationDays}} 天权益周期</text>
+      <text class="price">¥{{item.price}}</text>
+      <button class="purchase" disabled="{{!item.purchaseEnabled}}">购买功能准备中</button>
+    </view>
+  </view>
+
+  <view class="rules"><text class="rules-title">本阶段规则</text><text>· 不创建订单、收款链接或自动续费</text><text>· 最终功能权益和额度将在下一轮确认</text></view>
+  <button class="back" bindtap="goBack">返回</button>
+</view>

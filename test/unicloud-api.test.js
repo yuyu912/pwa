@@ -127,8 +127,22 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   });
   cloudServices.signedUrl = (key) => `https://images.test/${encodeURIComponent(key)}`;
   cloudServices.sourceHash = async () => "b".repeat(64);
-  cloudServices.extractGarment = async () => "cutouts/new-item.png";
-  cloudServices.recognizeImage = async () => ({
+  let mattingCallCount = 0;
+  cloudServices.extractGarment = async () => {
+    mattingCallCount += 1;
+    return { cutoutKey: "cutouts/new-item.png", modelName: "商品抠图", providerCallCount: 1 };
+  };
+  let hangerEditCallCount = 0;
+  cloudServices.removeHanger = async () => {
+    hangerEditCallCount += 1;
+    return { imageKey: "cutouts/new-item-no-hanger.png", model: "qwen-image-2.0", imageEditCalls: 1, postMattingCalls: 0 };
+  };
+  let recognitionCallCount = 0;
+  let lastRecognitionKey = "";
+  cloudServices.recognizeImage = async (key) => {
+    recognitionCallCount += 1;
+    lastRecognitionKey = key;
+    return ({
     valid: true,
     reason: "",
     tags: {
@@ -146,13 +160,18 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     usage: { prompt_tokens: 1000, completion_tokens: 200 },
     provider: "dashscope",
     model: "qwen3-vl-plus"
-  });
+    });
+  };
   cloudServices.deleteObject = async () => {};
 
-  const { main } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
+  const { main, _test } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
+  const fixedNow = Date.parse("2026-08-03T00:00:00.000Z");
+  assert.equal(_test.entitlementSummary({ trial_ends_at: "2026-08-02T23:59:59.999Z" }, fixedNow).status, "expired");
+  assert.equal(_test.entitlementSummary({ trial_ends_at: "2026-08-10T00:00:00.000Z" }, fixedNow).status, "trialing");
+  assert.equal(_test.entitlementSummary({ trial_ends_at: "2026-08-02T00:00:00.000Z", subscription_ends_at: "2026-09-01T00:00:00.000Z" }, fixedNow).status, "active");
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-03-p1-listing-assistant-v2");
+  assert.equal(health.body.buildId, "2026-08-04-hanger-edit-preview-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -198,6 +217,20 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.ok(login.body.token);
 
   const authorization = { authorization: `Bearer ${login.body.token}` };
+  const firstEntitlement = readResponse(await main(makeEvent("/api/entitlements/me", "GET", null, authorization)));
+  const repeatedEntitlement = readResponse(await main(makeEvent("/api/entitlements/me", "GET", null, authorization)));
+  assert.equal(firstEntitlement.status, 200);
+  assert.equal(firstEntitlement.body.status, "trialing");
+  assert.equal(Date.parse(firstEntitlement.body.trialEndsAt) - Date.parse(firstEntitlement.body.trialStartedAt), 7 * 24 * 60 * 60 * 1000);
+  assert.equal(repeatedEntitlement.body.trialStartedAt, firstEntitlement.body.trialStartedAt);
+  assert.equal(repeatedEntitlement.body.trialEndsAt, firstEntitlement.body.trialEndsAt);
+  const plans = readResponse(await main(makeEvent("/api/plans", "GET", null, authorization)));
+  assert.equal(plans.status, 200);
+  assert.equal(plans.body.purchaseEnabled, false);
+  assert.equal(plans.body.pricingRule, undefined);
+  assert.deepEqual(plans.body.plans.map((plan) => plan.id), ["weekly", "monthly", "yearly"]);
+  assert.deepEqual(plans.body.plans.map((plan) => plan.price), [8.9, 48.9, 448.9]);
+  assert.ok(plans.body.plans.every((plan) => plan.purchaseEnabled === false));
   const budget = readResponse(await main(makeEvent("/api/ai-budget", "GET", null, authorization)));
   assert.equal(budget.status, 200);
   assert.equal(budget.body.remainingTasks, 1000);
@@ -326,20 +359,44 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   }, authorization)));
   assert.equal(upload.status, 201);
 
-  const recognition = readResponse(await main(makeEvent("/api/recognize", "POST", {
-    taskId: upload.body.taskId
-  }, authorization)));
-  assert.equal(recognition.status, 201);
+  const recognitionBeforeMatting = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/recognition`, "POST", {}, authorization)));
+  assert.equal(recognitionBeforeMatting.status, 409);
+  const budgetAfterRejectedOrder = readResponse(await main(makeEvent("/api/ai-budget", "GET", null, authorization)));
+  assert.equal(budgetAfterRejectedOrder.body.remainingYuan, 50);
+
+  const matting = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/matting`, "POST", {}, authorization)));
+  assert.equal(matting.status, 200);
+  assert.equal(matting.body.providerName, "腾讯数据万象");
+  assert.equal(matting.body.stage, "awaiting_recognition");
+  const repeatedMatting = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/matting`, "POST", {}, authorization)));
+  assert.equal(repeatedMatting.status, 200);
+  assert.equal(mattingCallCount, 1);
+  const hangerEdit = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/hanger-removal`, "POST", {}, authorization)));
+  assert.equal(hangerEdit.status, 200);
+  assert.equal(hangerEdit.body.modelName, "qwen-image-2.0");
+  assert.equal(hangerEdit.body.selectedImage, "original");
+  assert.match(hangerEdit.body.hangerEditUrl, /no-hanger/);
+  const repeatedHangerEdit = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/hanger-removal`, "POST", {}, authorization)));
+  assert.equal(repeatedHangerEdit.status, 200);
+  assert.equal(hangerEditCallCount, 1);
+  const selectedEdit = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/image-selection`, "POST", { choice: "hanger_edit" }, authorization)));
+  assert.equal(selectedEdit.status, 200);
+  assert.equal(selectedEdit.body.selectedImage, "hanger_edit");
+  const recognition = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/recognition`, "POST", {}, authorization)));
+  assert.equal(recognition.status, 200);
   assert.equal(recognition.body.tags.category, "上衣");
   assert.equal(recognition.body.tags.season, "春夏");
   assert.equal(recognition.body.budget.successfulTasks, 1);
+  assert.equal(recognition.body.providerName, "阿里云百炼");
+  assert.equal(recognition.body.modelName, "qwen3-vl-plus");
+  assert.equal(lastRecognitionKey, "cutouts/new-item-no-hanger.png");
 
-  const replay = readResponse(await main(makeEvent("/api/recognize", "POST", {
-    taskId: upload.body.taskId
-  }, authorization)));
-  assert.equal(replay.status, 201);
+  const replay = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/recognition`, "POST", {}, authorization)));
+  assert.equal(replay.status, 200);
   assert.equal(replay.body.draftId, recognition.body.draftId);
   assert.equal(replay.body.budget.successfulTasks, 1);
+  const otherUserCannotReadTask = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/matting`, "POST", {}, friendAuthorization)));
+  assert.equal(otherUserCannotReadTask.status, 404);
 
   // 测试环境只暴露安全阶段、错误码、HTTP 状态和请求号，绝不返回密钥或供应商完整响应。
   cloudServices.sourceHash = async () => {
@@ -359,13 +416,47 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-03-p1-listing-assistant-v2");
+  assert.equal(failedRecognition.body.buildId, "2026-08-04-hanger-edit-preview-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
   assert.equal(retriedRecognition.status, 200);
   assert.equal(retriedRecognition.body.tags.category, "上衣");
   assert.equal(retriedRecognition.body.provider, "dashscope");
+
+  const successfulExtractGarment = cloudServices.extractGarment;
+  const recognitionCallsBeforeQualityFailure = recognitionCallCount;
+  cloudServices.extractGarment = async () => {
+    mattingCallCount += 1;
+    throw Object.assign(new Error("背景去除不完整，请换一张衣物边缘更清楚、四周留有空间的图片。"), {
+      status: 422,
+      code: "MATTING_QUALITY_LOW",
+      providerCallCount: 2
+    });
+  };
+  const lowQualityUpload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
+    mimeType: "image/jpeg",
+    size: 500000,
+    mode: "closet",
+    idempotencyKey: "test-low-matting-quality"
+  }, authorization)));
+  const lowQualityMatting = readResponse(await main(makeEvent(`/api/tasks/${lowQualityUpload.body.taskId}/matting`, "POST", {}, authorization)));
+  assert.equal(lowQualityMatting.status, 422);
+  assert.equal(lowQualityMatting.body.providerCode, "MATTING_QUALITY_LOW");
+  assert.equal(recognitionCallCount, recognitionCallsBeforeQualityFailure);
+  cloudServices.extractGarment = successfulExtractGarment;
+
+  const usageSummary = readResponse(await main(makeEvent("/api/admin/ai-usage-summary?start=2026-01-01T00:00:00.000Z&end=2030-01-01T00:00:00.000Z", "GET", null, { "x-admin-token": "test-admin-token" })));
+  assert.equal(usageSummary.status, 200);
+  assert.ok(usageSummary.body.promptTokens >= 2000);
+  assert.ok(usageSummary.body.completionTokens >= 400);
+  assert.ok(usageSummary.body.mattingCalls >= 4);
+  assert.equal(usageSummary.body.imageEditCalls, 1);
+  assert.equal(usageSummary.body.imageEditCostYuan, 0.2);
+  assert.equal(usageSummary.body.revenueYuan, null);
+  assert.equal(usageSummary.body.grossMarginYuan, null);
+  const ordinaryUserCannotReadUsage = readResponse(await main(makeEvent("/api/admin/ai-usage-summary", "GET", null, authorization)));
+  assert.equal(ordinaryUserCannotReadUsage.status, 401);
 
   const saved = readResponse(await main(makeEvent("/api/items", "POST", {
     draftId: recognition.body.draftId,
@@ -382,6 +473,29 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(saved.status, 201);
   assert.equal(saved.body.name, "用户确认后的上衣");
   assert.equal(saved.body.material, "棉混纺");
+
+  cloudServices.sourceHash = async () => "d".repeat(64);
+  const manualUpload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
+    mimeType: "image/jpeg",
+    size: 500000,
+    mode: "manual",
+    idempotencyKey: "test-manual-matting-1"
+  }, authorization)));
+  const recognitionCallsBeforeManual = recognitionCallCount;
+  const manualMatting = readResponse(await main(makeEvent(`/api/tasks/${manualUpload.body.taskId}/matting`, "POST", {}, authorization)));
+  assert.equal(manualMatting.status, 200);
+  assert.equal(manualMatting.body.stage, "awaiting_manual_fields");
+  assert.match(manualMatting.body.cutoutUrl, /cutouts/);
+  assert.equal(recognitionCallCount, recognitionCallsBeforeManual);
+  const manualSaved = readResponse(await main(makeEvent("/api/items/manual", "POST", {
+    taskId: manualUpload.body.taskId,
+    name: "基础抠图手动上衣",
+    category: "上衣",
+    color: "白色"
+  }, authorization)));
+  assert.equal(manualSaved.status, 201);
+  assert.match(manualSaved.body.imageUrl, /cutouts/);
+  assert.equal(recognitionCallCount, recognitionCallsBeforeManual);
 
   const candidateUpload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
     mimeType: "image/jpeg",

@@ -9,7 +9,13 @@ const aiBudget = require("./lib/ai-budget");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-03-p1-listing-assistant-v2";
+const BUILD_ID = "2026-08-04-hanger-edit-preview-v1";
+const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const PLAN_CATALOG = Object.freeze([
+  { id: "weekly", name: "周付体验", durationDays: 7, featured: true, price: 8.9, purchaseEnabled: false },
+  { id: "monthly", name: "月付会员", durationDays: 30, featured: false, price: 48.9, purchaseEnabled: false },
+  { id: "yearly", name: "年付会员", durationDays: 365, featured: false, price: 448.9, purchaseEnabled: false }
+]);
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
 const newId = () => crypto.randomUUID();
 const parseArray = (value) => {
@@ -70,6 +76,36 @@ const response = (event, statusCode, body, extraHeaders = {}) => ({
 });
 
 const publicUser = (user) => ({ id: String(user.id), username: user.username });
+const entitlementSummary = (user, currentTime = Date.now()) => {
+  const subscriptionEndsAt = Date.parse(user.subscription_ends_at || "");
+  const trialEndsAt = Date.parse(user.trial_ends_at || "");
+  const status = Number.isFinite(subscriptionEndsAt) && subscriptionEndsAt > currentTime
+    ? "active"
+    : Number.isFinite(trialEndsAt) && trialEndsAt > currentTime
+      ? "trialing"
+      : "expired";
+  return {
+    status,
+    trialStartedAt: user.trial_started_at || null,
+    trialEndsAt: user.trial_ends_at || null,
+    subscriptionEndsAt: user.subscription_ends_at || null,
+    serverTime: new Date(currentTime).toISOString(),
+    purchaseEnabled: false
+  };
+};
+const newTrialFields = (startedAt = now()) => ({
+  entitlement_initialized_at: startedAt,
+  trial_started_at: startedAt,
+  trial_ends_at: new Date(Date.parse(startedAt) + TRIAL_DURATION_MS).toISOString()
+});
+const ensureEntitlement = async (userId) => repository.withTransaction(async (tx) => {
+  const user = await tx.getById("users", userId);
+  if (!user) throw Object.assign(new Error("请先登录。"), { status: 401 });
+  if (user.entitlement_initialized_at && user.trial_started_at && user.trial_ends_at) return user;
+  const changes = newTrialFields();
+  await tx.update("users", user.id, changes);
+  return { ...user, ...changes };
+});
 const tokenFor = (user) => {
   requiredEnv(["JWT_SECRET"]);
   return jwt.sign(publicUser(user), process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -161,7 +197,7 @@ const ensureBudget = async () => {
 const budgetSummary = async () => aiBudget.publicSummary(await ensureBudget());
 
 // 在调用任何付费 AI 前，用事务预留本任务最多 0.05 元；并发上传也不能突破项目总预算。
-const reserveTaskBudget = async (taskId, userId) => {
+const reserveTaskBudget = async (taskId, userId, requestedMicros = null) => {
   await ensureBudget();
   const limits = aiBudget.limitsFromEnv();
   return repository.withTransaction(async (tx) => {
@@ -173,7 +209,7 @@ const reserveTaskBudget = async (taskId, userId) => {
     const spent = aiBudget.integer(budget.spent_micros);
     const reserved = aiBudget.integer(budget.reserved_micros);
     const successful = aiBudget.integer(budget.successful_tasks);
-    const taskRemaining = Math.max(0, limits.taskReservationMicros - aiBudget.integer(task.cost_micros));
+    const taskRemaining = requestedMicros == null ? limits.taskReservationMicros : aiBudget.integer(requestedMicros);
     if (!taskRemaining || spent + reserved + taskRemaining > limits.totalMicros || successful >= limits.taskLimit) {
       throw Object.assign(new Error("AI 测试额度已用完，可以继续手动录入。"), { status: 429, code: "AI_BUDGET_EXHAUSTED" });
     }
@@ -243,7 +279,8 @@ const handleRegister = async (body) => {
     username,
     password_hash: await bcrypt.hash(password, 12),
     recovery_hash: await bcrypt.hash(recoveryCode, 12),
-    created_at: now()
+    created_at: now(),
+    ...newTrialFields()
   };
   await repository.withTransaction(async (tx) => {
     const lockedInvite = await tx.getById("invites", invite.id);
@@ -252,7 +289,10 @@ const handleRegister = async (body) => {
       username: user.username,
       password_hash: user.password_hash,
       recovery_hash: user.recovery_hash,
-      created_at: user.created_at
+      created_at: user.created_at,
+      entitlement_initialized_at: user.entitlement_initialized_at,
+      trial_started_at: user.trial_started_at,
+      trial_ends_at: user.trial_ends_at
     }, user.id);
     await tx.update("invites", lockedInvite.id, { used_by: user.id, used_at: now() });
   });
@@ -297,7 +337,7 @@ const handleOutfitGuestRegister = async (body) => {
   const recoveryCode = crypto.randomBytes(6).toString("hex").toUpperCase();
   const user = {
     id: newId(), username, password_hash: await bcrypt.hash(password, 12),
-    recovery_hash: await bcrypt.hash(recoveryCode, 12), created_at: now(), status: "active"
+    recovery_hash: await bcrypt.hash(recoveryCode, 12), created_at: now(), status: "active", ...newTrialFields()
   };
   await repository.withTransaction(async (tx) => {
     const lockedRequest = await tx.getById("outfitRequests", request.id);
@@ -306,7 +346,8 @@ const handleOutfitGuestRegister = async (body) => {
     if (participants.length >= 5) throw Object.assign(new Error("这次搭配请求已满 5 人。"), { status: 409 });
     await tx.add("users", {
       username: user.username, password_hash: user.password_hash, recovery_hash: user.recovery_hash,
-      created_at: user.created_at, status: "active"
+      created_at: user.created_at, status: "active", entitlement_initialized_at: user.entitlement_initialized_at,
+      trial_started_at: user.trial_started_at, trial_ends_at: user.trial_ends_at
     }, user.id);
     await tx.update("outfitRequests", lockedRequest.id, { participant_user_ids: [...participants, user.id] });
   });
@@ -409,54 +450,272 @@ const verifyData = async () => {
   return { counts, orphanWearLogs };
 };
 
-// 同一 taskId 可以安全重试：已有透明图时跳过抠图，只重新请求识别，避免重复产生抠图费用。
-const processRecognitionTask = async (taskId, userId) => {
+const taskProgress = (task, overrides = {}) => ({
+  taskId: String(task.id),
+  status: overrides.status || task.status,
+  stage: overrides.stage || task.stage,
+  providerName: overrides.providerName || null,
+  modelName: overrides.modelName || null,
+  actionText: overrides.actionText || ""
+});
+
+const ownedAiTask = async (taskId, userId, options = {}) => {
+  const task = await repository.getById("aiUsage", taskId);
+  if (!task || task.user_id !== userId || (task.mode === "manual" && options.allowManual !== true)) {
+    throw Object.assign(new Error("AI 任务不存在或已失效。"), { status: 404 });
+  }
+  return task;
+};
+
+const taskImageState = (task) => ({
+  originalCutoutUrl: task.cutout_key ? cloud.signedUrl(task.cutout_key, "GET", 3600) : null,
+  hangerEditUrl: task.hanger_edit_key ? cloud.signedUrl(task.hanger_edit_key, "GET", 3600) : null,
+  selectedImage: task.selected_image_key === task.hanger_edit_key && task.hanger_edit_key ? "hanger_edit" : "original"
+});
+
+// 抠图和模型识别分开结算：用户完成抠图后即使离开页面，也不会长期占用预算预留。
+const processMattingTask = async (taskId, userId) => {
+  let task = await ownedAiTask(taskId, userId, { allowManual: true });
+  if (task.cutout_key) {
+    return {
+      ...taskProgress(task, {
+        status: task.status === "completed" ? "completed" : "matting_completed",
+        stage: task.mode === "manual" ? "awaiting_manual_fields" : task.status === "completed" ? "awaiting_confirmation" : "awaiting_recognition",
+        providerName: "腾讯数据万象",
+        modelName: "商品抠图",
+        actionText: "已完成衣物背景去除"
+      }),
+      cutoutUrl: cloud.signedUrl(task.selected_image_key || task.cutout_key, "GET", 3600),
+      ...taskImageState(task)
+    };
+  }
+  await reserveTaskBudget(taskId, userId);
+  task = await ownedAiTask(taskId, userId, { allowManual: true });
+  let failedStage = "read_source";
+  let cutoutKey = null;
+  let mattingProviderCalls = 0;
+  let mattingModelName = "商品抠图";
+  let settled = false;
+  try {
+    if (!task.source_key?.startsWith(`uploads/${userId}/`)) {
+      throw Object.assign(new Error("上传凭据无效，请重新选择图片。"), { status: 400 });
+    }
+    const sourceHash = await cloud.sourceHash(task.source_key);
+    const exact = task.mode !== "candidate"
+      ? await repository.findOne("clothing", { source_hash_key: `${userId}:${sourceHash}` })
+      : null;
+    if (exact) {
+      throw Object.assign(new Error("这张衣物图片已经录入过。"), {
+        status: 409,
+        duplicate: { type: "blocked", item: mapItem(exact), score: 100 }
+      });
+    }
+    failedStage = "goods_matting";
+    const extraction = await cloud.extractGarment(task.source_key);
+    cutoutKey = typeof extraction === "string" ? extraction : extraction.cutoutKey;
+    mattingProviderCalls = typeof extraction === "string" ? 1 : Math.max(1, aiBudget.integer(extraction.providerCallCount));
+    mattingModelName = typeof extraction === "string" ? "商品抠图" : extraction.modelName;
+    await repository.update("aiUsage", task.id, {
+      cutout_key: cutoutKey,
+      source_hash: sourceHash,
+      matting_calls: aiBudget.integer(task.matting_calls) + mattingProviderCalls,
+      updated_at: now()
+    });
+    await settleTaskBudget(task.id, userId, {
+      chargeMicros: aiBudget.limitsFromEnv().mattingCostMicros * mattingProviderCalls,
+      status: "matting_completed",
+      stage: task.mode === "manual" ? "awaiting_manual_fields" : "awaiting_recognition",
+      success: false
+    });
+    settled = true;
+    return {
+      ...taskProgress(task, {
+        status: "matting_completed",
+        stage: task.mode === "manual" ? "awaiting_manual_fields" : "awaiting_recognition",
+        providerName: "腾讯数据万象",
+        modelName: mattingModelName,
+        actionText: "已完成衣物背景去除"
+      }),
+      cutoutUrl: cloud.signedUrl(cutoutKey, "GET", 3600),
+      ...taskImageState({ ...task, cutout_key: cutoutKey })
+    };
+  } catch (error) {
+    error.aiTaskStage = failedStage;
+    if (!settled) {
+      const completedCalls = Math.max(mattingProviderCalls, aiBudget.integer(error?.providerCallCount));
+      if (completedCalls) {
+        await repository.update("aiUsage", task.id, {
+          matting_calls: aiBudget.integer(task.matting_calls) + completedCalls,
+          updated_at: now()
+        }).catch(() => {});
+      }
+      await settleTaskBudget(task.id, userId, {
+        chargeMicros: aiBudget.limitsFromEnv().mattingCostMicros * completedCalls,
+        status: "failed_retryable",
+        stage: "matting_failed",
+        errorCode: String(error?.code || "MATTING_FAILED"),
+        errorMessage: error.message,
+        success: false
+      }).catch(() => {});
+    }
+    throw error;
+  } finally {
+    // 只有已经得到透明图时才删除原图；读取或抠图失败时保留原图供同一 taskId 重试。
+    if (cutoutKey && task.source_key) await cloud.deleteObject(task.source_key).catch(() => {});
+  }
+};
+
+const processHangerEdit = async (taskId, userId) => {
+  let task = await ownedAiTask(taskId, userId, { allowManual: true });
+  if (!task.cutout_key) throw Object.assign(new Error("请先完成衣物抠图。"), { status: 409 });
+  if (task.status === "completed") throw Object.assign(new Error("标签已生成，不能再替换本次识别图片。"), { status: 409 });
+  if (task.hanger_edit_key) {
+    return {
+      ...taskProgress(task, {
+        status: "hanger_edit_ready",
+        stage: "awaiting_image_choice",
+        providerName: "阿里云百炼",
+        modelName: task.hanger_edit_model || "qwen-image-2.0",
+        actionText: "衣架移除预览已生成，等待你选择"
+      }),
+      ...taskImageState(task)
+    };
+  }
+  if (task.hanger_edit_status === "processing") {
+    throw Object.assign(new Error("AI 正在生成衣架移除预览，请勿重复点击。"), { status: 409, code: "HANGER_EDIT_PROCESSING" });
+  }
+  const limits = aiBudget.limitsFromEnv();
+  const maximumCharge = limits.imageEditCostMicros + limits.mattingCostMicros * 2;
+  await reserveTaskBudget(taskId, userId, maximumCharge);
+  const claim = await repository.withTransaction(async (tx) => {
+    const current = await tx.getById("aiUsage", taskId);
+    if (!current || current.user_id !== userId) throw Object.assign(new Error("AI 任务不存在或已失效。"), { status: 404 });
+    if (current.hanger_edit_key) return { replay: true, task: current };
+    if (current.hanger_edit_status === "processing") {
+      throw Object.assign(new Error("AI 正在生成衣架移除预览，请勿重复点击。"), { status: 409, code: "HANGER_EDIT_PROCESSING" });
+    }
+    await tx.update("aiUsage", current.id, {
+      hanger_edit_status: "processing",
+      stage: "qwen_image_edit",
+      updated_at: now()
+    });
+    return { replay: false, task: { ...current, hanger_edit_status: "processing", stage: "qwen_image_edit" } };
+  });
+  if (claim.replay) {
+    return {
+      ...taskProgress(claim.task, { status: "hanger_edit_ready", stage: "awaiting_image_choice", providerName: "阿里云百炼", modelName: claim.task.hanger_edit_model || "qwen-image-2.0", actionText: "衣架移除预览已生成，等待你选择" }),
+      ...taskImageState(claim.task)
+    };
+  }
+  task = claim.task;
+  let settled = false;
+  try {
+    const edited = await cloud.removeHanger(task.cutout_key);
+    const imageEditCalls = Math.max(1, aiBudget.integer(edited.imageEditCalls));
+    const postMattingCalls = aiBudget.integer(edited.postMattingCalls);
+    const chargeMicros = limits.imageEditCostMicros * imageEditCalls + limits.mattingCostMicros * postMattingCalls;
+    await repository.update("aiUsage", task.id, {
+      hanger_edit_key: edited.imageKey,
+      hanger_edit_status: "ready",
+      hanger_edit_calls: aiBudget.integer(task.hanger_edit_calls) + imageEditCalls,
+      hanger_edit_model: edited.model,
+      matting_calls: aiBudget.integer(task.matting_calls) + postMattingCalls,
+      updated_at: now()
+    });
+    await settleTaskBudget(task.id, userId, {
+      chargeMicros,
+      status: "matting_completed",
+      stage: "awaiting_image_choice",
+      success: false
+    });
+    settled = true;
+    const updated = await ownedAiTask(taskId, userId, { allowManual: true });
+    return {
+      ...taskProgress(updated, {
+        status: "hanger_edit_ready",
+        stage: "awaiting_image_choice",
+        providerName: "阿里云百炼",
+        modelName: edited.model,
+        actionText: "衣架移除预览已生成，等待你选择"
+      }),
+      ...taskImageState(updated)
+    };
+  } catch (error) {
+    error.aiTaskStage = "qwen_image_edit";
+    const imageEditCalls = aiBudget.integer(error?.imageEditCallCount);
+    const postMattingCalls = aiBudget.integer(error?.providerCallCount);
+    await repository.update("aiUsage", task.id, {
+      hanger_edit_status: "failed",
+      hanger_edit_calls: aiBudget.integer(task.hanger_edit_calls) + imageEditCalls,
+      matting_calls: aiBudget.integer(task.matting_calls) + postMattingCalls,
+      updated_at: now()
+    }).catch(() => {});
+    if (!settled) {
+      await settleTaskBudget(task.id, userId, {
+        chargeMicros: limits.imageEditCostMicros * imageEditCalls + limits.mattingCostMicros * postMattingCalls,
+        status: "matting_completed",
+        stage: "hanger_edit_failed",
+        errorCode: String(error?.code || "HANGER_EDIT_FAILED"),
+        errorMessage: error.message,
+        success: false
+      }).catch(() => {});
+    }
+    throw error;
+  }
+};
+
+const selectTaskImage = async (taskId, userId, choice) => {
+  const task = await ownedAiTask(taskId, userId, { allowManual: true });
+  if (!task.cutout_key) throw Object.assign(new Error("请先完成衣物抠图。"), { status: 409 });
+  if (task.status === "completed") throw Object.assign(new Error("标签已生成，不能再替换本次识别图片。"), { status: 409 });
+  const imageKey = choice === "hanger_edit" ? task.hanger_edit_key : task.cutout_key;
+  if (!imageKey) throw Object.assign(new Error("衣架移除预览尚未生成。"), { status: 409 });
+  await repository.update("aiUsage", task.id, { selected_image_key: imageKey, updated_at: now() });
+  return {
+    ...taskProgress(task, {
+      status: "image_selected",
+      stage: task.mode === "manual" ? "awaiting_manual_fields" : "awaiting_recognition",
+      providerName: "衣橱关系",
+      modelName: choice === "hanger_edit" ? task.hanger_edit_model || "qwen-image-2.0" : "原始抠图",
+      actionText: choice === "hanger_edit" ? "已选择衣架移除图" : "已保留原始抠图"
+    }),
+    selectedImage: choice === "hanger_edit" ? "hanger_edit" : "original",
+    cutoutUrl: cloud.signedUrl(imageKey, "GET", 3600)
+  };
+};
+
+const processRecognitionStep = async (taskId, userId) => {
+  let task = await ownedAiTask(taskId, userId);
+  if (!task.cutout_key && task.status !== "completed") {
+    throw Object.assign(new Error("请先完成商品抠图。"), { status: 409 });
+  }
   const reservation = await reserveTaskBudget(taskId, userId);
   if (reservation.completed) {
     return {
       ...reservation.task.result,
+      ...taskProgress(reservation.task, {
+        status: "completed",
+        stage: "awaiting_confirmation",
+        providerName: "阿里云百炼",
+        modelName: reservation.task.model || "qwen3-vl-plus",
+        actionText: "已生成待确认的衣物候选标签"
+      }),
       cutoutUrl: cloud.signedUrl(reservation.task.cutout_key, "GET", 3600),
       budget: await budgetSummary()
     };
   }
-  let task = await repository.getById("aiUsage", taskId);
-  let chargeMicros = 0;
+  task = await ownedAiTask(taskId, userId);
   let settled = false;
-  let cutoutKey = task.cutout_key || null;
-  let sourceHash = task.source_hash || null;
-  // 仅记录处理阶段，不写入密钥、图片内容或签名 URL；用于区分 COS 读图与 CI 抠图授权错误。
-  let failedStage = "load_task";
   try {
-    if (!cutoutKey) {
-      if (!task.source_key?.startsWith(`uploads/${userId}/`)) {
-        throw Object.assign(new Error("上传凭据无效，请重新选择图片。"), { status: 400 });
-      }
-      failedStage = "read_source";
-      sourceHash = await cloud.sourceHash(task.source_key);
-      const exact = task.mode !== "candidate"
-        ? await repository.findOne("clothing", { source_hash_key: `${userId}:${sourceHash}` })
-        : null;
-      if (exact) {
-        throw Object.assign(new Error("这张衣物图片已经录入过。"), {
-          status: 409,
-          duplicate: { type: "blocked", item: mapItem(exact), score: 100 }
-        });
-      }
-      failedStage = "goods_matting";
-      cutoutKey = await cloud.extractGarment(task.source_key);
-      chargeMicros += aiBudget.limitsFromEnv().mattingCostMicros;
-      await repository.update("aiUsage", task.id, {
-        cutout_key: cutoutKey,
-        source_hash: sourceHash,
-        matting_calls: aiBudget.integer(task.matting_calls) + 1,
-        stage: "recognizing",
-        updated_at: now()
-      });
-    }
-
-    failedStage = "qwen_recognition";
-    const recognition = await cloud.recognizeImage(cutoutKey);
-    chargeMicros += aiBudget.estimateQwenCostMicros(recognition.usage);
+    const recognitionKey = task.selected_image_key || task.cutout_key;
+    await repository.update("aiUsage", task.id, {
+      recognition_attempts: aiBudget.integer(task.recognition_attempts) + 1,
+      status: "recognizing",
+      stage: "qwen_recognition",
+      updated_at: now()
+    });
+    const recognition = await cloud.recognizeImage(recognitionKey);
+    const chargeMicros = aiBudget.estimateQwenCostMicros(recognition.usage);
     if (!recognition.valid) {
       await settleTaskBudget(task.id, userId, {
         chargeMicros,
@@ -470,13 +729,11 @@ const processRecognitionTask = async (taskId, userId) => {
       settled = true;
       throw Object.assign(new Error(`未能只保留一件衣物：${recognition.reason}。请改用平铺或挂拍照片。`), { status: 422 });
     }
-
-    // AI 结果先存为草稿，绝不直接创建衣物；只有用户确认 POST /api/items 后才正式入库。
     const draftId = newId();
     await repository.add("drafts", {
       user_id: userId,
-      image_key: cutoutKey,
-      source_hash: sourceHash,
+      image_key: recognitionKey,
+      source_hash: task.source_hash,
       similarity: [],
       item_id: null,
       ai_task_id: task.id,
@@ -485,7 +742,7 @@ const processRecognitionTask = async (taskId, userId) => {
     const result = {
       taskId: task.id,
       draftId,
-      cutoutUrl: cloud.signedUrl(cutoutKey, "GET", 3600),
+      cutoutUrl: cloud.signedUrl(recognitionKey, "GET", 3600),
       tags: recognition.tags,
       warning: null,
       duplicate: null,
@@ -501,27 +758,123 @@ const processRecognitionTask = async (taskId, userId) => {
       success: true
     });
     settled = true;
-    return { ...result, budget };
+    return {
+      ...result,
+      ...taskProgress(task, {
+        status: "completed",
+        stage: "awaiting_confirmation",
+        providerName: "阿里云百炼",
+        modelName: recognition.model,
+        actionText: "已生成待确认的衣物候选标签"
+      }),
+      budget
+    };
   } catch (error) {
-    // 将阶段附到当前错误，最外层统一日志会输出它，便于云端联调而不向小程序泄露供应商细节。
-    error.aiTaskStage = failedStage;
+    error.aiTaskStage = "qwen_recognition";
     if (!settled) {
-      const providerCost = aiBudget.estimateQwenCostMicros(error?.providerUsage || {});
+      const providerUsage = error?.providerUsage || {};
       await settleTaskBudget(task.id, userId, {
-        chargeMicros: chargeMicros + providerCost,
+        chargeMicros: aiBudget.estimateQwenCostMicros(providerUsage),
         status: "failed_retryable",
-        stage: cutoutKey ? "recognition_failed" : "matting_failed",
-        errorCode: String(error?.code || "AI_TASK_FAILED"),
+        stage: "recognition_failed",
+        errorCode: String(error?.code || "RECOGNITION_FAILED"),
         errorMessage: error.message,
-        usage: error?.providerUsage || {},
+        usage: providerUsage,
         success: false
       }).catch(() => {});
     }
     throw error;
-  } finally {
-    // 无论成功、失败或用户后续放弃，任务原图都在本次处理结束后删除；手机相册原文件不受影响。
-    if (task.source_key) await cloud.deleteObject(task.source_key).catch(() => {});
   }
+};
+
+// 旧接口继续串行执行两个新步骤，兼容尚未更新的小程序客户端。
+const processRecognitionTask = async (taskId, userId) => {
+  await processMattingTask(taskId, userId);
+  return processRecognitionStep(taskId, userId);
+};
+
+const aiUsageSummary = async (query) => {
+  const endAt = query.end ? new Date(query.end) : new Date();
+  const startAt = query.start ? new Date(query.start) : new Date(endAt.getTime() - 30 * 24 * 60 * 60 * 1000);
+  if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime()) || startAt >= endAt) {
+    throw Object.assign(new Error("请提供有效的统计起止时间。"), { status: 400 });
+  }
+  const rowLimit = 1000;
+  const createdRange = repository.command().gte(startAt.toISOString()).and(repository.command().lt(endAt.toISOString()));
+  const tasks = await repository.findMany("aiUsage", { created_at: createdRange }, { orderBy: "created_at", order: "asc", limit: rowLimit });
+  const users = await repository.findMany("users", {}, { limit: rowLimit });
+  const trialByUser = new Map(users.map((user) => [String(user.id), {
+    start: Date.parse(user.trial_started_at || ""),
+    end: Date.parse(user.trial_ends_at || "")
+  }]));
+  const byModel = {};
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let mattingCalls = 0;
+  let imageEditCalls = 0;
+  let mattingCostMicros = 0;
+  let imageEditCostMicros = 0;
+  let costMicros = 0;
+  let successfulCostMicros = 0;
+  let successfulTasks = 0;
+  let failedTasks = 0;
+  let retryCount = 0;
+  let trialTasks = 0;
+  tasks.forEach((task) => {
+    const model = cleanText(task.model, 80) || "unknown";
+    const prompt = aiBudget.integer(task.prompt_tokens);
+    const completion = aiBudget.integer(task.completion_tokens);
+    const cost = aiBudget.integer(task.cost_micros);
+    const mattings = aiBudget.integer(task.matting_calls);
+    const edits = aiBudget.integer(task.hanger_edit_calls);
+    const attempts = aiBudget.integer(task.recognition_attempts);
+    const successful = task.status === "completed";
+    promptTokens += prompt;
+    completionTokens += completion;
+    costMicros += cost;
+    successfulCostMicros += successful ? cost : 0;
+    mattingCalls += mattings;
+    imageEditCalls += edits;
+    mattingCostMicros += mattings * aiBudget.limitsFromEnv().mattingCostMicros;
+    imageEditCostMicros += edits * aiBudget.limitsFromEnv().imageEditCostMicros;
+    successfulTasks += successful ? 1 : 0;
+    failedTasks += task.status === "failed_retryable" ? 1 : 0;
+    retryCount += Math.max(0, attempts - 1);
+    const trial = trialByUser.get(String(task.user_id));
+    const createdAt = Date.parse(task.created_at || "");
+    if (trial && Number.isFinite(createdAt) && createdAt >= trial.start && createdAt < trial.end) trialTasks += 1;
+    const entry = byModel[model] || { tasks: 0, promptTokens: 0, completionTokens: 0, costYuan: 0 };
+    entry.tasks += 1;
+    entry.promptTokens += prompt;
+    entry.completionTokens += completion;
+    entry.costYuan = Number(((entry.costYuan * 1_000_000 + cost) / 1_000_000).toFixed(4));
+    byModel[model] = entry;
+  });
+  return {
+    start: startAt.toISOString(),
+    end: endAt.toISOString(),
+    taskCount: tasks.length,
+    successfulTasks,
+    failedTasks,
+    retryCount,
+    mattingCalls,
+    imageEditCalls,
+    mattingCostYuan: Number((mattingCostMicros / 1_000_000).toFixed(4)),
+    imageEditCostYuan: Number((imageEditCostMicros / 1_000_000).toFixed(4)),
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    costYuan: Number((costMicros / 1_000_000).toFixed(4)),
+    averageSuccessfulTaskCostYuan: successfulTasks ? Number((successfulCostMicros / successfulTasks / 1_000_000).toFixed(4)) : 0,
+    trialUserCount: users.filter((user) => user.trial_started_at).length,
+    trialTasks,
+    subscriptions: { weekly: 0, monthly: 0, yearly: 0 },
+    revenueYuan: null,
+    grossMarginYuan: null,
+    byModel,
+    partial: tasks.length >= rowLimit || users.length >= rowLimit,
+    rowLimit
+  };
 };
 
 const route = async (event) => {
@@ -544,7 +897,8 @@ const route = async (event) => {
     if (!user || user.status === "deletion_requested" || !(await bcrypt.compare(String(body.password || ""), user.password_hash))) {
       throw Object.assign(new Error("用户名或密码不正确。"), { status: 401 });
     }
-    return response(event, 200, { user: publicUser(user), token: tokenFor(user) });
+    const entitledUser = await ensureEntitlement(user.id);
+    return response(event, 200, { user: publicUser(entitledUser), token: tokenFor(entitledUser) });
   }
   if (method === "POST" && path === "/api/auth/recover") {
     const user = await repository.findOne("users", { username: cleanText(body.username, 30) });
@@ -553,10 +907,14 @@ const route = async (event) => {
       throw Object.assign(new Error("恢复码或新密码不正确。"), { status: 400 });
     }
     await repository.update("users", user.id, { password_hash: await bcrypt.hash(password, 12) });
-    return response(event, 200, { user: publicUser(user), token: tokenFor(user) });
+    const entitledUser = await ensureEntitlement(user.id);
+    return response(event, 200, { user: publicUser(entitledUser), token: tokenFor(entitledUser) });
   }
   if (method === "POST" && path === "/api/auth/logout") return response(event, 204, null);
-  if (method === "GET" && path === "/api/auth/me") return response(event, 200, { user: publicUser(await requireActiveUser(event)) });
+  if (method === "GET" && path === "/api/auth/me") {
+    const activeUser = await requireActiveUser(event);
+    return response(event, 200, { user: publicUser(await ensureEntitlement(activeUser.id)) });
+  }
   if (method === "POST" && path === "/api/auth/outfit-guest-register") {
     return response(event, 201, await handleOutfitGuestRegister(body));
   }
@@ -576,12 +934,25 @@ const route = async (event) => {
     requireAdmin(event);
     return response(event, 200, await verifyData());
   }
+  if (method === "GET" && path === "/api/admin/ai-usage-summary") {
+    requireAdmin(event);
+    return response(event, 200, await aiUsageSummary(query));
+  }
 
   const user = await requireActiveUser(event);
   const userId = String(user.id);
 
   if (method === "GET" && path === "/api/ai-budget") {
     return response(event, 200, await budgetSummary());
+  }
+  if (method === "GET" && path === "/api/entitlements/me") {
+    return response(event, 200, entitlementSummary(await ensureEntitlement(userId)));
+  }
+  if (method === "GET" && path === "/api/plans") {
+    return response(event, 200, {
+      purchaseEnabled: false,
+      plans: PLAN_CATALOG
+    });
   }
 
   if (method === "POST" && path === "/api/auth/delete-request") {
@@ -747,6 +1118,11 @@ const route = async (event) => {
       idempotency_key: idempotencyKey,
       source_key: upload.sourceKey,
       cutout_key: null,
+      selected_image_key: null,
+      hanger_edit_key: null,
+      hanger_edit_status: "not_requested",
+      hanger_edit_calls: 0,
+      hanger_edit_model: "",
       source_hash: null,
       mode,
       provider: mode === "manual" ? "none" : "dashscope",
@@ -756,6 +1132,7 @@ const route = async (event) => {
       reserved_micros: 0,
       cost_micros: 0,
       matting_calls: 0,
+      recognition_attempts: 0,
       prompt_tokens: 0,
       completion_tokens: 0,
       result: null,
@@ -770,6 +1147,30 @@ const route = async (event) => {
   if (method === "POST" && path === "/api/recognize") {
     const taskId = cleanText(body.taskId, 80);
     return response(event, 201, await processRecognitionTask(taskId, userId));
+  }
+
+  const mattingMatch = path.match(/^\/api\/tasks\/([^/]+)\/matting$/);
+  if (method === "POST" && mattingMatch) {
+    return response(event, 200, await processMattingTask(decodeURIComponent(mattingMatch[1]), userId));
+  }
+
+  const recognitionMatch = path.match(/^\/api\/tasks\/([^/]+)\/recognition$/);
+  if (method === "POST" && recognitionMatch) {
+    return response(event, 200, await processRecognitionStep(decodeURIComponent(recognitionMatch[1]), userId));
+  }
+
+  const hangerEditMatch = path.match(/^\/api\/tasks\/([^/]+)\/hanger-removal$/);
+  if (method === "POST" && hangerEditMatch) {
+    return response(event, 200, await processHangerEdit(decodeURIComponent(hangerEditMatch[1]), userId));
+  }
+
+  const imageSelectionMatch = path.match(/^\/api\/tasks\/([^/]+)\/image-selection$/);
+  if (method === "POST" && imageSelectionMatch) {
+    return response(event, 200, await selectTaskImage(
+      decodeURIComponent(imageSelectionMatch[1]),
+      userId,
+      body.choice === "hanger_edit" ? "hanger_edit" : "original"
+    ));
   }
 
   const retryMatch = path.match(/^\/api\/tasks\/([^/]+)\/retry$/);
@@ -820,7 +1221,7 @@ const route = async (event) => {
     }));
   }
 
-  // 预算耗尽或 AI 失败时仍可手动入库；这条路径不调用抠图和千问，因此不消耗 AI 额度。
+  // 基础录入只调用商品抠图，不调用通义千问；最终优先保存透明图。
   if (method === "POST" && path === "/api/items/manual") {
     if (await repository.count("clothing", { user_id: userId, status: "active" }) >= 100) {
       throw Object.assign(new Error("单个测试账号最多保存 100 件衣物。"), { status: 429 });
@@ -829,10 +1230,12 @@ const route = async (event) => {
     if (!task || task.user_id !== userId || task.mode !== "manual" || !task.source_key?.startsWith(`uploads/${userId}/`)) {
       throw Object.assign(new Error("手动录入图片已失效，请重新选择。"), { status: 400 });
     }
+    if (!task.cutout_key) throw Object.assign(new Error("请先完成衣物抠图。"), { status: 409 });
     if (task.result?.itemId) return response(event, 200, mapItem(await repository.getById("clothing", task.result.itemId)));
     const category = cleanText(body.category, 30);
     if (!allowedCategories.includes(category)) throw Object.assign(new Error("请选择衣物品类。"), { status: 400 });
-    const hash = await cloud.sourceHash(task.source_key);
+    const hash = task.source_hash;
+    if (!hash) throw Object.assign(new Error("衣物图片校验结果已失效，请重新抠图。"), { status: 409 });
     const exact = await repository.findOne("clothing", { source_hash_key: `${userId}:${hash}` });
     if (exact) throw Object.assign(new Error("这张衣物图片已经录入过。"), { status: 409 });
     const itemId = newId();
@@ -842,7 +1245,7 @@ const route = async (event) => {
       if (lockedTask.result?.itemId) return lockedTask.result.itemId;
       await tx.add("clothing", {
         user_id: userId,
-        image_key: task.source_key,
+        image_key: lockedTask.selected_image_key || lockedTask.cutout_key,
         name: cleanText(body.name, 80) || "未命名衣物",
         category,
         color: cleanText(body.color, 30),
@@ -1236,4 +1639,4 @@ exports.main = async (event) => {
   }
 };
 
-exports._test = { cleanText, parseArray, parseBody, sanitizeTags };
+exports._test = { cleanText, entitlementSummary, parseArray, parseBody, sanitizeTags };

@@ -18,7 +18,8 @@ App({
     user: null,
     token: "",
     currentCandidate: null,
-    pendingOutfitToken: ""
+    pendingOutfitToken: "",
+    entitlementPromptShown: false
   },
   onLaunch(options) { rememberShareToken(this, options); },
   onShow(options) { rememberShareToken(this, options); }

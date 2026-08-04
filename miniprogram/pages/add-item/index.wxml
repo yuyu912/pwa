@@ -2,21 +2,18 @@
   <text class="heading">{{entryMode === 'candidate' ? '分析一件候选新衣' : '把一件衣物放进衣橱'}}</text>
   <text class="sub">{{entryMode === 'candidate' ? 'AI 识别后由你确认标签，再与真实衣橱和穿着记录进行比较。' : 'AI 先去除背景并生成候选标签，只有你确认后才会正式入库。'}}</text>
 
+  <view wx:if="{{entitlement}}" class="entitlement entitlement-{{entitlement.status}}" bindtap="openPlans">
+    <view><text class="entitlement-title">{{entitlement.statusText}}</text><text class="entitlement-note">{{entitlement.status === 'trialing' ? '剩余约 ' + entitlement.remainingDays + ' 天；基础抠图和手动录入长期保留' : '基础抠图和手动录入仍可使用；增强权益暂未开始收费'}}</text></view>
+    <text class="entitlement-link">查看套餐 ›</text>
+  </view>
+
   <view wx:if="{{batchItems.length > 1}}" class="batch-card">
     <view class="batch-heading"><text>批量录入</text><text>{{batchSummary.saved || 0}} / {{batchSummary.total}} 已保存</text></view>
     <view class="batch-dots"><text wx:for="{{batchItems}}" wx:key="id" class="batch-dot {{index === batchIndex ? 'current' : ''}} batch-dot-{{item.status}}">{{index + 1}}</text></view>
     <text class="batch-note">图片严格按顺序处理，当前件确认入库后才会进入下一件。</text>
   </view>
 
-  <view wx:if="{{budget}}" class="budget budget-{{budget.status}}">
-    <view>
-      <text class="budget-title">按件 AI 测试额度</text>
-      <text class="budget-note">已处理 {{budget.successfulTasks}} / {{budget.taskLimit}} 件</text>
-    </view>
-    <text class="budget-remain">剩余约 {{budget.remainingTasks}} 件</text>
-  </view>
-
-  <view wx:if="{{stage !== 'batch-complete'}}" class="upload" bindtap="chooseImage">
+  <view wx:if="{{stage !== 'batch-complete'}}" class="upload" role="button" hover-class="upload-active" bindtap="chooseImage">
     <image wx:if="{{imagePath}}" class="preview" src="{{resultImage || imagePath}}" mode="aspectFit"/>
     <block wx:else>
       <text class="plus">＋</text>
@@ -29,7 +26,25 @@
     <text>{{stageText}}</text>
     <text wx:if="{{isDemo}}" class="demo-tag">演示结果</text>
   </view>
+  <view wx:if="{{aiProgress}}" class="ai-progress">
+    <view class="ai-progress-head"><text>{{aiProgress.providerName}}</text><text class="ai-model">{{aiProgress.modelName}}</text></view>
+    <text class="ai-progress-action">{{aiProgress.actionText}}</text>
+    <text wx:if="{{aiProgress.usageText}}" class="ai-progress-usage">{{aiProgress.usageText}}</text>
+    <text class="ai-progress-safe">仅展示真实处理阶段，不展示密钥、内部成本或模型思考过程。</text>
+  </view>
   <view wx:if="{{errorText}}" class="error">{{errorText}}</view>
+
+  <view wx:if="{{taskId && originalCutoutUrl && (stage === 'matting-review' || manualMode)}}" class="hanger-tools">
+    <text class="hanger-title">图片处理选择</text>
+    <text class="hanger-note">基础抠图已完成。只有主动点击下方按钮，才会额外调用一次 AI 图片编辑。</text>
+    <button wx:if="{{!hangerEditUrl}}" class="ghost hanger-action" loading="{{hangerEditBusy}}" disabled="{{hangerEditBusy}}" bindtap="removeHanger">{{hangerEditBusy ? '正在移除衣架…' : 'AI 移除衣架（可选）'}}</button>
+    <view wx:else class="choice-row">
+      <button class="choice {{selectedImage === 'original' ? 'choice-active' : ''}}" bindtap="previewOriginal">原抠图</button>
+      <button class="choice {{selectedImage === 'hanger_edit' ? 'choice-active' : ''}}" bindtap="previewHangerEdit">衣架移除图</button>
+    </view>
+    <text wx:if="{{hangerEditUrl}}" class="hanger-note">当前将使用：{{selectedImage === 'hanger_edit' ? '衣架移除图' : '原抠图'}}。两张图都会保留到本次任务结束。</text>
+    <button wx:if="{{stage === 'matting-review' && !manualMode}}" class="primary hanger-continue" disabled="{{hangerEditBusy}}" bindtap="continueRecognition">使用当前图片并继续识别</button>
+  </view>
 
   <view wx:if="{{stage === 'batch-complete'}}" class="batch-complete">
     <text class="complete-title">批量录入完成</text><text>已保存 {{batchSummary.saved}} 件，跳过 {{batchSummary.skipped}} 件。</text>
@@ -38,10 +53,11 @@
 
   <button wx:if="{{batchItems.length > 1 && stage === 'batch-item-error'}}" class="ghost" bindtap="skipBatchItem">跳过这张</button>
 
-  <view wx:if="{{imagePath && !manualMode && stage !== 'confirming' && stage !== 'saving' && stage !== 'saved'}}" class="actions">
-    <button wx:if="{{stage !== 'error' || !taskId}}" class="primary" bindtap="startRecognition">开始 AI 抠图与识别</button>
-    <button wx:if="{{stage === 'error' && taskId}}" class="primary" bindtap="retryRecognition">重试失败阶段</button>
-    <button wx:if="{{entryMode !== 'candidate'}}" class="ghost" bindtap="useManualMode">不使用 AI，手动录入</button>
+  <view wx:if="{{imagePath && !manualMode && (stage === 'selected' || stage === 'error' || stage === 'batch-item-error')}}" class="actions">
+    <button wx:if="{{stage !== 'error' || !taskId}}" class="primary" bindtap="startRecognition">AI 智能录入</button>
+    <button wx:if="{{stage === 'error' && taskId && !mattingQualityFailed}}" class="primary" bindtap="retryRecognition">重试失败阶段</button>
+    <button wx:if="{{mattingQualityFailed && batchItems.length <= 1}}" class="primary" bindtap="chooseImage">重新选择图片</button>
+    <button wx:if="{{entryMode !== 'candidate' && !mattingQualityFailed}}" class="ghost" bindtap="useManualMode">仅抠图，手动填写</button>
     <button wx:if="{{batchItems.length > 1 && stage === 'error'}}" class="ghost" bindtap="skipBatchItem">跳过这张</button>
   </view>
 
@@ -107,9 +123,9 @@
 
     <view class="notice">
       <text class="notice-title">{{manualMode ? '手动录入说明' : 'AI 结果说明'}}</text>
-      <text>{{manualMode ? '本次不会调用抠图或识别服务，图片将按原图保存。' : '季节、厚薄和材质均为视觉候选，不代表真实成分或合身保证。'}}</text>
+      <text>{{manualMode ? '本次已完成基础抠图，不调用通义千问 VL；衣物属性由你填写。' : '季节、厚薄和材质均为视觉候选，不代表真实成分或合身保证。'}}</text>
     </view>
-    <button wx:if="{{manualMode}}" class="primary save" bindtap="saveManual">确认手动入库</button>
+    <button wx:if="{{manualMode}}" class="primary save" bindtap="saveManual">确认基础录入</button>
     <button wx:else class="primary save" bindtap="saveConfirmed">{{entryMode === 'candidate' ? '确认标签并生成分析' : '确认标签并入库'}}</button>
   </view>
 

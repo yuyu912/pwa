@@ -34,7 +34,8 @@ test("更新当前项不会改动其他图片的幂等任务", () => {
 test("添加衣物页保持顺序处理、逐件确认和失败跳过入口", () => {
   const script = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.js", import.meta.url), "utf8");
   const template = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.wxml", import.meta.url), "utf8");
-  assert.match(script, /count: this\.data\.entryMode === "candidate" \? 1 : 9/);
+  assert.match(script, /const count = this\.data\.entryMode === "candidate" \? 1 : 9/);
+  assert.match(script, /wx\.chooseMedia\(\{[\s\S]*count,/);
   assert.match(script, /for \(let index = 0; index < batchItems\.length; index \+= 1\)/);
   assert.match(script, /await this\.compressFile/);
   assert.match(script, /nextBatchIndex\(this\.data\.batchItems, this\.data\.batchIndex\)/);

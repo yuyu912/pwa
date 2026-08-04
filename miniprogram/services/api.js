@@ -32,7 +32,9 @@ function request(path, method = "GET", data = {}) {
           response.data?.buildId && `版本：${response.data.buildId}`
         ].filter(Boolean).join("；");
         // 只显示安全的阶段、错误码、HTTP 状态和请求号；密钥与供应商完整响应不会返回小程序。
-        reject(new Error(trace ? `${message}（${trace}）` : message));
+        const requestError = new Error(trace ? `${message}（${trace}）` : message);
+        requestError.code = response.data?.providerCode || "";
+        reject(requestError);
       },
       fail() { reject(new Error("网络请求失败，请检查测试环境地址和网络。")); }
     });
@@ -90,6 +92,8 @@ module.exports = {
   register,
   registerOutfitGuest,
   getMe: () => config.USE_MOCK ? Promise.resolve(mock.getMe()) : request("/api/auth/me"),
+  getEntitlement: () => config.USE_MOCK ? Promise.resolve(mock.getEntitlement()) : request("/api/entitlements/me"),
+  getPlans: () => config.USE_MOCK ? Promise.resolve(mock.getPlans()) : request("/api/plans"),
   listItems: () => config.USE_MOCK ? Promise.resolve(mock.listItems()) : request("/api/items"),
   getItem: async (id) => {
     if (config.USE_MOCK) return mock.getItem(id);
@@ -99,6 +103,10 @@ module.exports = {
   createUpload: (data) => config.USE_MOCK ? Promise.resolve(mock.createUpload(data)) : request("/api/uploads/presign", "POST", data),
   uploadBinary: (upload, filePath, mimeType) => config.USE_MOCK ? Promise.resolve(mock.uploadBinary(upload, filePath, mimeType)) : uploadBinary(upload.uploadUrl, filePath, mimeType),
   recognizeItem: (taskId) => config.USE_MOCK ? Promise.resolve(mock.recognizeItem(taskId)) : request("/api/recognize", "POST", { taskId }),
+  mattingItem: (taskId) => config.USE_MOCK ? Promise.resolve(mock.mattingItem(taskId)) : request(`/api/tasks/${taskId}/matting`, "POST"),
+  removeHanger: (taskId) => config.USE_MOCK ? Promise.resolve(mock.removeHanger(taskId)) : request(`/api/tasks/${taskId}/hanger-removal`, "POST"),
+  selectTaskImage: (taskId, choice) => config.USE_MOCK ? Promise.resolve(mock.selectTaskImage(taskId, choice)) : request(`/api/tasks/${taskId}/image-selection`, "POST", { choice }),
+  recognizeLabels: (taskId) => config.USE_MOCK ? Promise.resolve(mock.recognizeItem(taskId)) : request(`/api/tasks/${taskId}/recognition`, "POST"),
   retryRecognition: (taskId) => config.USE_MOCK ? Promise.resolve(mock.recognizeItem(taskId)) : request(`/api/tasks/${taskId}/retry`, "POST"),
   createItem: (data) => config.USE_MOCK ? Promise.resolve(mock.createItem(data)) : request("/api/items", "POST", data),
   createManualItem: (data) => config.USE_MOCK ? Promise.resolve(mock.createManualItem(data)) : request("/api/items/manual", "POST", data),

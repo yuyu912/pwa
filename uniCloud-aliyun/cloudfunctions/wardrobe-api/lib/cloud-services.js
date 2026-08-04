@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const https = require("https");
 const COS = require("cos-nodejs-sdk-v5");
+const { assessMattingQuality } = require("./png-alpha");
 
 let cosClient;
 
@@ -70,20 +71,60 @@ const extractGarment = async (sourceKey) => {
   if (process.env.COS_CI_ENABLED !== "true") {
     throw Object.assign(new Error("衣物主体图服务尚未配置。"), { status: 503 });
   }
-  const result = await withTimeout(cosRequest({
-    ...objectOptions(sourceKey),
-    Method: "GET",
-    Query: { "ci-process": "GoodsMatting" },
-    RawBody: true
-  }), "商品抠图响应超时，请稍后重试。");
-  const cutoutKey = `cutouts/${sourceKey.split("/").pop().replace(/\.[^.]+$/, "")}.png`;
-  await cosCall("putObject", {
-    ...objectOptions(cutoutKey),
-    Body: result.Body,
-    ContentType: "image/png",
-    ACL: "private"
-  });
-  return cutoutKey;
+  const requestMatting = async (algorithm, timeoutMessage) => {
+    const result = await withTimeout(cosRequest({
+      ...objectOptions(sourceKey),
+      Method: "GET",
+      Query: { "ci-process": algorithm },
+      RawBody: true
+    }), timeoutMessage);
+    return Buffer.from(result.Body);
+  };
+  const checkOutput = (output, providerCallCount) => {
+    try {
+      return assessMattingQuality(output);
+    } catch (error) {
+      throw Object.assign(new Error(`抠图结果无法校验：${error.message}`), {
+        status: 502,
+        code: "MATTING_OUTPUT_INVALID",
+        providerCallCount
+      });
+    }
+  };
+
+  let providerCallCount = 0;
+  let modelName = "商品抠图";
+  try {
+    let output = await requestMatting("GoodsMatting", "商品抠图响应超时，请稍后重试。");
+    providerCallCount = 1;
+    let quality = checkOutput(output, providerCallCount);
+    if (!quality.accepted) {
+      // 商品模型留下连边背景时，才追加一次通用抠图；正常图片仍只产生一次调用。
+      modelName = "通用抠图兜底";
+      output = await requestMatting("AIPicMatting", "通用抠图响应超时，请稍后重试。");
+      providerCallCount = 2;
+      quality = checkOutput(output, providerCallCount);
+    }
+    if (!quality.accepted) {
+      throw Object.assign(new Error("背景去除不完整，请换一张衣物边缘更清楚、四周留有空间的图片。"), {
+        status: 422,
+        code: "MATTING_QUALITY_LOW",
+        providerCallCount
+      });
+    }
+    const cutoutKey = `cutouts/${sourceKey.split("/").pop().replace(/\.[^.]+$/, "")}.png`;
+    await cosCall("putObject", {
+      ...objectOptions(cutoutKey),
+      Body: output,
+      ContentType: "image/png",
+      ACL: "private"
+    });
+    return { cutoutKey, modelName, providerCallCount };
+  } catch (error) {
+    // 只记录已经拿到响应的调用；例如兜底请求失败时，至少保留第一次商品抠图成本。
+    if (providerCallCount && !error.providerCallCount) error.providerCallCount = providerCallCount;
+    throw error;
+  }
 };
 
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
@@ -172,6 +213,120 @@ const qwenHttpRequest = (url, requestBody, apiKey) => new Promise((resolve, reje
   request.end(options.content);
 });
 
+const imageEditHttpRequest = (url, requestBody, apiKey) => new Promise((resolve, reject) => {
+  const content = JSON.stringify(requestBody);
+  const request = https.request(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(content)
+    },
+    timeout: 90000
+  }, (response) => {
+    const chunks = [];
+    response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    response.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; }
+      catch { data = { message: text.slice(0, 500) }; }
+      resolve({ statusCode: Number(response.statusCode || 0), data });
+    });
+  });
+  request.on("timeout", () => request.destroy(Object.assign(new Error("AI 衣架移除响应超时，原抠图仍可继续使用。"), {
+    code: "IMAGE_EDIT_TIMEOUT",
+    status: 504
+  })));
+  request.on("error", reject);
+  request.end(content);
+});
+
+const downloadImage = (url, redirects = 0) => new Promise((resolve, reject) => {
+  if (redirects > 3) return reject(new Error("AI 修复图下载重定向过多。"));
+  const request = https.get(url, { timeout: 30000 }, (response) => {
+    if ([301, 302, 303, 307, 308].includes(Number(response.statusCode)) && response.headers.location) {
+      response.resume();
+      downloadImage(new URL(response.headers.location, url).toString(), redirects + 1).then(resolve, reject);
+      return;
+    }
+    if (Number(response.statusCode) < 200 || Number(response.statusCode) >= 300) {
+      response.resume();
+      reject(new Error("AI 修复图下载失败。"));
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    response.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 10 * 1024 * 1024) request.destroy(new Error("AI 修复图超过 10MB。"));
+      else chunks.push(Buffer.from(chunk));
+    });
+    response.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+  request.on("timeout", () => request.destroy(new Error("AI 修复图下载超时。")));
+  request.on("error", reject);
+});
+
+const buildHangerEditRequestBody = (imageUrl, model) => ({
+  model,
+  input: {
+    messages: [{
+      role: "user",
+      content: [
+        { image: imageUrl },
+        { text: "只移除衣架，包括挂钩和衣架横臂。仅补全衣架遮挡的少量衣物纹理。保持同一件衣物的版型、领口、肩线、袖型、纽扣数量和位置、下摆、颜色、花纹、材质纹理、褶皱、主体比例与透明背景不变。不要美化、重设计或改变衣架区域以外的任何衣物细节。" }
+      ]
+    }]
+  },
+  parameters: { n: 1, watermark: false, prompt_extend: false, size: "1024*1536" }
+});
+
+// 用户主动触发后才调用图片编辑；原抠图始终保留，生成图立即转存私有 COS。
+const removeHanger = async (sourceKey) => {
+  required(["DASHSCOPE_API_KEY", "AI_IMAGE_EDIT_COST_MICROS"]);
+  const model = process.env.QWEN_IMAGE_EDIT_MODEL || "qwen-image-2.0";
+  const endpoint = process.env.DASHSCOPE_IMAGE_EDIT_URL
+    || "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+  const requestBody = buildHangerEditRequestBody(signedUrl(sourceKey, "GET", 600), model);
+  const response = await imageEditHttpRequest(endpoint, requestBody, process.env.DASHSCOPE_API_KEY);
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw Object.assign(new Error("AI 衣架移除暂时不可用，原抠图仍可继续使用。"), {
+      status: 502,
+      code: cleanText(response.data?.code, 80) || "IMAGE_EDIT_HTTP_ERROR",
+      providerStatusCode: response.statusCode
+    });
+  }
+  const resultUrl = response.data?.output?.choices?.[0]?.message?.content?.find((item) => item.image)?.image;
+  if (!resultUrl) throw Object.assign(new Error("AI 未返回衣架移除图片。"), { status: 502, code: "IMAGE_EDIT_NO_OUTPUT" });
+  let tempKey = null;
+  try {
+    const output = await downloadImage(resultUrl);
+    const baseName = sourceKey.split("/").pop().replace(/\.[^.]+$/, "");
+    const editedKey = `edits/${baseName}-hanger.png`;
+    let transparent = false;
+    try { transparent = assessMattingQuality(output).accepted; } catch {}
+    if (transparent) {
+      await cosCall("putObject", { ...objectOptions(editedKey), Body: output, ContentType: "image/png", ACL: "private" });
+      return { imageKey: editedKey, model, imageEditCalls: 1, postMattingCalls: 0 };
+    }
+    tempKey = `edit-temp/${baseName}-hanger-generated.png`;
+    await cosCall("putObject", { ...objectOptions(tempKey), Body: output, ContentType: "image/png", ACL: "private" });
+    const extraction = await extractGarment(tempKey);
+    return {
+      imageKey: extraction.cutoutKey,
+      model,
+      imageEditCalls: 1,
+      postMattingCalls: extraction.providerCallCount
+    };
+  } catch (error) {
+    error.imageEditCallCount = 1;
+    throw error;
+  } finally {
+    if (tempKey) await deleteObject(tempKey).catch(() => {});
+  }
+};
+
 // 千问只给“候选标签”，材质、季节、厚薄等需要由用户在页面上确认后才可正式入库。
 const recognizeImage = async (key) => {
   // 未配置当前 Token 单价时直接停用真实调用，避免预算 50 元的估算失真。
@@ -237,7 +392,8 @@ module.exports = {
   deleteObject,
   extractGarment,
   recognizeImage,
+  removeHanger,
   signedUrl,
   sourceHash,
-  _test: { buildQwenHttpOptions, buildQwenRequestBody, parseModelJson, responseStatus }
+  _test: { assessMattingQuality, buildHangerEditRequestBody, buildQwenHttpOptions, buildQwenRequestBody, parseModelJson, responseStatus }
 };
