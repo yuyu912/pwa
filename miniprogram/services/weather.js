@@ -2,12 +2,6 @@ const { areaList } = require("./area-data");
 
 const STORAGE_KEY = "wardrobe_selected_region";
 const LEVELS = ["province_list", "city_list", "county_list"];
-const WEATHER_TYPES = [
-  { condition: "晴", low: 30, high: 35, tip: "阳光较强，优先选择轻薄透气的衣物。", needsOuterwear: false },
-  { condition: "多云", low: 23, high: 28, tip: "早晚温差不大，轻薄单品更舒适。", needsOuterwear: false },
-  { condition: "小雨", low: 18, high: 23, tip: "体感偏凉且有雨，带一件轻外套更稳妥。", needsOuterwear: true },
-  { condition: "降温", low: 10, high: 16, tip: "体感偏凉，建议采用内搭加外套的方式。", needsOuterwear: true }
-];
 
 function entries(level) {
   return Object.keys(areaList[level]).map((code) => ({ code, name: areaList[level][code] }));
@@ -57,13 +51,29 @@ function search(keyword) {
 function loadLocation() { return wx.getStorageSync(STORAGE_KEY) || null; }
 function saveLocation(location) { wx.setStorageSync(STORAGE_KEY, location); }
 
-function hash(text) {
-  return text.split("").reduce((total, char) => ((total * 31) + char.charCodeAt(0)) >>> 0, 7);
-}
-
-function getDemoWeather(location) {
-  const type = WEATHER_TYPES[hash(location.cityCode || location.districtCode) % WEATHER_TYPES.length];
-  return { ...type, icon: type.condition === "晴" ? "☀" : type.condition === "小雨" ? "☂" : type.condition === "降温" ? "❄" : "☁", city: location.cityName, area: location.fullName };
+function formatLiveWeather(value, location) {
+  const temperature = Number(value.temperature);
+  const condition = value.condition || "未知";
+  const rainy = /雨|雷|雪|冰雹/.test(condition);
+  const cold = temperature <= 16;
+  const hot = temperature >= 28;
+  return {
+    ...value,
+    temperature,
+    low: temperature,
+    high: temperature,
+    icon: /晴/.test(condition) ? "☀" : /雪/.test(condition) ? "❄" : rainy ? "☂" : "☁",
+    tip: rainy
+      ? "当前有降水，优先选择方便叠穿的衣物并留意防雨。"
+      : hot
+        ? "当前气温偏高，优先选择轻薄透气的衣物。"
+        : cold
+          ? "当前气温偏凉，建议采用内搭加外套的方式。"
+          : "当前体感较温和，可优先选择轻薄或适中厚度的衣物。",
+    needsOuterwear: rainy || temperature <= 20,
+    city: value.city || location.cityName,
+    area: location.fullName
+  };
 }
 
 function isSeasonSuitable(item, weather) {
@@ -113,9 +123,9 @@ function recommend(items, weather, scene = "休闲", offset = 0) {
     missing,
     complete: missing.length === 0,
     reason: sceneMatchedCount
-      ? `优先选择了适合${scene}、且符合当前演示温度的衣物。`
-      : `暂未找到标注为${scene}的合适衣物，已按当前演示温度推荐。`
+      ? `优先选择了适合${scene}、且符合当前实时温度的衣物。`
+      : `暂未找到标注为${scene}的合适衣物，已按当前实时温度推荐。`
   };
 }
 
-module.exports = { provinces, cities, districts, search, getPath, loadLocation, saveLocation, getDemoWeather, recommend };
+module.exports = { provinces, cities, districts, search, getPath, loadLocation, saveLocation, formatLiveWeather, recommend };

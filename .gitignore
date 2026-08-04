@@ -22,3 +22,4 @@ uniCloud-aliyun/**/node_modules/
 !test/unicloud-api.test.js
 !test/wardrobe-filter.test.js
 !test/wardrobe-report.test.js
+!test/weather.test.js

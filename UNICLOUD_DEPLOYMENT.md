@@ -95,6 +95,7 @@ COS_BUCKET
 COS_REGION
 COS_CI_ENABLED
 DASHSCOPE_API_KEY
+AMAP_WEATHER_KEY
 DASHSCOPE_BASE_URL
 QWEN_VL_MODEL
 QWEN_INPUT_YUAN_PER_MILLION
@@ -113,6 +114,7 @@ ALLOWED_ORIGINS
 - `COS_REGION=ap-guangzhou`
 - `COS_CI_ENABLED=true`
 - `DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
+- `AMAP_WEATHER_KEY` 使用高德开放平台创建的“Web服务”Key，仅供云函数查询用户主动选择地区的实时天气。
 - `QWEN_VL_MODEL=qwen3-vl-plus`
 - 价格变量必须按百炼控制台当前模型价格填写；预算台账记录的是估算成本，最终账单以供应商为准。
 - `AI_BUDGET_TOTAL_MICROS=50000000`、`AI_BUDGET_TASK_LIMIT=1000`、`AI_TASK_RESERVATION_MICROS=50000`。

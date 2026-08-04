@@ -6,7 +6,7 @@
 
 1. 登录、邀请码注册，以及通过私密搭配链接注册受邀好友。
 2. 云端衣橱、图片上传、AI 候选标签确认、衣物编辑/软删除和穿着记录。
-3. 演示天气、今日穿搭和候选新衣的标签规则分析。
+3. 用户手动选择地区后的高德实时天气、今日穿搭和候选新衣的标签规则分析；不申请定位权限。
 4. 私密好友帮搭：分享 1 至 5 件衣物，最多 5 位登录好友、7 天有效、可提前关闭；不开放完整衣橱和公开社区。
 5. 用户协议、隐私说明、投诉反馈，以及账号停用和个人数据删除申请。
 
@@ -19,6 +19,7 @@
 | 穿着记录 | `POST /api/items/:id/wear-logs` | 已接入真实云端。 |
 | 候选新衣分析 | `POST /api/candidates/:id/analyze`、`POST /api/candidates/:id/decision` | 已接入真实云端；使用标签规则。 |
 | 上传/识别 | `/api/uploads/presign`、`/api/recognize`、`/api/tasks/:id/retry` | 已接入真实云端；以线上 health buildId 为准。 |
+| 实时天气 | `/api/weather?adcode=` | 云函数读取 `AMAP_WEATHER_KEY` 后调用高德，客户端不保存密钥。 |
 | AI 预算 | `GET /api/ai-budget` | 50 元、1000 次全局硬上限，模拟模式可演示。 |
 | 确认入库 | `POST /api/items`、`POST /api/items/manual` | AI 候选确认或无 AI 手动入库。 |
 | 好友帮搭 | `/api/outfit-requests` | `v8` 已部署并完成开发者工具测试；A/B 真机回归待完成。 |

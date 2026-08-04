@@ -211,7 +211,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(freeQuota.hangerRemoval.limit, 1);
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-04-candidate-waitlist-v1");
+  assert.equal(health.body.buildId, "2026-08-04-realtime-weather-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -257,6 +257,20 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.ok(login.body.token);
 
   const authorization = { authorization: `Bearer ${login.body.token}` };
+  process.env.AMAP_WEATHER_KEY = "test-amap-key";
+  globalThis.uniCloud.httpclient.request = async () => ({
+    status: 200,
+    data: {
+      status: "1",
+      lives: [{ province: "广东", city: "深圳市", adcode: "440305", weather: "多云", temperature: "27", humidity: "72", winddirection: "东南", windpower: "3", reporttime: "2026-08-04 12:00:00" }]
+    }
+  });
+  const weather = readResponse(await main(makeEvent("/api/weather?adcode=440305", "GET", null, authorization)));
+  assert.equal(weather.status, 200);
+  assert.equal(weather.body.temperature, 27);
+  assert.equal(weather.body.condition, "多云");
+  const invalidWeather = readResponse(await main(makeEvent("/api/weather?adcode=bad", "GET", null, authorization)));
+  assert.equal(invalidWeather.status, 400);
   const firstEntitlement = readResponse(await main(makeEvent("/api/entitlements/me", "GET", null, authorization)));
   const repeatedEntitlement = readResponse(await main(makeEvent("/api/entitlements/me", "GET", null, authorization)));
   assert.equal(firstEntitlement.status, 200);
@@ -490,7 +504,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-04-candidate-waitlist-v1");
+  assert.equal(failedRecognition.body.buildId, "2026-08-04-realtime-weather-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

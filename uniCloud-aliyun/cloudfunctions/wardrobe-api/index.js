@@ -6,10 +6,11 @@ const jwt = require("jsonwebtoken");
 const repository = require("./lib/database");
 const cloud = require("./lib/cloud-services");
 const aiBudget = require("./lib/ai-budget");
+const weatherService = require("./lib/amap-weather");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-04-candidate-waitlist-v1";
+const BUILD_ID = "2026-08-04-realtime-weather-v1";
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });
@@ -1186,6 +1187,11 @@ const route = async (event) => {
   }
   if (method === "GET" && path === "/api/rewards/me") {
     return response(event, 200, await starSummary(userId));
+  }
+  if (method === "GET" && path === "/api/weather") {
+    const adcode = String(query.adcode || "").trim();
+    if (!/^\d{6}$/.test(adcode)) throw Object.assign(new Error("请选择有效的省、市或区县。"), { status: 400 });
+    return response(event, 200, await weatherService.getLiveWeather(adcode));
   }
 
   if (method === "POST" && path === "/api/auth/delete-request") {

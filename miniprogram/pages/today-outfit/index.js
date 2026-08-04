@@ -3,14 +3,22 @@ const weatherService = require("../../services/weather");
 const SCENES = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
 
 Page({
-  data: { location: null, weather: null, items: [], recommendation: null, scenes: SCENES, sceneIndex: 0, scene: SCENES[0], outfitOffset: 0 },
+  data: { location: null, weather: null, items: [], recommendation: null, error: "", scenes: SCENES, sceneIndex: 0, scene: SCENES[0], outfitOffset: 0 },
   async onShow() {
     const location = weatherService.loadLocation();
-    if (!location) return this.setData({ location: null, weather: null, recommendation: null });
-    const weather = weatherService.getDemoWeather(location);
-    const items = await api.listItems();
-    const recommendation = weatherService.recommend(items, weather, this.data.scene, this.data.outfitOffset);
-    this.setData({ location, weather, items, recommendation });
+    if (!location) return this.setData({ location: null, weather: null, recommendation: null, error: "" });
+    this.setData({ location, weather: null, recommendation: null, error: "" });
+    try {
+      const [weatherData, items] = await Promise.all([
+        api.getWeather(location.districtCode || location.cityCode || location.provinceCode),
+        api.listItems()
+      ]);
+      const weather = weatherService.formatLiveWeather(weatherData, location);
+      const recommendation = weatherService.recommend(items, weather, this.data.scene, this.data.outfitOffset);
+      this.setData({ weather, items, recommendation });
+    } catch (error) {
+      this.setData({ error: error.message || "实时天气暂时无法获取，请稍后重试。" });
+    }
   },
   generateOutfit() {
     const { items, weather, scene, outfitOffset } = this.data;

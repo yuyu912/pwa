@@ -23,7 +23,7 @@ const entitlementView = (entitlement) => {
 };
 
 Page({
-  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "设置所在地后获取演示天气", weatherTip: "按衣橱推荐今天穿什么", hasLocation: false, imageErrors: {}, entitlement: null },
+  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "设置地区后获取实时天气", weatherTip: "按衣橱推荐今天穿什么", hasLocation: false, imageErrors: {}, entitlement: null },
   async onShow() {
     const { user, token } = session.restore();
     if (!user || !token) return wx.redirectTo({ url: "/pages/login/index" });
@@ -46,8 +46,16 @@ Page({
     } catch {}
     const location = weatherService.loadLocation();
     if (location) {
-      const weather = weatherService.getDemoWeather(location);
-      this.setData({ weatherTemp: `${weather.low}–${weather.high}°C`, weatherCopy: `${location.cityName} · ${weather.condition} · 演示`, weatherTip: HOME_WEATHER_TIPS[weather.condition] || "查看今日穿搭建议", hasLocation: true });
+      this.setData({ weatherTemp: "获取中", weatherCopy: location.cityName, weatherTip: "正在读取实时天气", hasLocation: true });
+      try {
+        const weather = weatherService.formatLiveWeather(
+          await api.getWeather(location.districtCode || location.cityCode || location.provinceCode),
+          location
+        );
+        this.setData({ weatherTemp: `${weather.temperature}°C`, weatherCopy: `${location.cityName} · ${weather.condition}`, weatherTip: HOME_WEATHER_TIPS[weather.condition] || "查看今日穿搭建议" });
+      } catch {
+        this.setData({ weatherTemp: "暂不可用", weatherCopy: location.cityName, weatherTip: "点击查看或稍后重试" });
+      }
     }
   },
   toWardrobe() { wx.navigateTo({ url: "/pages/wardrobe/index" }); },

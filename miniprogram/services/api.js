@@ -121,6 +121,9 @@ module.exports = {
     ? Promise.resolve(mock.getMonthlyWearLogs(start, end))
     : request(`/api/wear-logs?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
   getRewards: () => config.USE_MOCK ? Promise.resolve(mock.getRewards()) : request("/api/rewards/me"),
+  getWeather: (adcode) => config.USE_MOCK
+    ? Promise.reject(new Error("模拟模式不提供实时天气。"))
+    : request(`/api/weather?adcode=${encodeURIComponent(adcode)}`),
   addWearLog: (id, data) => config.USE_MOCK ? Promise.resolve(mock.addWearLog(id, data)) : request(`/api/items/${id}/wear-logs`, "POST", data),
   createCandidate: (data) => config.USE_MOCK ? Promise.resolve(mock.createCandidate(data)) : request("/api/candidates", "POST", data),
   listWaitingCandidates: () => config.USE_MOCK ? Promise.resolve(mock.listWaitingCandidates()) : request("/api/candidates?decision=wait"),

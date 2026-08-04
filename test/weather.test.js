@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
+import { createRequire } from "node:module";
+import vm from "node:vm";
+
+const require = createRequire(import.meta.url);
+const { normalizeLive } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/amap-weather.js");
+const weatherSource = fs.readFileSync(new URL("../miniprogram/services/weather.js", import.meta.url), "utf8");
+const weatherModule = { exports: {} };
+vm.runInNewContext(weatherSource, {
+  module: weatherModule,
+  exports: weatherModule.exports,
+  require: () => ({ areaList: { province_list: {}, city_list: {}, county_list: {} } })
+});
+const weather = weatherModule.exports;
+
+test("高德实况天气只保留搭配需要的安全字段", () => {
+  const result = normalizeLive({
+    status: "1",
+    lives: [{
+      province: "广东",
+      city: "深圳市",
+      adcode: "440305",
+      weather: "多云",
+      temperature: "27",
+      winddirection: "东南",
+      windpower: "3",
+      humidity: "72",
+      reporttime: "2026-08-04 12:00:00"
+    }]
+  });
+  assert.equal(result.temperature, 27);
+  assert.equal(result.condition, "多云");
+  assert.equal(result.humidity, "72");
+  assert.equal(result.reportTime, "2026-08-04 12:00:00");
+});
+
+test("无效供应商结果不会伪造成实时天气", () => {
+  assert.throws(
+    () => normalizeLive({ status: "0", infocode: "10003", lives: [] }),
+    (error) => error.status === 502 && error.code === "10003"
+  );
+});
+
+test("实时温度和降水会进入衣橱搭配规则", () => {
+  const result = weather.formatLiveWeather(
+    { city: "深圳市", condition: "小雨", temperature: 18, reportTime: "2026-08-04 12:00:00" },
+    { cityName: "深圳市", fullName: "广东省 深圳市 南山区" }
+  );
+  assert.equal(result.high, 18);
+  assert.equal(result.needsOuterwear, true);
+  assert.match(result.tip, /降水/);
+});
