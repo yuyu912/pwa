@@ -13,6 +13,7 @@
     "_id": { "bsonType": "string" },
     "user_id": { "bsonType": "string" },
     "item_id": { "bsonType": "string" },
+    "outfit_record_id": { "bsonType": "string" },
     "scene": { "bsonType": "string" },
     "comfort": { "bsonType": "string" },
     "note": { "bsonType": "string" },

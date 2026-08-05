@@ -1,0 +1,1 @@
+[{"IndexName":"city_published","MgoKeySchema":{"MgoIndexKeys":[{"Name":"city_code","Direction":"1"},{"Name":"published_at","Direction":"-1"}],"MgoIsUnique":false,"MgoIsSparse":false}}]

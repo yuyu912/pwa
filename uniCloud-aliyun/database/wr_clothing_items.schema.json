@@ -45,6 +45,11 @@
     "source_hash": { "description": "原图 SHA-256" },
     "source_hash_key": { "description": "用户与原图哈希的唯一键" },
     "search_entity_id": { "description": "图像搜索实体 ID" },
+    "source_type": { "bsonType": "string", "description": "衣物来源，例如 outfit_capture" },
+    "source_capture_id": { "bsonType": "string", "description": "今日穿搭批量录入任务 ID" },
+    "image_origin": { "bsonType": "string", "description": "今日穿搭图片来源：flat_lay、cutout 或 faithful_crop" },
+    "image_fidelity_score": { "description": "AI 平铺图与真实裁剪图的视觉相似度" },
+    "image_generation_status": { "bsonType": "string", "description": "平铺图真实性核验状态" },
     "created_at": { "bsonType": "string" }
   }
 }

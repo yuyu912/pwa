@@ -1,0 +1,1 @@
+[{"IndexName":"user_status_expires","MgoKeySchema":{"MgoIndexKeys":[{"Name":"user_id","Direction":"1"},{"Name":"status","Direction":"1"},{"Name":"expires_at","Direction":"1"}],"MgoIsUnique":false,"MgoIsSparse":false}}]

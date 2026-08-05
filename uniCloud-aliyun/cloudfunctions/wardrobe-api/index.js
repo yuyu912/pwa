@@ -7,10 +7,11 @@ const repository = require("./lib/database");
 const cloud = require("./lib/cloud-services");
 const aiBudget = require("./lib/ai-budget");
 const weatherService = require("./lib/amap-weather");
+const { buildCityTrend, buildOutfitCandidates, buildStyleProfile } = require("./lib/outfit-insights");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-05-visual-search-v1";
+const BUILD_ID = "2026-08-05-outfit-composite-flatlay-v16";
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });
@@ -334,6 +335,28 @@ const mapItem = (item) => ({
   styles: sanitizeTags(item.styles),
   scenes: sanitizeTags(item.scenes, allowedScenes),
   imageUrl: cloud.signedUrl(item.image_key, "GET", 3600)
+});
+const publicOutfitDetection = (detection) => ({
+  detectionId: detection.detectionId,
+  slot: detection.slot,
+  category: detection.category,
+  color: detection.color || "",
+  pattern: detection.pattern || "",
+  styles: sanitizeTags(detection.styles),
+  structure: detection.structure || "",
+  isComposite: detection.isComposite === true,
+  confidence: Number(detection.confidence || 0),
+  processingStatus: detection.processingStatus || "cropped",
+  processingError: detection.processingError || "",
+  imageOrigin: detection.imageOrigin || "",
+  fidelityScore: detection.fidelityScore == null ? null : Number(detection.fidelityScore),
+  fidelityStatus: detection.fidelityStatus || "pending",
+  imageUrl: detection.selectedImageKey ? cloud.signedUrl(detection.selectedImageKey, "GET", 3600) : "",
+  topMatches: (Array.isArray(detection.topMatches) ? detection.topMatches : []).map((match) => ({
+    id: String(match.id), name: match.name, category: match.category, color: match.color,
+    similarity: match.similarity, visualSimilarity: match.visualSimilarity,
+    imageUrl: match.imageKey ? cloud.signedUrl(match.imageKey, "GET", 3600) : match.imageUrl || ""
+  }))
 });
 const mapCandidate = (candidate) => ({
   ...candidate,
@@ -1604,6 +1627,190 @@ const route = async (event) => {
     if (!reply || !allowed || reply.user_id === userId) throw Object.assign(new Error("无权举报该回复。"), { status: 403 });
     await repository.update("outfitResponses", reply.id, { reported: true, hidden: true, report_reason: cleanText(body.reason, 200), updated_at: now() });
     return response(event, 200, { ok: true });
+  }
+
+  if (method === "POST" && path === "/api/outfit-captures/presign") {
+    const mimeType = cleanText(body.mimeType, 40).toLowerCase();
+    const size = Number(body.size || 0);
+    if (!["image/jpeg", "image/png"].includes(mimeType) || size < 1 || size > 5 * 1024 * 1024) throw Object.assign(new Error("请选择不超过 5MB 的 JPG 或 PNG 全身照。"), { status: 400 });
+    const expired = await repository.findMany("outfitCaptures", {
+      user_id: userId,
+      status: repository.command().in(["uploaded", "analyzed", "failed"]),
+      expires_at: repository.command().lt(now())
+    }, { limit: 20 });
+    for (const task of expired) {
+      try {
+        if (!task.deleted_at) await cloud.deleteObject(task.source_key);
+        const temporaryKeys = new Set((task.detections || []).flatMap((item) => [item.cropKey, item.cutoutKey, item.flatLayKey, item.selectedImageKey]).filter(Boolean));
+        await Promise.all([...temporaryKeys].map((key) => cloud.deleteObject(key).catch(() => {})));
+        await repository.update("outfitCaptures", task.id, { status: "expired", deleted_at: now(), updated_at: now() });
+      } catch {}
+    }
+    const captureId = newId();
+    const upload = cloud.createUpload(userId, mimeType, `outfit-${captureId}`);
+    const timestamp = now();
+    await repository.add("outfitCaptures", { user_id: userId, source_key: upload.sourceKey, status: "uploaded", detections: [], expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(), deleted_at: "", error_code: "", created_at: timestamp, updated_at: timestamp }, captureId);
+    return response(event, 201, { captureId, uploadUrl: upload.uploadUrl, expiresIn: upload.expiresIn });
+  }
+
+  const captureAnalyzeMatch = path.match(/^\/api\/outfit-captures\/([^/]+)\/analyze$/);
+  if (method === "POST" && captureAnalyzeMatch) {
+    const capture = await repository.getById("outfitCaptures", decodeURIComponent(captureAnalyzeMatch[1]));
+    if (!capture || capture.user_id !== userId) throw Object.assign(new Error("未找到穿搭识别任务。"), { status: 404 });
+    if (Date.parse(capture.expires_at) <= Date.now()) throw Object.assign(new Error("照片任务已过期，请重新拍摄。"), { status: 410 });
+    if (capture.status === "analyzed") return response(event, 200, { captureId: capture.id, detections: (capture.detections || []).map(publicOutfitDetection), originalDeleted: Boolean(capture.deleted_at) });
+    await repository.update("outfitCaptures", capture.id, { status: "analyzing", updated_at: now() });
+    try {
+      const analyzed = await cloud.analyzeOutfit(capture.source_key, userId, capture.id);
+      const detections = analyzed.detections.map((detection) => ({ ...detection, topMatches: [] }));
+      await cloud.deleteObject(capture.source_key);
+      const deletedAt = now();
+      await repository.update("outfitCaptures", capture.id, { status: "analyzed", detections, deleted_at: deletedAt, updated_at: deletedAt });
+      return response(event, 200, { captureId: capture.id, detections: detections.map(publicOutfitDetection), originalDeleted: true });
+    } catch (error) {
+      let deletedAt = "";
+      try { await cloud.deleteObject(capture.source_key); deletedAt = now(); } catch {}
+      await repository.update("outfitCaptures", capture.id, { status: "failed", deleted_at: deletedAt, error_code: deletedAt ? cleanText(error.code, 80) : "SOURCE_DELETE_FAILED", updated_at: now() });
+      if (!deletedAt) throw Object.assign(new Error("识别失败，且人物原图清理未完成，请联系管理员处理。"), { status: 503, code: "SOURCE_DELETE_FAILED" });
+      throw error;
+    }
+  }
+
+  const prepareDetectionMatch = path.match(/^\/api\/outfit-captures\/([^/]+)\/detections\/([^/]+)\/prepare$/);
+  if (method === "POST" && prepareDetectionMatch) {
+    const captureId = decodeURIComponent(prepareDetectionMatch[1]);
+    const detectionId = decodeURIComponent(prepareDetectionMatch[2]);
+    let capture = await repository.getById("outfitCaptures", captureId);
+    if (!capture || capture.user_id !== userId) throw Object.assign(new Error("未找到穿搭任务。"), { status: 404 });
+    const detection = (capture.detections || []).find((item) => item.detectionId === detectionId);
+    if (!detection) throw Object.assign(new Error("未找到待处理衣物。"), { status: 404 });
+    if (["ready", "fallback"].includes(detection.processingStatus)) return response(event, 200, publicOutfitDetection(detection));
+    if (detection.processingStatus === "processing") throw Object.assign(new Error("这件衣物正在处理中。"), { status: 409 });
+    await repository.withTransaction(async (tx) => {
+      const locked = await tx.getById("outfitCaptures", captureId);
+      const detections = [...(locked.detections || [])];
+      const index = detections.findIndex((item) => item.detectionId === detectionId);
+      if (index < 0) throw Object.assign(new Error("待处理衣物已失效。"), { status: 409 });
+      detections[index] = { ...detections[index], processingStatus: "processing", processingError: "" };
+      await tx.update("outfitCaptures", captureId, { detections, updated_at: now() });
+    });
+    try {
+      const prepared = await cloud.prepareOutfitDetection(detection);
+      if (prepared.processingStatus === "failed" || !prepared.selectedImageKey) {
+        await repository.withTransaction(async (tx) => {
+          const locked = await tx.getById("outfitCaptures", captureId);
+          const detections = [...(locked.detections || [])];
+          const index = detections.findIndex((item) => item.detectionId === detectionId);
+          if (index < 0) throw Object.assign(new Error("待处理衣物已失效。"), { status: 409 });
+          detections[index] = { ...detections[index], ...prepared, topMatches: [] };
+          await tx.update("outfitCaptures", captureId, { detections, updated_at: now() });
+        });
+        capture = await repository.getById("outfitCaptures", captureId);
+        return response(event, 200, publicOutfitDetection((capture.detections || []).find((item) => item.detectionId === detectionId)));
+      }
+      const clothing = await repository.findMany("clothing", { user_id: userId, status: "active" }, { orderBy: "created_at", order: "desc", limit: 100 });
+      const embeddings = clothing.length ? await ensureImageEmbeddings(userId, clothing.map((item) => ({ entityType: "clothing", entityId: item.id, imageKey: item.image_key }))) : new Map();
+      const queryEmbedding = await cloud.generateImageEmbeddings([prepared.selectedImageKey]);
+      const topMatches = buildOutfitCandidates(detection, clothing.map((item) => ({ item, visualSimilarity: cosineSimilarity(queryEmbedding.vectors[0], embeddings.get(`clothing:${item.id}`)?.vector) }))).map((entry) => ({
+        id: String(entry.item.id), name: entry.item.name || "未命名衣物", category: entry.item.category || "", color: entry.item.color || "",
+        imageKey: entry.item.image_key, similarity: entry.score, visualSimilarity: entry.visualScore
+      }));
+      await repository.withTransaction(async (tx) => {
+        const locked = await tx.getById("outfitCaptures", captureId);
+        const detections = [...(locked.detections || [])];
+        const index = detections.findIndex((item) => item.detectionId === detectionId);
+        if (index < 0) throw Object.assign(new Error("待处理衣物已失效。"), { status: 409 });
+        detections[index] = { ...detections[index], ...prepared, topMatches };
+        await tx.update("outfitCaptures", captureId, { detections, updated_at: now() });
+      });
+      capture = await repository.getById("outfitCaptures", captureId);
+      return response(event, 200, publicOutfitDetection((capture.detections || []).find((item) => item.detectionId === detectionId)));
+    } catch (error) {
+      await repository.withTransaction(async (tx) => {
+        const locked = await tx.getById("outfitCaptures", captureId);
+        const detections = [...(locked.detections || [])];
+        const index = detections.findIndex((item) => item.detectionId === detectionId);
+        if (index >= 0) detections[index] = { ...detections[index], processingStatus: "failed", processingError: cleanText(error.message, 120), selectedImageKey: "" };
+        await tx.update("outfitCaptures", captureId, { detections, updated_at: now() });
+      });
+      throw error;
+    }
+  }
+
+  const captureCancelMatch = path.match(/^\/api\/outfit-captures\/([^/]+)$/);
+  if (method === "DELETE" && captureCancelMatch) {
+    const capture = await repository.getById("outfitCaptures", decodeURIComponent(captureCancelMatch[1]));
+    if (!capture || capture.user_id !== userId) throw Object.assign(new Error("未找到穿搭识别任务。"), { status: 404 });
+    if (!capture.deleted_at) await cloud.deleteObject(capture.source_key);
+    const temporaryKeys = new Set((capture.detections || []).flatMap((item) => [item.cropKey, item.cutoutKey, item.flatLayKey, item.selectedImageKey]).filter(Boolean));
+    await Promise.all([...temporaryKeys].map((key) => cloud.deleteObject(key).catch(() => {})));
+    await repository.update("outfitCaptures", capture.id, { status: "cancelled", deleted_at: capture.deleted_at || now(), updated_at: now() });
+    return response(event, 200, { ok: true, originalDeleted: true });
+  }
+
+  const captureConfirmMatch = path.match(/^\/api\/outfit-captures\/([^/]+)\/confirm$/);
+  if (method === "POST" && captureConfirmMatch) {
+    const capture = await repository.getById("outfitCaptures", decodeURIComponent(captureConfirmMatch[1]));
+    if (!capture || capture.user_id !== userId) throw Object.assign(new Error("未找到穿搭任务。"), { status: 404 });
+    if (capture.status === "confirmed" && capture.result) return response(event, 200, capture.result);
+    if (capture.status !== "analyzed" || !capture.deleted_at) throw Object.assign(new Error("穿搭任务不可确认或原图尚未删除。"), { status: 409 });
+    const chosenIds = [...new Set(parseArray(body.itemIds).map(String).filter(Boolean))].slice(0, 5);
+    const selectedDetectionIndexes = new Set(parseArray(body.detectionSelections).filter((entry) => Number.isInteger(Number(entry?.detectionIndex)) && chosenIds.includes(String(entry?.itemId))).map((entry) => Number(entry.detectionIndex)));
+    const skippedDetectionIndexes = new Set(parseArray(body.skipDetectionIndexes).map(Number).filter(Number.isInteger));
+    const newDetections = (capture.detections || []).filter((item, index) => !selectedDetectionIndexes.has(index) && !skippedDetectionIndexes.has(index) && ["ready", "fallback"].includes(item.processingStatus) && item.selectedImageKey);
+    const pendingDetections = (capture.detections || []).filter((item, index) => !selectedDetectionIndexes.has(index) && !skippedDetectionIndexes.has(index) && !newDetections.includes(item)).map((item) => ({ slot: item.slot, category: item.category, color: item.color, pattern: item.pattern || "", styles: item.styles || [], status: "pending", processing_status: item.processingStatus || "failed", processing_error: item.processingError || "" }));
+    const chosen = chosenIds.length ? await repository.findMany("clothing", { user_id: userId, status: "active", _id: repository.command().in(chosenIds) }) : [];
+    if (!chosen.length && !newDetections.length) throw Object.assign(new Error("没有可以保存的今日衣物。"), { status: 400 });
+    const activeCount = await repository.count("clothing", { user_id: userId, status: "active" });
+    if (activeCount + newDetections.length > 100) throw Object.assign(new Error(`衣橱剩余容量不足，请将至少 ${activeCount + newDetections.length - 100} 件改为已有衣物。`), { status: 429 });
+    const wornAt = now();
+    const recordId = newId();
+    const newItems = newDetections.map((detection) => ({
+      id: newId(), user_id: userId, image_key: detection.selectedImageKey,
+      name: `${detection.color || ""}${detection.category || "衣物"}` || "今日衣物",
+      category: detection.category, color: detection.color || "", season: "", thickness: "", pattern: detection.pattern || "", material: "",
+      styles: sanitizeTags(detection.styles), scenes: allowedScenes.includes(body.scene) ? [body.scene] : [], price: null,
+      wear_count: 1, last_worn_at: wornAt, status: "active", idle_status: "active", source_hash: null, search_entity_id: null,
+      source_type: "outfit_capture", source_capture_id: capture.id, image_origin: detection.imageOrigin,
+      image_fidelity_score: detection.fidelityScore, image_generation_status: detection.fidelityStatus, created_at: wornAt
+    }));
+    const snapshots = [
+      ...chosen.map((item) => ({ id: String(item.id), name: item.name || "未命名衣物", category: item.category || "", color: item.color || "", styles: sanitizeTags(item.styles) })),
+      ...newItems.map((item) => ({ id: item.id, name: item.name, category: item.category, color: item.color, styles: item.styles }))
+    ];
+    const result = { recordId, confirmedCount: snapshots.length, createdCount: newItems.length, reusedCount: chosen.length, pendingCount: pendingDetections.length };
+    await repository.withTransaction(async (tx) => {
+      for (const item of newItems) {
+        const { id, ...document } = item;
+        await tx.add("clothing", document, id);
+      }
+      await tx.add("outfitRecords", { user_id: userId, capture_id: capture.id, items: snapshots, scene: allowedScenes.includes(body.scene) ? body.scene : "", weather: { city: cleanText(body.weather?.city, 40), condition: cleanText(body.weather?.condition, 20), temperature: Number(body.weather?.temperature) || null }, status: "confirmed", worn_at: wornAt, created_at: wornAt }, recordId);
+      for (const item of [...chosen, ...newItems]) {
+        await tx.add("wearLogs", { user_id: userId, item_id: String(item.id), outfit_record_id: recordId, scene: allowedScenes.includes(body.scene) ? body.scene : "", comfort: "", note: "今日穿搭确认", worn_at: wornAt }, newId());
+        if (!newItems.some((created) => created.id === item.id)) await tx.update("clothing", item.id, { wear_count: repository.command().inc(1), last_worn_at: wornAt });
+      }
+      await tx.update("outfitCaptures", capture.id, { status: "confirmed", pending_detections: pendingDetections, result, updated_at: wornAt });
+    });
+    const cleanupKeys = new Set();
+    (capture.detections || []).forEach((item, index) => {
+      const keep = newDetections.includes(item) ? item.selectedImageKey : "";
+      [item.cropKey, item.cutoutKey, item.flatLayKey].filter((key) => key && key !== keep).forEach((key) => cleanupKeys.add(key));
+      if ((selectedDetectionIndexes.has(index) || skippedDetectionIndexes.has(index)) && item.selectedImageKey) cleanupKeys.add(item.selectedImageKey);
+    });
+    await Promise.all([...cleanupKeys].map((key) => cloud.deleteObject(key).catch(() => {})));
+    return response(event, 201, result);
+  }
+
+  if (method === "GET" && path === "/api/style-profile") {
+    const records = await repository.findMany("outfitRecords", { user_id: userId, status: "confirmed" }, { orderBy: "worn_at", order: "desc", limit: 500 });
+    return response(event, 200, buildStyleProfile(records));
+  }
+
+  if (method === "GET" && path === "/api/city-trends") {
+    const cityCode = cleanText(query.cityCode, 20);
+    if (!cityCode) throw Object.assign(new Error("请先手动选择城市。"), { status: 400 });
+    const samples = await repository.findMany("trendSamples", { city_code: cityCode }, { orderBy: "published_at", order: "desc", limit: 1000 });
+    return response(event, 200, { cityCode, sourceLabel: samples.some((sample) => sample.source === "xiaohongshu_partner") ? "小红书合作授权数据" : "自有社区与授权演示样本", ...buildCityTrend(samples, cityCode) });
   }
 
   // 幂等键让用户重复点击或网络重发返回原任务，不会创建第二个上传任务或重复扣费。
