@@ -10,7 +10,7 @@ const weatherService = require("./lib/amap-weather");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-04-realtime-weather-v1";
+const BUILD_ID = "2026-08-04-community-admin-v1";
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });
@@ -130,7 +130,7 @@ const response = (event, statusCode, body, extraHeaders = {}) => ({
   body: statusCode === 204 ? "" : JSON.stringify(body)
 });
 
-const publicUser = (user) => ({ id: String(user.id), username: user.username });
+const publicUser = (user) => ({ id: String(user.id), username: user.username, role: user.role === "admin" ? "admin" : "user" });
 const entitlementSummary = (user, currentTime = Date.now()) => {
   const subscriptionEndsAt = Date.parse(user.subscription_ends_at || "");
   const trialEndsAt = Date.parse(user.trial_ends_at || "");
@@ -241,6 +241,9 @@ const requireActiveUser = async (event) => {
   }
   return user;
 };
+const requireCommunityAdmin = (user) => {
+  if (user.role !== "admin") throw Object.assign(new Error("当前账号没有社区审核权限。"), { status: 403 });
+};
 
 const requireAdmin = (event) => {
   requiredEnv(["ADMIN_BOOTSTRAP_TOKEN"]);
@@ -278,6 +281,56 @@ const mapWaitingCandidate = (candidate, currentTime = Date.now()) => ({
   ...mapCandidate(candidate),
   ...candidateWaitSummary(candidate, currentTime)
 });
+const communityAlias = (userId) => `衣橱用户${crypto.createHash("sha256").update(String(userId)).digest("hex").slice(0, 4).toUpperCase()}`;
+const communityLikeId = (postId, userId) => crypto.createHash("sha256").update(`${postId}:${userId}`).digest("hex");
+const communityItems = (post) => (post.items || []).map((item) => ({
+  id: String(item.id),
+  name: cleanText(item.name, 40),
+  category: cleanText(item.category, 20),
+  color: cleanText(item.color, 20),
+  imageUrl: cloud.signedUrl(item.image_key, "GET", 3600)
+}));
+const communityPostView = (post, userId, likedPostIds = new Set()) => ({
+  id: String(post.id),
+  authorAlias: post.author_alias,
+  scene: post.scene,
+  note: post.note || "",
+  status: post.status,
+  likeCount: Number(post.like_count || 0),
+  liked: likedPostIds.has(String(post.id)),
+  isMine: String(post.user_id) === String(userId),
+  createdAt: post.created_at,
+  publishedAt: post.published_at || "",
+  items: communityItems(post)
+});
+const shanghaiWeekStart = () => {
+  const local = new Date(Date.now() + SHANGHAI_OFFSET_MS);
+  const day = local.getUTCDay() || 7;
+  local.setUTCDate(local.getUTCDate() - day + 1);
+  return new Date(`${local.toISOString().slice(0, 10)}T00:00:00.000+08:00`).toISOString();
+};
+const communityPostList = async (userId, scope = "feed") => {
+  const where = scope === "mine" ? { user_id: userId } : { status: "approved" };
+  const posts = await repository.findMany("communityPosts", where, { orderBy: scope === "mine" ? "created_at" : "published_at", order: "desc", limit: 50 });
+  if (!posts.length) return [];
+  const postIds = posts.map((post) => String(post.id));
+  const likes = await repository.findMany("communityLikes", { user_id: userId, post_id: repository.command().in(postIds) });
+  const likedPostIds = new Set(likes.map((like) => String(like.post_id)));
+  return posts.map((post) => communityPostView(post, userId, likedPostIds));
+};
+const communityRanking = async (userId) => {
+  const posts = await repository.findMany("communityPosts", {
+    status: "approved",
+    published_at: repository.command().gte(shanghaiWeekStart())
+  }, { limit: 200 });
+  const bestByAuthor = new Map();
+  posts.sort((left, right) => Number(right.like_count || 0) - Number(left.like_count || 0) || String(left.published_at).localeCompare(String(right.published_at)));
+  for (const post of posts) if (!bestByAuthor.has(String(post.user_id))) bestByAuthor.set(String(post.user_id), post);
+  const ranked = [...bestByAuthor.values()].slice(0, 20);
+  const likes = ranked.length ? await repository.findMany("communityLikes", { user_id: userId, post_id: repository.command().in(ranked.map((post) => String(post.id))) }) : [];
+  const likedPostIds = new Set(likes.map((like) => String(like.post_id)));
+  return ranked.map((post, index) => ({ rank: index + 1, ...communityPostView(post, userId, likedPostIds) }));
+};
 const outfitTokenHash = (token) => crypto.createHash("sha256").update(String(token)).digest("hex");
 const outfitToken = () => crypto.randomBytes(24).toString("base64url");
 const outfitExpiresAt = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -503,6 +556,7 @@ const handleMigration = async (payload) => {
   await repository.withTransaction(async (tx) => {
     for (const row of tables.users) await tx.add("users", {
       username: row.username,
+      role: row.role === "admin" ? "admin" : "user",
       password_hash: row.password_hash,
       recovery_hash: row.recovery_hash,
       created_at: row.created_at
@@ -1169,9 +1223,71 @@ const route = async (event) => {
     requireAdmin(event);
     return response(event, 200, await adminStarSummary(query));
   }
+  const adminCommunityMatch = path.match(/^\/api\/admin\/community\/posts\/([^/]+)$/);
+  if (method === "PATCH" && adminCommunityMatch) {
+    requireAdmin(event);
+    const post = await repository.getById("communityPosts", decodeURIComponent(adminCommunityMatch[1]));
+    if (!post) throw Object.assign(new Error("社区作品不存在。"), { status: 404 });
+    const status = cleanText(body.status, 20);
+    if (!["approved", "rejected", "removed"].includes(status)) throw Object.assign(new Error("审核状态无效。"), { status: 400 });
+    await repository.update("communityPosts", post.id, {
+      status,
+      moderation_note: cleanText(body.note, 100),
+      published_at: status === "approved" ? post.published_at || now() : post.published_at || "",
+      updated_at: now()
+    });
+    return response(event, 200, { ok: true, status });
+  }
 
   const user = await requireActiveUser(event);
   const userId = String(user.id);
+
+  if (method === "GET" && path === "/api/community/admin/review") {
+    requireCommunityAdmin(user);
+    const posts = await repository.findMany("communityPosts", { status: "pending" }, { orderBy: "created_at", order: "asc", limit: 100 });
+    const reports = await repository.findMany("complaints", { category: "社区举报", status: "pending" }, { orderBy: "created_at", order: "asc", limit: 100 });
+    const targetIds = [...new Set(reports.map((report) => String(report.target_id || "")).filter(Boolean))];
+    const targetPosts = targetIds.length ? await repository.findMany("communityPosts", { _id: repository.command().in(targetIds) }) : [];
+    const postsById = new Map(targetPosts.map((post) => [String(post.id), post]));
+    return response(event, 200, {
+      posts: posts.map((post) => communityPostView(post, userId)),
+      reports: reports.map((report) => ({
+        id: String(report.id),
+        reason: report.reason || report.detail,
+        createdAt: report.created_at,
+        post: postsById.has(String(report.target_id)) ? communityPostView(postsById.get(String(report.target_id)), userId) : null
+      }))
+    });
+  }
+  const communityAdminPostMatch = path.match(/^\/api\/community\/admin\/posts\/([^/]+)$/);
+  if (method === "PATCH" && communityAdminPostMatch) {
+    requireCommunityAdmin(user);
+    const post = await repository.getById("communityPosts", decodeURIComponent(communityAdminPostMatch[1]));
+    if (!post || post.status !== "pending") throw Object.assign(new Error("待审核作品不存在。"), { status: 404 });
+    const status = body.status === "approved" ? "approved" : body.status === "rejected" ? "rejected" : "";
+    if (!status) throw Object.assign(new Error("审核结果无效。"), { status: 400 });
+    await repository.update("communityPosts", post.id, {
+      status,
+      moderation_note: cleanText(body.note, 100),
+      published_at: status === "approved" ? now() : "",
+      updated_at: now()
+    });
+    return response(event, 200, { ok: true, status });
+  }
+  const communityAdminReportMatch = path.match(/^\/api\/community\/admin\/reports\/([^/]+)$/);
+  if (method === "PATCH" && communityAdminReportMatch) {
+    requireCommunityAdmin(user);
+    const report = await repository.getById("complaints", decodeURIComponent(communityAdminReportMatch[1]));
+    if (!report || report.category !== "社区举报" || report.status !== "pending") throw Object.assign(new Error("待处理举报不存在。"), { status: 404 });
+    const action = body.action === "remove_post" ? "remove_post" : body.action === "dismiss" ? "dismiss" : "";
+    if (!action) throw Object.assign(new Error("举报处理方式无效。"), { status: 400 });
+    if (action === "remove_post" && report.target_id) {
+      const targetPost = await repository.getById("communityPosts", report.target_id);
+      if (targetPost) await repository.update("communityPosts", targetPost.id, { status: "removed", moderation_note: "举报处理下架", updated_at: now() });
+    }
+    await repository.update("complaints", report.id, { status: "resolved", resolution: action, updated_at: now() });
+    return response(event, 200, { ok: true, action });
+  }
 
   if (method === "GET" && path === "/api/ai-budget") {
     return response(event, 200, await budgetSummary());
@@ -1187,6 +1303,89 @@ const route = async (event) => {
   }
   if (method === "GET" && path === "/api/rewards/me") {
     return response(event, 200, await starSummary(userId));
+  }
+  if (method === "GET" && path === "/api/community/posts") {
+    const scope = query.scope === "mine" ? "mine" : "feed";
+    return response(event, 200, { posts: await communityPostList(userId, scope), limit: 50 });
+  }
+  if (method === "GET" && path === "/api/community/ranking") {
+    return response(event, 200, { weekStart: shanghaiWeekStart(), posts: await communityRanking(userId) });
+  }
+  if (method === "POST" && path === "/api/community/posts") {
+    const itemIds = [...new Set((body.itemIds || []).map(String))].slice(0, 5);
+    if (itemIds.length < 2) throw Object.assign(new Error("请选择 2–5 件衣物组成穿搭。"), { status: 400 });
+    const scene = cleanText(body.scene, 10);
+    if (!allowedScenes.includes(scene)) throw Object.assign(new Error("请选择有效场景。"), { status: 400 });
+    const note = cleanText(body.note, 31);
+    if (note.length > 30) throw Object.assign(new Error("搭配心得最多 30 个字。"), { status: 400 });
+    if (invalidComment(note)) throw Object.assign(new Error("搭配心得不能包含链接或联系方式。"), { status: 400 });
+    const ownedItems = await repository.findMany("clothing", { user_id: userId, status: "active", _id: repository.command().in(itemIds) });
+    if (ownedItems.length !== itemIds.length) throw Object.assign(new Error("只能发布本人仍在衣橱中的衣物。"), { status: 403 });
+    const byId = new Map(ownedItems.map((item) => [String(item.id), item]));
+    const postId = newId();
+    const timestamp = now();
+    await repository.add("communityPosts", {
+      user_id: userId,
+      author_alias: communityAlias(userId),
+      items: itemIds.map((id) => {
+        const item = byId.get(id);
+        return { id, name: item.name, category: item.category, color: item.color || "", image_key: item.image_key };
+      }),
+      scene,
+      note,
+      status: "pending",
+      like_count: 0,
+      created_at: timestamp,
+      updated_at: timestamp,
+      published_at: ""
+    }, postId);
+    return response(event, 201, { post: communityPostView(await repository.getById("communityPosts", postId), userId), moderation: "manual_pending" });
+  }
+  const communityPostMatch = path.match(/^\/api\/community\/posts\/([^/]+)$/);
+  if (method === "DELETE" && communityPostMatch) {
+    const post = await repository.getById("communityPosts", decodeURIComponent(communityPostMatch[1]));
+    if (!post || String(post.user_id) !== userId) throw Object.assign(new Error("社区作品不存在。"), { status: 404 });
+    await repository.update("communityPosts", post.id, { status: "removed", updated_at: now() });
+    return response(event, 200, { ok: true });
+  }
+  const communityLikeMatch = path.match(/^\/api\/community\/posts\/([^/]+)\/like$/);
+  if (method === "PUT" && communityLikeMatch) {
+    const postId = decodeURIComponent(communityLikeMatch[1]);
+    const action = body.action === "unlike" ? "unlike" : "like";
+    const post = await repository.getById("communityPosts", postId);
+    if (!post || post.status !== "approved") throw Object.assign(new Error("该作品暂不可点赞。"), { status: 404 });
+    if (String(post.user_id) === userId) throw Object.assign(new Error("不能给自己的作品点赞。"), { status: 400 });
+    const likeId = communityLikeId(postId, userId);
+    const result = await repository.withTransaction(async (tx) => {
+      const existing = await tx.getById("communityLikes", likeId);
+      if (action === "like" && !existing) {
+        await tx.add("communityLikes", { post_id: postId, user_id: userId, created_at: now() }, likeId);
+        await tx.update("communityPosts", postId, { like_count: repository.command().inc(1), updated_at: now() });
+        return true;
+      }
+      if (action === "unlike" && existing) {
+        await tx.remove("communityLikes", likeId);
+        await tx.update("communityPosts", postId, { like_count: repository.command().inc(-1), updated_at: now() });
+        return false;
+      }
+      return Boolean(existing);
+    });
+    const updated = await repository.getById("communityPosts", postId);
+    return response(event, 200, { liked: result, likeCount: Math.max(0, Number(updated.like_count || 0)) });
+  }
+  const communityReportMatch = path.match(/^\/api\/community\/posts\/([^/]+)\/report$/);
+  if (method === "POST" && communityReportMatch) {
+    const postId = decodeURIComponent(communityReportMatch[1]);
+    const post = await repository.getById("communityPosts", postId);
+    if (!post || post.status !== "approved") throw Object.assign(new Error("该作品不存在。"), { status: 404 });
+    if (String(post.user_id) === userId) throw Object.assign(new Error("不能举报自己的作品。"), { status: 400 });
+    const reason = cleanText(body.reason, 40);
+    if (!reason) throw Object.assign(new Error("请选择举报原因。"), { status: 400 });
+    const reportId = communityLikeId(`report:${postId}`, userId);
+    if (await repository.getById("complaints", reportId)) return response(event, 200, { ok: true, duplicate: true });
+    const timestamp = now();
+    await repository.add("complaints", { user_id: userId, category: "社区举报", detail: `作品 ${postId}：${reason}`, contact: "", target_type: "community_post", target_id: postId, reason, status: "pending", created_at: timestamp, updated_at: timestamp }, reportId);
+    return response(event, 201, { ok: true });
   }
   if (method === "GET" && path === "/api/weather") {
     const adcode = String(query.adcode || "").trim();

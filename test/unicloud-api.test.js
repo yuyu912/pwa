@@ -211,10 +211,10 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(freeQuota.hangerRemoval.limit, 1);
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-04-realtime-weather-v1");
+  assert.equal(health.body.buildId, "2026-08-04-community-admin-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
-    users: [{ id: 1, username: "tester", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
+    users: [{ id: 1, username: "tester", role: "admin", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
     invites: [{ id: 1, code: "USED", used_by: 1, used_at: "2026-01-01T00:00:00.000Z", created_at: "2026-01-01T00:00:00.000Z" }],
     clothing_items: Array.from({ length: 5 }, (_, index) => ({
       id: index + 1,
@@ -255,6 +255,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const login = readResponse(await main(makeEvent("/api/auth/login", "POST", { username: "tester", password: "password123" })));
   assert.equal(login.status, 200);
   assert.ok(login.body.token);
+  assert.equal(login.body.user.role, "admin");
 
   const authorization = { authorization: `Bearer ${login.body.token}` };
   process.env.AMAP_WEATHER_KEY = "test-amap-key";
@@ -307,6 +308,23 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.deepEqual(migratedItem.styles, ["简约"]);
   assert.deepEqual(migratedItem.scenes, ["休闲"]);
 
+  const communityPost = readResponse(await main(makeEvent("/api/community/posts", "POST", {
+    itemIds: ["1", "2"], scene: "通勤", note: "用已有衣物搭出轻松通勤感"
+  }, authorization)));
+  assert.equal(communityPost.status, 201);
+  assert.equal(communityPost.body.post.status, "pending");
+  assert.equal(communityPost.body.post.items.length, 2);
+  const emptyCommunityFeed = readResponse(await main(makeEvent("/api/community/posts", "GET", null, authorization)));
+  assert.equal(emptyCommunityFeed.body.posts.length, 0);
+  const ownCommunityPosts = readResponse(await main(makeEvent("/api/community/posts?scope=mine", "GET", null, authorization)));
+  assert.equal(ownCommunityPosts.body.posts[0].status, "pending");
+  const approvedCommunityPost = readResponse(await main(makeEvent(`/api/community/admin/posts/${communityPost.body.post.id}`, "PATCH", {
+    status: "approved"
+  }, authorization)));
+  assert.equal(approvedCommunityPost.status, 200);
+  const selfLike = readResponse(await main(makeEvent(`/api/community/posts/${communityPost.body.post.id}/like`, "PUT", { action: "like" }, authorization)));
+  assert.equal(selfLike.status, 400);
+
   // 好友帮搭必须是登录后的点对点分享：令牌本身不返回完整衣橱，受邀新用户注册后只加入本次请求。
   const unauthenticatedRequest = readResponse(await main(makeEvent("/api/outfit-requests/not-a-real-token", "GET")));
   assert.equal(unauthenticatedRequest.status, 401);
@@ -321,6 +339,21 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   })));
   assert.equal(guestRegistration.status, 201);
   const friendAuthorization = { authorization: `Bearer ${guestRegistration.body.token}` };
+  const friendCannotReviewCommunity = readResponse(await main(makeEvent("/api/community/admin/review", "GET", null, friendAuthorization)));
+  assert.equal(friendCannotReviewCommunity.status, 403);
+  const friendLike = readResponse(await main(makeEvent(`/api/community/posts/${communityPost.body.post.id}/like`, "PUT", { action: "like" }, friendAuthorization)));
+  assert.equal(friendLike.status, 200);
+  assert.equal(friendLike.body.likeCount, 1);
+  const repeatedFriendLike = readResponse(await main(makeEvent(`/api/community/posts/${communityPost.body.post.id}/like`, "PUT", { action: "like" }, friendAuthorization)));
+  assert.equal(repeatedFriendLike.body.likeCount, 1);
+  const communityReport = readResponse(await main(makeEvent(`/api/community/posts/${communityPost.body.post.id}/report`, "POST", { reason: "不当内容" }, friendAuthorization)));
+  assert.equal(communityReport.status, 201);
+  const communityReview = readResponse(await main(makeEvent("/api/community/admin/review", "GET", null, authorization)));
+  assert.equal(communityReview.status, 200);
+  assert.equal(communityReview.body.reports.length, 1);
+  assert.equal(communityReview.body.reports[0].post.id, communityPost.body.post.id);
+  const resolvedCommunityReport = readResponse(await main(makeEvent(`/api/community/admin/reports/${communityReview.body.reports[0].id}`, "PATCH", { action: "dismiss" }, authorization)));
+  assert.equal(resolvedCommunityReport.status, 200);
   const sharedView = readResponse(await main(makeEvent(`/api/outfit-requests/${outfitRequest.body.token}`, "GET", null, friendAuthorization)));
   assert.equal(sharedView.status, 200);
   assert.equal(sharedView.body.items.length, 1);
@@ -504,7 +537,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-04-realtime-weather-v1");
+  assert.equal(failedRecognition.body.buildId, "2026-08-04-community-admin-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

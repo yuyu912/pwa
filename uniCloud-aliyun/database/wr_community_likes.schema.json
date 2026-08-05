@@ -1,0 +1,12 @@
+{
+  "bsonType": "object",
+  "description": "灵感广场点赞去重流水，仅允许云函数访问",
+  "required": ["post_id", "user_id", "created_at"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false, "count": false },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "post_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "created_at": { "bsonType": "string" }
+  }
+}

@@ -13,6 +13,8 @@ const COLLECTIONS = Object.freeze({
   starEvents: "wr_star_events",
   outfitRequests: "wr_outfit_requests",
   outfitResponses: "wr_outfit_responses",
+  communityPosts: "wr_community_posts",
+  communityLikes: "wr_community_likes",
   complaints: "wr_complaints"
 });
 

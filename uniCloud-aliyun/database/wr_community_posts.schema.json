@@ -1,0 +1,20 @@
+{
+  "bsonType": "object",
+  "description": "穿搭灵感广场作品，仅允许云函数访问",
+  "required": ["user_id", "author_alias", "items", "scene", "note", "status", "like_count", "created_at", "updated_at"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false, "count": false },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "author_alias": { "bsonType": "string", "maxLength": 20 },
+    "items": { "bsonType": "array" },
+    "scene": { "bsonType": "string", "enum": ["休闲", "通勤", "约会", "旅行", "聚会", "运动"] },
+    "note": { "bsonType": "string", "maxLength": 30 },
+    "status": { "bsonType": "string", "enum": ["pending", "approved", "rejected", "removed"] },
+    "like_count": { "bsonType": "int", "minimum": 0 },
+    "created_at": { "bsonType": "string" },
+    "updated_at": { "bsonType": "string" },
+    "published_at": { "bsonType": "string" },
+    "moderation_note": { "bsonType": "string", "maxLength": 100 }
+  }
+}

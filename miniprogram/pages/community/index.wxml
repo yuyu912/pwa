@@ -1,0 +1,14 @@
+<view class="page">
+  <view class="head"><text class="heading">穿搭灵感广场</text><text class="sub">只分享穿搭，不公开价格、地区和完整衣橱</text><button class="primary" bindtap="toCreate">发布我的穿搭</button></view>
+  <view class="tabs"><text wx:for="{{tabs}}" wx:key="id" class="tab {{tab === item.id ? 'active' : ''}}" data-id="{{item.id}}" bindtap="changeTab">{{item.label}}</text></view>
+  <view wx:if="{{loading}}" class="empty">正在加载…</view><view wx:elif="{{error}}" class="notice error">{{error}}</view>
+  <view wx:elif="{{!posts.length}}" class="empty">{{tab === 'mine' ? '还没有发布过穿搭' : tab === 'ranking' ? '本周还没有上榜作品' : '还没有审核通过的穿搭作品'}}</view>
+  <view wx:for="{{posts}}" wx:key="id" class="post-card">
+    <view class="post-head"><text>{{tab === 'ranking' ? '#' + item.rank + ' · ' : ''}}{{item.authorAlias}}</text><text class="scene">{{item.scene}}</text></view>
+    <view class="item-grid"><view wx:for="{{item.items}}" wx:for-item="cloth" wx:key="id" class="cloth"><image src="{{cloth.imageUrl}}" mode="aspectFit"/><text>{{cloth.name}}</text></view></view>
+    <text wx:if="{{item.note}}" class="note">“{{item.note}}”</text>
+    <text wx:if="{{tab === 'mine'}}" class="status status-{{item.status}}">{{item.status === 'pending' ? '审核中' : item.status === 'approved' ? '已公开' : item.status === 'rejected' ? '未通过' : '已下架'}}</text>
+    <view class="actions"><button class="like {{item.liked ? 'liked' : ''}}" data-id="{{item.id}}" bindtap="toggleLike">☆ {{item.likeCount}} 灵感值</button><button wx:if="{{item.isMine}}" class="link" data-id="{{item.id}}" bindtap="remove">下架</button><button wx:else class="link" data-id="{{item.id}}" bindtap="report">举报</button></view>
+  </view>
+  <button class="ghost" bindtap="goBack">返回</button>
+</view>

@@ -6,7 +6,6 @@ Page({
   async onShow() {
     const restored = session.restore();
     if (!restored.token) return wx.redirectTo({ url: "/pages/login/index" });
-    if (restored.user?.username) return this.setData({ user: restored.user, loading: false, error: "" });
     try {
       const result = await api.getMe();
       if (!result?.user?.username) throw new Error("账户信息不完整。");
@@ -20,6 +19,7 @@ Page({
   openPrivacy() { wx.navigateTo({ url: "/pages/privacy/index" }); },
   openAgreement() { wx.navigateTo({ url: "/pages/agreement/index" }); },
   openComplaint() { wx.navigateTo({ url: "/pages/complaint/index" }); },
+  openCommunityAdmin() { wx.navigateTo({ url: "/pages/community-admin/index" }); },
   requestDeletion() {
     wx.showModal({ title: "停用并申请删除账号", content: "账号和现有登录凭证将立即停用，关联数据进入最长 30 天的人工核验与删除处理。提交后不能自行恢复。", confirmText: "确认停用", confirmColor: "#a95568", success: async ({ confirm }) => {
       if (!confirm) return;

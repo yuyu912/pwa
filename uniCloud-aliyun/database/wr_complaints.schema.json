@@ -9,6 +9,10 @@
     "category": { "bsonType": "string", "maxLength": 20 },
     "detail": { "bsonType": "string", "minLength": 5, "maxLength": 500 },
     "contact": { "bsonType": "string", "maxLength": 80 },
+    "target_type": { "bsonType": "string", "maxLength": 30 },
+    "target_id": { "bsonType": "string" },
+    "reason": { "bsonType": "string", "maxLength": 100 },
+    "resolution": { "bsonType": "string", "maxLength": 100 },
     "status": { "bsonType": "string" },
     "created_at": { "bsonType": "string" },
     "updated_at": { "bsonType": "string" }

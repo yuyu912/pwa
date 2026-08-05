@@ -62,6 +62,7 @@ Page({
   // 新衣分析先复用已验证的图片识别页，确认候选标签后再进入决策报告。
   toCandidate() { wx.navigateTo({ url: "/pages/add-item/index?mode=candidate" }); },
   toCandidateWaitlist() { wx.navigateTo({ url: "/pages/candidate-waitlist/index" }); },
+  toCommunity() { wx.navigateTo({ url: "/pages/community/index" }); },
   toWeather() { wx.navigateTo({ url: "/pages/weather/index" }); },
   toTodayOutfit() { wx.navigateTo({ url: "/pages/today-outfit/index" }); },
   toAdd() { wx.navigateTo({ url: "/pages/add-item/index" }); },

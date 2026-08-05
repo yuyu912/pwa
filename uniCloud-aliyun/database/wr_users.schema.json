@@ -16,6 +16,7 @@
     "recovery_hash": { "bsonType": "string" },
     "created_at": { "bsonType": "string" },
     "status": { "bsonType": "string" },
+    "role": { "bsonType": "string", "enum": ["user", "admin"], "description": "可选账号角色，缺省按普通用户处理" },
     "deletion_requested_at": { "bsonType": "string" },
     "entitlement_initialized_at": { "bsonType": "string", "description": "首次登录权益框架版本的服务端时间" },
     "trial_started_at": { "bsonType": "string", "description": "七天试用开始时间" },

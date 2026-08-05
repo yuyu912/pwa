@@ -124,6 +124,15 @@ module.exports = {
   getWeather: (adcode) => config.USE_MOCK
     ? Promise.reject(new Error("模拟模式不提供实时天气。"))
     : request(`/api/weather?adcode=${encodeURIComponent(adcode)}`),
+  listCommunityPosts: (scope = "feed") => request(`/api/community/posts?scope=${encodeURIComponent(scope)}`),
+  getCommunityRanking: () => request("/api/community/ranking"),
+  createCommunityPost: (data) => request("/api/community/posts", "POST", data),
+  removeCommunityPost: (id) => request(`/api/community/posts/${encodeURIComponent(id)}`, "DELETE"),
+  setCommunityLike: (id, action) => request(`/api/community/posts/${encodeURIComponent(id)}/like`, "PUT", { action }),
+  reportCommunityPost: (id, reason) => request(`/api/community/posts/${encodeURIComponent(id)}/report`, "POST", { reason }),
+  getCommunityReview: () => request("/api/community/admin/review"),
+  reviewCommunityPost: (id, status, note = "") => request(`/api/community/admin/posts/${encodeURIComponent(id)}`, "PATCH", { status, note }),
+  resolveCommunityReport: (id, action) => request(`/api/community/admin/reports/${encodeURIComponent(id)}`, "PATCH", { action }),
   addWearLog: (id, data) => config.USE_MOCK ? Promise.resolve(mock.addWearLog(id, data)) : request(`/api/items/${id}/wear-logs`, "POST", data),
   createCandidate: (data) => config.USE_MOCK ? Promise.resolve(mock.createCandidate(data)) : request("/api/candidates", "POST", data),
   listWaitingCandidates: () => config.USE_MOCK ? Promise.resolve(mock.listWaitingCandidates()) : request("/api/candidates?decision=wait"),
