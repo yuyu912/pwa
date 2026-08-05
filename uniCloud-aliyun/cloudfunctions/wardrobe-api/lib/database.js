@@ -6,6 +6,7 @@ const COLLECTIONS = Object.freeze({
   clothing: "wr_clothing_items",
   wearLogs: "wr_wear_logs",
   candidates: "wr_candidates",
+  imageEmbeddings: "wr_image_embeddings",
   drafts: "wr_image_drafts",
   aiUsage: "wr_ai_usage_events",
   aiBudget: "wr_ai_budget",

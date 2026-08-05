@@ -1,0 +1,26 @@
+{
+  "bsonType": "object",
+  "description": "用户私有衣物图片向量，仅允许云函数访问",
+  "required": ["user_id", "entity_type", "entity_id", "image_key", "model", "dimension", "vector", "created_at"],
+  "permission": {
+    "read": false,
+    "create": false,
+    "update": false,
+    "delete": false,
+    "count": false
+  },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "entity_type": { "bsonType": "string", "description": "candidate 或 clothing" },
+    "entity_id": { "bsonType": "string" },
+    "image_key": { "bsonType": "string" },
+    "model": { "bsonType": "string" },
+    "dimension": { "bsonType": "int" },
+    "vector": { "bsonType": "array", "arrayType": "double" },
+    "input_tokens": { "bsonType": "int", "minimum": 0 },
+    "estimated_cost_micros": { "bsonType": "int", "minimum": 0, "description": "按配置单价估算的人民币微元，最终以供应商账单为准" },
+    "request_id": { "bsonType": "string" },
+    "created_at": { "bsonType": "string" }
+  }
+}

@@ -10,7 +10,7 @@ const weatherService = require("./lib/amap-weather");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-04-community-admin-v1";
+const BUILD_ID = "2026-08-05-visual-search-v1";
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });
@@ -48,6 +48,82 @@ const STAR_REWARD_CATALOG = Object.freeze([
   { id: "hanger_removal", name: "AI 移除衣架 1 次", stars: 35, kind: "ai", exchangeEnabled: false }
 ]);
 const budgetId = "global-ai-budget";
+const VISION_EMBEDDING_MODEL = process.env.VISION_EMBEDDING_MODEL || "tongyi-embedding-vision-flash-2026-03-06";
+const VISION_EMBEDDING_DIMENSION = Number(process.env.VISION_EMBEDDING_DIMENSION || 512);
+
+const cosineSimilarity = (left, right) => {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length || !left.length) return null;
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = Number(left[index]);
+    const b = Number(right[index]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    dot += a * b;
+    leftNorm += a * a;
+    rightNorm += b * b;
+  }
+  if (!leftNorm || !rightNorm) return null;
+  return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
+};
+
+const tagSimilarity = (candidate, item) => {
+  const candidateScenes = sanitizeTags(candidate.scenes, allowedScenes);
+  const matchedScenes = sanitizeTags(item.scenes, allowedScenes).filter((scene) => candidateScenes.includes(scene));
+  const categoryScore = item.category === candidate.category ? 55 : 0;
+  const colorScore = item.color && candidate.color && item.color === candidate.color ? 25 : 0;
+  const sceneScore = matchedScenes.length * 10;
+  const matchReasons = [];
+  if (categoryScore) matchReasons.push(`同品类 +${categoryScore}`);
+  if (colorScore) matchReasons.push(`同颜色 +${colorScore}`);
+  if (sceneScore) matchReasons.push(`共同场景（${matchedScenes.join("、")}）+${sceneScore}`);
+  return { score: Math.min(100, categoryScore + colorScore + sceneScore), matchReasons };
+};
+
+const embeddingRecordId = (userId, entityType, entityId, model) => crypto.createHash("sha256")
+  .update(`${userId}:${entityType}:${entityId}:${model}`)
+  .digest("hex");
+
+const ensureImageEmbeddings = async (userId, targets) => {
+  const stored = await repository.findMany("imageEmbeddings", { user_id: userId, model: VISION_EMBEDDING_MODEL });
+  const byEntity = new Map(stored.map((row) => [`${row.entity_type}:${row.entity_id}`, row]));
+  const missing = targets.filter((target) => {
+    const row = byEntity.get(`${target.entityType}:${target.entityId}`);
+    return !row || row.image_key !== target.imageKey || Number(row.dimension) !== VISION_EMBEDDING_DIMENSION;
+  });
+  for (let offset = 0; offset < missing.length; offset += 64) {
+    const batch = missing.slice(offset, offset + 64);
+    const generated = await cloud.generateImageEmbeddings(batch.map((target) => target.imageKey));
+    if (generated.model !== VISION_EMBEDDING_MODEL || generated.dimension !== VISION_EMBEDDING_DIMENSION) {
+      throw Object.assign(new Error("视觉向量模型配置与返回结果不一致。"), { status: 502, code: "EMBEDDING_MODEL_MISMATCH" });
+    }
+    const inputTokens = Number(generated.usage?.input_tokens || generated.usage?.total_tokens || 0);
+    const estimatedCostMicros = Number(generated.estimatedCostMicros || 0);
+    for (let index = 0; index < batch.length; index += 1) {
+      const target = batch[index];
+      const record = {
+        user_id: userId,
+        entity_type: target.entityType,
+        entity_id: target.entityId,
+        image_key: target.imageKey,
+        model: generated.model,
+        dimension: generated.dimension,
+        vector: generated.vectors[index],
+        input_tokens: batch.length ? Math.ceil(inputTokens / batch.length) : 0,
+        estimated_cost_micros: batch.length ? Math.ceil(estimatedCostMicros / batch.length) : 0,
+        request_id: generated.requestId || "",
+        created_at: now()
+      };
+      const key = `${target.entityType}:${target.entityId}`;
+      const previous = byEntity.get(key);
+      if (previous) await repository.update("imageEmbeddings", previous.id, record);
+      else await repository.add("imageEmbeddings", record, embeddingRecordId(userId, target.entityType, target.entityId, generated.model));
+      byEntity.set(key, { ...record, id: previous?.id || embeddingRecordId(userId, target.entityType, target.entityId, generated.model) });
+    }
+  }
+  return byEntity;
+};
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -1984,35 +2060,56 @@ const route = async (event) => {
     const candidate = await repository.getById("candidates", decodeURIComponent(analyzeMatch[1]));
     if (!candidate || candidate.user_id !== userId) throw Object.assign(new Error("未找到候选新衣。"), { status: 404 });
     const existing = await repository.findMany("clothing", { user_id: userId, status: "active" });
-    const candidateScenes = sanitizeTags(candidate.scenes, allowedScenes);
+    let analysisMode = "visual_hybrid";
+    let fallbackReason = "";
+    let embeddings = null;
+    try {
+      embeddings = await ensureImageEmbeddings(userId, [
+        { entityType: "candidate", entityId: candidate.id, imageKey: candidate.image_key },
+        ...existing.map((item) => ({ entityType: "clothing", entityId: item.id, imageKey: item.image_key }))
+      ]);
+    } catch (error) {
+      analysisMode = "tag_fallback";
+      fallbackReason = "视觉服务暂不可用，本次已自动改用用户确认标签。";
+    }
+    const candidateVector = embeddings?.get(`candidate:${candidate.id}`)?.vector;
     const similar = existing.map((item) => {
-      // 相似度只使用用户确认过的标签：同品类 55 分、同颜色 25 分、每个共同场景 10 分。
-      // 这不是图片向量同款识别；把每个加分项返回给页面，用户可以逐件核对结论。
-      const matchedScenes = sanitizeTags(item.scenes, allowedScenes).filter((scene) => candidateScenes.includes(scene));
-      const categoryScore = item.category === candidate.category ? 55 : 0;
-      const colorScore = item.color && candidate.color && item.color === candidate.color ? 25 : 0;
-      const sceneScore = matchedScenes.length * 10;
-      const score = categoryScore + colorScore + sceneScore;
-      const matchReasons = [];
-      if (categoryScore) matchReasons.push(`同品类 +${categoryScore}`);
-      if (colorScore) matchReasons.push(`同颜色 +${colorScore}`);
-      if (sceneScore) matchReasons.push(`共同场景（${matchedScenes.join("、")}）+${sceneScore}`);
-      return { ...mapItem(item), score, matchReasons, matchSummary: matchReasons.join("；") || "未达到标签匹配阈值" };
-    }).filter((item) => item.score >= 55).sort((a, b) => b.score - a.score).slice(0, 3);
+      const tags = tagSimilarity(candidate, item);
+      const cosine = cosineSimilarity(candidateVector, embeddings?.get(`clothing:${item.id}`)?.vector);
+      const visualScore = cosine == null ? null : Math.round(Math.max(0, Math.min(1, cosine)) * 100);
+      const score = visualScore == null ? tags.score : Math.round(visualScore * 0.7 + tags.score * 0.3);
+      const matchReasons = visualScore == null ? tags.matchReasons : [`视觉相似 ${visualScore} 分`, ...tags.matchReasons];
+      return {
+        ...mapItem(item),
+        score,
+        visualScore,
+        tagScore: tags.score,
+        matchReasons,
+        matchSummary: matchReasons.join("；") || "未达到相似阈值"
+      };
+    }).filter((item) => item.score >= 55).sort((a, b) => b.score - a.score).slice(0, 5);
+    const candidateScenes = sanitizeTags(candidate.scenes, allowedScenes);
     const compatible = existing.filter((item) => item.category !== candidate.category && sanitizeTags(item.scenes, allowedScenes).some((scene) => candidateScenes.includes(scene))).slice(0, 6).map(mapItem);
     const lowFrequencySimilar = similar.filter((item) => Number(item.wear_count || 0) < 3).length;
     const highestSimilarity = similar[0]?.score || 0;
-    // 一件衣物已经达到 85 分即为高标签重复，不能因为只有一件而被误判成“补缺型”。
+    // 一件衣物达到 85 分即视为高度重复，不能因为只有一件而被误判成“补缺型”。
     const conclusion = highestSimilarity >= 85 ? "高度重复，不建议购买" : lowFrequencySimilar >= 2 ? "重复风险较高，建议谨慎" : compatible.length >= 5 ? "值得考虑" : compatible.length >= 2 ? "建议谨慎" : "补缺型";
     const analysis = {
       conclusion,
       similar,
       compatible,
-      reasons: [`最高标签相似度 ${highestSimilarity} 分（85 分及以上视为高度重复）`, `可与 ${compatible.length} 件已有衣物形成候选搭配`, lowFrequencySimilar ? `发现 ${lowFrequencySimilar} 件低频相似旧衣` : "未发现低频相似旧衣", "结论仅依据用户确认的标签与真实穿着记录，不代表图片同款识别"],
+      analysisMode,
+      fallbackReason,
+      reasons: [
+        analysisMode === "visual_hybrid" ? `最高混合相似度 ${highestSimilarity} 分（视觉 70% + 标签 30%）` : `最高标签相似度 ${highestSimilarity} 分（85 分及以上视为高度重复）`,
+        `可与 ${compatible.length} 件已有衣物形成候选搭配`,
+        lowFrequencySimilar ? `发现 ${lowFrequencySimilar} 件低频相似旧衣` : "未发现低频相似旧衣",
+        analysisMode === "visual_hybrid" ? "视觉相似仅用于本人衣橱重复风险，不代表品牌、货号或电商同款鉴定" : fallbackReason
+      ],
       needsTryOn: ["版型是否舒适", "坐下和走动是否受限", "是否能搭配现有鞋子"]
     };
-    // 分析报告只由已确认标签和当前衣橱实时计算；不写回候选记录，避免把对象字段写入旧的 null analysis 时触发数据库字段创建错误。
-    // 下次打开报告会重新计算，因此衣橱新增、删除或补充穿着记录后结论也不会过期。
+    // 分析报告按当前衣橱实时计算；图片向量按图片与模型版本缓存，穿着记录变化不会重复调用模型。
+    // 报告不写回候选记录，避免旧的 null analysis 在数据库中触发对象字段创建问题。
     return response(event, 200, analysis);
   }
 
@@ -2097,4 +2194,4 @@ exports.main = async (event) => {
   }
 };
 
-exports._test = { candidateWaitSummary, cleanText, entitlementSummary, nextStarAccount, parseArray, parseBody, quotaSummary, sanitizeTags, shanghaiDayKey, shiftDayKey };
+exports._test = { candidateWaitSummary, cleanText, cosineSimilarity, entitlementSummary, nextStarAccount, parseArray, parseBody, quotaSummary, sanitizeTags, shanghaiDayKey, shiftDayKey, tagSimilarity };

@@ -114,6 +114,10 @@ ALLOWED_ORIGINS
 - `COS_REGION=ap-guangzhou`
 - `COS_CI_ENABLED=true`
 - `DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
+- `DASHSCOPE_EMBEDDING_URL=https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding`
+- `VISION_EMBEDDING_MODEL=tongyi-embedding-vision-flash-2026-03-06`
+- `VISION_EMBEDDING_DIMENSION=512`
+- `VISION_EMBEDDING_YUAN_PER_THOUSAND=0.00015`
 - `AMAP_WEATHER_KEY` 使用高德开放平台创建的“Web服务”Key，仅供云函数查询用户主动选择地区的实时天气。
 - `QWEN_VL_MODEL=qwen3-vl-plus`
 - 价格变量必须按百炼控制台当前模型价格填写；预算台账记录的是估算成本，最终账单以供应商为准。

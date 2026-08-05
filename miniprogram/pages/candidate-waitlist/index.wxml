@@ -1,6 +1,6 @@
 <view class="page wait-page">
   <text class="eyebrow">7-DAY COOLING-OFF</text><text class="page-title">新衣观望清单</text>
-  <text class="muted">这里不再调用 AI。打开候选新衣时，会按你当前的衣橱与穿着记录重新计算标签规则分析。</text>
+  <text class="muted">打开候选新衣时，会按当前衣橱与穿着记录重新计算；已生成的图片向量会复用，只有新图片或模型升级时才再次生成。</text>
   <view wx:if="{{loading}}" class="empty">正在读取观望清单…</view>
   <view wx:elif="{{error}}" class="empty"><text>{{error}}</text><button class="secondary retry" bindtap="loadItems">重新加载</button></view>
   <view wx:elif="{{items.length === 0}}" class="card empty-card"><text class="empty-title">还没有观望中的新衣</text><text class="muted">完成一次新衣分析后选择“先观望”，它就会出现在这里。</text><button class="secondary start-button" bindtap="startAnalysis">分析一件新衣</button></view>

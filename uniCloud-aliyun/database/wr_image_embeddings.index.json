@@ -1,0 +1,26 @@
+[
+  {
+    "IndexName": "user_entity_model_unique",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        { "Name": "user_id", "Direction": "1" },
+        { "Name": "entity_type", "Direction": "1" },
+        { "Name": "entity_id", "Direction": "1" },
+        { "Name": "model", "Direction": "1" }
+      ],
+      "MgoIsUnique": true,
+      "MgoIsSparse": false
+    }
+  },
+  {
+    "IndexName": "user_model",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        { "Name": "user_id", "Direction": "1" },
+        { "Name": "model", "Direction": "1" }
+      ],
+      "MgoIsUnique": false,
+      "MgoIsSparse": false
+    }
+  }
+]

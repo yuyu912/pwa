@@ -162,6 +162,22 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     model: "qwen3-vl-plus"
     });
   };
+  let embeddingShouldFail = false;
+  cloudServices.generateImageEmbeddings = async (keys) => {
+    if (embeddingShouldFail) throw Object.assign(new Error("test embedding unavailable"), { status: 502 });
+    return ({
+    model: "tongyi-embedding-vision-flash-2026-03-06",
+    dimension: 512,
+    vectors: keys.map((key) => {
+      const vector = Array(512).fill(0);
+      vector[key.includes("candidate") || key.includes("new-item") || key.includes("item-1") ? 0 : 1] = 1;
+      return vector;
+    }),
+    usage: { input_tokens: keys.length * 402 },
+    estimatedCostMicros: keys.length * 61,
+      requestId: "test-embedding-request"
+    });
+  };
   cloudServices.deleteObject = async () => {};
 
   const { main, _test } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
@@ -211,7 +227,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(freeQuota.hangerRemoval.limit, 1);
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-04-community-admin-v1");
+  assert.equal(health.body.buildId, "2026-08-05-visual-search-v1");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", role: "admin", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -537,7 +553,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-04-community-admin-v1");
+  assert.equal(failedRecognition.body.buildId, "2026-08-05-visual-search-v1");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
@@ -654,7 +670,10 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(candidateAnalysis.status, 200);
   assert.ok(Array.isArray(candidateAnalysis.body.similar));
   assert.ok(Array.isArray(candidateAnalysis.body.compatible));
-  assert.match(candidateAnalysis.body.reasons[3], /用户确认的标签/);
+  assert.equal(candidateAnalysis.body.analysisMode, "visual_hybrid");
+  assert.equal(candidateAnalysis.body.similar[0].visualScore, 100);
+  assert.match(candidateAnalysis.body.reasons[0], /视觉 70%/);
+  assert.match(candidateAnalysis.body.reasons[3], /不代表品牌、货号或电商同款鉴定/);
 
   // 单件达到高标签重复阈值时，必须明确不建议购买，不能因“只有一件”误判为补缺型。
   const duplicateUpload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
@@ -676,9 +695,12 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     scenes: ["休闲"]
   }, authorization)));
   assert.equal(duplicateCandidate.status, 201);
+  embeddingShouldFail = true;
   const duplicateAnalysis = readResponse(await main(makeEvent(`/api/candidates/${duplicateCandidate.body.id}/analyze`, "POST", {}, authorization)));
   assert.equal(duplicateAnalysis.status, 200);
   assert.equal(duplicateAnalysis.body.conclusion, "高度重复，不建议购买");
+  assert.equal(duplicateAnalysis.body.analysisMode, "tag_fallback");
+  assert.match(duplicateAnalysis.body.fallbackReason, /自动改用用户确认标签/);
   assert.equal(duplicateAnalysis.body.similar[0].score, 90);
   assert.match(duplicateAnalysis.body.similar[0].matchSummary, /同品类 \+55/);
   assert.match(duplicateAnalysis.body.similar[0].matchSummary, /同颜色 \+25/);

@@ -213,6 +213,74 @@ const qwenHttpRequest = (url, requestBody, apiKey) => new Promise((resolve, reje
   request.end(options.content);
 });
 
+const embeddingHttpRequest = (url, requestBody, apiKey) => new Promise((resolve, reject) => {
+  const content = JSON.stringify(requestBody);
+  const request = https.request(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(content)
+    },
+    timeout: 30000
+  }, (response) => {
+    const chunks = [];
+    response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    response.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; }
+      catch { data = { message: text.slice(0, 500) }; }
+      resolve({ statusCode: Number(response.statusCode || 0), data });
+    });
+  });
+  request.on("timeout", () => request.destroy(Object.assign(new Error("视觉相似分析响应超时。"), {
+    code: "EMBEDDING_TIMEOUT",
+    status: 504
+  })));
+  request.on("error", reject);
+  request.end(content);
+});
+
+// 每张私有衣物图生成独立向量；同一批最多 64 张，减少首次衣橱建索引的网络往返。
+const generateImageEmbeddings = async (keys) => {
+  required(["DASHSCOPE_API_KEY", "VISION_EMBEDDING_YUAN_PER_THOUSAND"]);
+  if (!Array.isArray(keys) || !keys.length || keys.length > 64) {
+    throw Object.assign(new Error("视觉向量批次必须包含 1–64 张图片。"), { status: 400, code: "EMBEDDING_BATCH_INVALID" });
+  }
+  const model = process.env.VISION_EMBEDDING_MODEL || "tongyi-embedding-vision-flash-2026-03-06";
+  const dimension = Number(process.env.VISION_EMBEDDING_DIMENSION || 512);
+  const endpoint = process.env.DASHSCOPE_EMBEDDING_URL
+    || "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding";
+  const response = await embeddingHttpRequest(endpoint, {
+    model,
+    input: { contents: keys.map((key) => ({ image: signedUrl(key, "GET", 600) })) },
+    parameters: { dimension, res_level: 1 }
+  }, process.env.DASHSCOPE_API_KEY);
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw Object.assign(new Error("视觉相似分析暂时不可用。"), {
+      status: 502,
+      code: cleanText(response.data?.code, 80) || "EMBEDDING_HTTP_ERROR",
+      providerStatusCode: response.statusCode
+    });
+  }
+  const rows = response.data?.output?.embeddings || [];
+  if (rows.length !== keys.length || rows.some((row) => !Array.isArray(row.embedding) || row.embedding.length !== dimension)) {
+    throw Object.assign(new Error("视觉向量返回数量或维度不正确。"), { status: 502, code: "EMBEDDING_OUTPUT_INVALID" });
+  }
+  const usage = response.data?.usage || {};
+  const inputTokens = Number(usage.input_tokens || usage.total_tokens || 0);
+  const yuanPerThousand = Number(process.env.VISION_EMBEDDING_YUAN_PER_THOUSAND);
+  return {
+    model,
+    dimension,
+    vectors: rows.sort((a, b) => a.index - b.index).map((row) => row.embedding.map(Number)),
+    usage,
+    estimatedCostMicros: Math.ceil(inputTokens * yuanPerThousand * 1000),
+    requestId: cleanText(response.data?.request_id, 100)
+  };
+};
+
 const imageEditHttpRequest = (url, requestBody, apiKey) => new Promise((resolve, reject) => {
   const content = JSON.stringify(requestBody);
   const request = https.request(url, {
@@ -391,6 +459,7 @@ module.exports = {
   createUpload,
   deleteObject,
   extractGarment,
+  generateImageEmbeddings,
   recognizeImage,
   removeHanger,
   signedUrl,

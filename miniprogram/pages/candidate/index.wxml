@@ -1,5 +1,5 @@
 <view class="page">
-  <view wx:if="{{loading}}" class="empty">正在使用已确认标签与衣橱记录进行规则比较…</view>
+  <view wx:if="{{loading}}" class="empty">正在比较候选图片、已确认标签与真实穿着记录…</view>
   <view wx:elif="{{error}}" class="empty"><text>{{error}}</text><button class="secondary retry" bindtap="load">重新尝试</button></view>
   <block wx:else>
     <view class="card candidate-card">
@@ -9,8 +9,8 @@
       <text class="muted">{{candidate.category}} · {{candidate.color}} · {{candidate.season || '季节未填写'}} · {{candidate.material || '材质未填写'}}</text>
       <text class="muted">{{candidate.price === null || candidate.price === undefined || candidate.price === '' ? '价格未填写' : '¥' + candidate.price}}</text>
     </view>
-    <view class="card conclusion"><text class="section-title">{{analysis.conclusion}}</text><text class="status pending">标签规则分析</text><text class="muted">结论依据用户确认的品类、颜色、场景和真实穿着次数，不代表图片同款识别或试穿结果。</text></view>
-    <view class="card section"><text class="section-title">重复风险</text><view wx:for="{{analysis.similar}}" wx:key="id" class="outfit-item"><text>{{item.name}} · {{item.color}}</text><text class="muted">标签相似度 {{item.score}} 分 · 已穿 {{item.wear_count || 0}} 次</text><text class="muted">{{item.matchSummary}}</text></view><text wx:if="{{analysis.similar.length === 0}}" class="muted">未发现达到规则阈值的相似旧衣。</text></view>
+    <view class="card conclusion"><text class="section-title">{{analysis.conclusion}}</text><text class="status pending">{{analysis.analysisMode === 'visual_hybrid' ? '视觉混合分析' : '标签规则降级'}}</text><text class="muted">{{analysis.analysisMode === 'visual_hybrid' ? '结合图片视觉、用户确认标签和真实穿着次数，不代表品牌、货号或电商同款鉴定。' : analysis.fallbackReason}}</text></view>
+    <view class="card section"><text class="section-title">重复风险</text><view wx:for="{{analysis.similar}}" wx:key="id" class="outfit-item"><image wx:if="{{item.imageUrl}}" class="similar-image" src="{{item.imageUrl}}" mode="aspectFit"></image><text>{{item.name}} · {{item.color}}</text><text class="muted">{{analysis.analysisMode === 'visual_hybrid' ? '混合相似度' : '标签相似度'}} {{item.score}} 分 · 已穿 {{item.wear_count || 0}} 次</text><text class="muted">{{item.matchSummary}}</text></view><text wx:if="{{analysis.similar.length === 0}}" class="muted">未发现达到当前阈值的相似旧衣。</text></view>
     <view class="card section"><text class="section-title">分析依据</text><text wx:for="{{analysis.reasons}}" wx:key="*this" class="reason">· {{item}}</text></view>
     <view class="card section"><text class="section-title">可尝试搭配的已有衣物</text><text wx:for="{{analysis.compatible}}" wx:key="id" class="outfit-item">{{item.name}} · {{item.color}}</text><text wx:if="{{analysis.compatible.length === 0}}" class="muted">当前没有足够的确认衣物可供推荐。</text></view>
     <view class="card section"><text class="section-title">试穿前确认</text><text wx:for="{{analysis.needsTryOn}}" wx:key="*this" class="reason">· {{item}}</text></view>
