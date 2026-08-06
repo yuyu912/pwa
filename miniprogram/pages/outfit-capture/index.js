@@ -1,6 +1,7 @@
 const api = require("../../services/api");
 const weatherService = require("../../services/weather");
 const SCENES = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(1000, Number(milliseconds) || 1000)));
 
 Page({
   data: { photo: "", captureId: "", detections: [], selected: {}, selectedRecent: {}, skipDetectionIndexes: [], recentItems: [], scenes: SCENES, sceneIndex: 0, busy: false, error: "", originalDeleted: false },
@@ -33,21 +34,42 @@ Page({
     finally { this.setData({ busy: false }); }
   },
   async prepareDetections(captureId, detections) {
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < detections.length) {
-        const index = cursor;
-        cursor += 1;
-        this.setData({ [`detections[${index}].processingStatus`]: "processing", [`detections[${index}].processingError`]: "" });
-        try {
-          const prepared = await api.prepareOutfitDetection(captureId, detections[index].detectionId);
-          this.setData({ [`detections[${index}]`]: prepared });
-        } catch (error) {
-          this.setData({ [`detections[${index}].processingStatus`]: "failed", [`detections[${index}].processingError`]: error.message || "本件未能可靠拆解" });
-        }
+    for (let index = 0; index < detections.length; index += 1) {
+      this.setData({
+        [`detections[${index}].processingStatus`]: "processing",
+        [`detections[${index}].processingStage`]: detections[index].segmentationStatus === "repair_pending"
+          ? "occlusion_repair"
+          : detections[index].segmentationStatus === "ready" ? "source_mask_verification" : "segmentation_failed",
+        [`detections[${index}].processingError`]: ""
+      });
+      try {
+        let prepared;
+        let queueCount = 0;
+        do {
+          prepared = await api.prepareOutfitDetection(captureId, detections[index].detectionId);
+          if (prepared.processingStatus === "queued") {
+            queueCount += 1;
+            if (queueCount > 20) throw new Error("图片生成排队时间过长，请稍后重新尝试。");
+            this.setData({ [`detections[${index}]`]: prepared });
+            await wait(Math.min(90000, prepared.retryAfterMs || 31000));
+            continue;
+          }
+          if (prepared.retryable) {
+            this.setData({ [`detections[${index}]`]: prepared });
+            await wait(Math.min(90000, prepared.retryAfterMs || 65000));
+            continue;
+          }
+          if (prepared.correctionAvailable) {
+            this.setData({ [`detections[${index}].processingStatus`]: "processing", [`detections[${index}].processingStage`]: "correction" });
+            continue;
+          }
+          break;
+        } while (true);
+        this.setData({ [`detections[${index}]`]: prepared });
+      } catch (error) {
+        this.setData({ [`detections[${index}].processingStatus`]: "failed", [`detections[${index}].processingError`]: error.message || "本件未能可靠拆解" });
       }
-    };
-    await Promise.all(Array.from({ length: Math.min(2, detections.length) }, () => worker()));
+    }
   },
   selectMatch(event) {
     const slot = event.currentTarget.dataset.slot;
@@ -69,10 +91,11 @@ Page({
       const location = weatherService.loadLocation();
       const detectionSelections = Object.entries(this.data.selected).map(([detectionIndex, itemId]) => ({ detectionIndex: Number(detectionIndex), itemId }));
       const result = await api.confirmOutfitCapture(this.data.captureId, { itemIds, detectionSelections, skipDetectionIndexes: this.data.skipDetectionIndexes, scene: SCENES[this.data.sceneIndex], weather: { city: location?.cityName || "" } });
+      this.setData({ captureId: "" });
       wx.showModal({ title: "今日穿搭已记录", content: `新增 ${result.createdCount} 件，复用已有 ${result.reusedCount} 件${result.pendingCount ? `，${result.pendingCount} 件待完善` : ""}`, showCancel: false, success: () => wx.navigateBack() });
     } catch (error) { wx.showToast({ title: error.message || "保存失败", icon: "none" }); }
     finally { this.setData({ busy: false }); }
   },
   manualOnly() { this.setData({ skipDetectionIndexes: this.data.detections.map((_, index) => index), detections: [], error: "已切换为最近衣物快速勾选。" }); },
-  async onUnload() { if (this.data.captureId && !this.data.originalDeleted) await api.cancelOutfitCapture(this.data.captureId).catch(() => {}); }
+  async onUnload() { if (this.data.captureId) await api.cancelOutfitCapture(this.data.captureId).catch(() => {}); }
 });

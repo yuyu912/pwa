@@ -5,8 +5,582 @@ import bcrypt from "bcryptjs";
 
 const require = createRequire(import.meta.url);
 const cloudTest = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js")._test;
+const garmentMask = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/garment-mask.js");
+const garmentMaskTest = garmentMask._test;
 
-test("复杂浅色上装使用保真候选、宽画布和高对比留白背景", () => {
+test("衣橱展示画布保持原像素并将衣物居中放入正方形透明画布", () => {
+  const width = 8;
+  const height = 4;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let y = 1; y <= 2; y += 1) for (let x = 2; x <= 5; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset] = 80 + x;
+    rgba[offset + 1] = 120 + y;
+    rgba[offset + 2] = 160;
+    rgba[offset + 3] = 255;
+  }
+  const result = garmentMask.buildWardrobeDisplayCanvas(garmentMaskTest.encodePng(width, height, rgba));
+  assert.equal(result.width, result.height);
+  assert.equal(result.displayMode, "square_centered_source_pixels");
+  assert.equal(result.visiblePixelPreservationScore, 100);
+  const output = garmentMaskTest.decodePng(result.buffer);
+  const visible = [];
+  for (let index = 0; index < output.width * output.height; index += 1) {
+    if (output.data[index * 4 + 3] >= 16) visible.push([output.data[index * 4], output.data[index * 4 + 1], output.data[index * 4 + 2], output.data[index * 4 + 3]]);
+  }
+  assert.equal(visible.length, 8);
+  assert.deepEqual(visible[0], [82, 121, 160, 255]);
+  assert.deepEqual(visible.at(-1), [85, 122, 160, 255]);
+});
+
+test("矩形人物裁剪不得伪装成清晰衣物轮廓", () => {
+  const rectangular = Buffer.alloc(20 * 20 * 4, 170);
+  for (let index = 3; index < rectangular.length; index += 4) rectangular[index] = 255;
+  const rejected = garmentMask.assessGarmentContourQuality(garmentMaskTest.encodePng(20, 20, rectangular));
+  assert.equal(rejected.accepted, false);
+  assert.match(rejected.failureReason, /矩形人物裁剪/);
+
+  const garment = Buffer.alloc(20 * 20 * 4);
+  for (let y = 4; y <= 16; y += 1) for (let x = 6; x <= 13; x += 1) garment[(y * 20 + x) * 4 + 3] = 255;
+  for (let y = 6; y <= 10; y += 1) for (let x = 3; x <= 16; x += 1) garment[(y * 20 + x) * 4 + 3] = 255;
+  const accepted = garmentMask.assessGarmentContourQuality(garmentMaskTest.encodePng(20, 20, garment));
+  assert.equal(accepted.accepted, true);
+});
+
+test("人物服饰类别按单层、组合上装和裤装映射", () => {
+  assert.deepEqual(cloudTest.clothingClassesForDetection({ category: "上衣", isComposite: false }), ["tops"]);
+  assert.deepEqual(cloudTest.clothingClassesForDetection({ category: "上衣", isComposite: true }), ["tops", "coat"]);
+  assert.deepEqual(cloudTest.clothingClassesForDetection({ category: "裤子" }), ["pants"]);
+  assert.deepEqual(cloudTest.clothingClassesForDetection({ category: "连衣裙" }), ["tops", "skirt"]);
+});
+
+test("SegmentCloth 类别地址兼容直接 Map 和 SDK key 包装格式", () => {
+  const topsUrl = "https://example.com/tops.png?token=a";
+  const pantsUrl = "https://example.com/pants.png?token=b";
+  assert.deepEqual(cloudTest.normalizeSegmentClothClassUrls({ tops: topsUrl, pants: pantsUrl }), { tops: topsUrl, pants: pantsUrl });
+  assert.deepEqual(
+    cloudTest.normalizeSegmentClothClassUrls({ key: `{'tops':${topsUrl},'pants':${pantsUrl}}` }),
+    { tops: topsUrl, pants: pantsUrl }
+  );
+});
+
+test("原像素蒙版裁剪保留全部可见像素并只修补低纹理小孔洞", () => {
+  const width = 20;
+  const height = 20;
+  const rgba = Buffer.alloc(width * height * 4);
+  const mask = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      rgba[offset] = 210; rgba[offset + 1] = 205; rgba[offset + 2] = 195; rgba[offset + 3] = 255;
+      const foreground = x >= 4 && x <= 15 && y >= 4 && y <= 15 && !(x === 9 && y === 9);
+      const value = foreground ? 255 : 0;
+      mask[offset] = value; mask[offset + 1] = value; mask[offset + 2] = value; mask[offset + 3] = 255;
+    }
+  }
+  const result = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, mask)],
+    [0, 0, width, height],
+    { category: "上衣", structure: "纯色圆领上衣", structureFacts: {} }
+  );
+  assert.equal(result.visiblePixelPreservationScore, 100);
+  assert.equal(result.repairedPixelCount, 1);
+  assert.equal(result.unsafeReason, "");
+  const output = garmentMaskTest.decodePng(result.buffer);
+  assert.ok(output.data.some((value, index) => index % 4 === 3 && value === 255));
+});
+
+test("中等纹理小孔洞只生成修补蒙版，候选覆盖后原始可见像素仍为100%", () => {
+  const width = 32;
+  const height = 32;
+  const rgba = Buffer.alloc(width * height * 4);
+  const mask = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const stripe = x % 2 === 0 ? 70 : 170;
+      rgba[offset] = stripe; rgba[offset + 1] = 110; rgba[offset + 2] = 145; rgba[offset + 3] = 255;
+      const foreground = x >= 5 && x <= 26 && y >= 5 && y <= 26 && !(x === 15 && y === 16);
+      const value = foreground ? 255 : 0;
+      mask[offset] = value; mask[offset + 1] = value; mask[offset + 2] = value; mask[offset + 3] = 255;
+    }
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, mask)],
+    [0, 0, width, height],
+    { category: "上衣", structure: "条纹长袖上衣", structureFacts: { sleeveLength: "wrist_long" } }
+  );
+  assert.equal(cutout.repairMode, "image_edit_small_internal_hole");
+  assert.ok(cutout.repairMaskBuffer);
+  assert.equal(cutout.visiblePixelPreservationScore, 100);
+
+  const candidate = garmentMaskTest.decodePng(cutout.buffer);
+  for (let index = 0; index < candidate.width * candidate.height; index += 1) {
+    const offset = index * 4;
+    candidate.data[offset] = 240;
+    candidate.data[offset + 1] = 30;
+    candidate.data[offset + 2] = 30;
+    candidate.data[offset + 3] = 255;
+  }
+  const repaired = garmentMask.applyRepairCandidate(
+    cutout.buffer,
+    garmentMaskTest.encodePng(candidate.width, candidate.height, candidate.data),
+    cutout.repairMaskBuffer
+  );
+  assert.equal(repaired.visiblePixelPreservationScore, 100);
+  assert.ok(repaired.repairedPixelCount > 0);
+});
+
+test("明确字幕遮挡可修补裤腿但不得填充两腿之间的自然空隙", () => {
+  const width = 40;
+  const height = 40;
+  const rgba = Buffer.alloc(width * height * 4);
+  const mask = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      rgba[offset] = 25; rgba[offset + 1] = 25; rgba[offset + 2] = 28; rgba[offset + 3] = 255;
+      const onLeg = (x >= 8 && x <= 17) || (x >= 22 && x <= 31);
+      const subtitleGap = y === 20;
+      const value = onLeg && y >= 5 && y <= 34 && !subtitleGap ? 255 : 0;
+      mask[offset] = value; mask[offset + 1] = value; mask[offset + 2] = value; mask[offset + 3] = 255;
+    }
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, mask)],
+    [0, 0, width, height],
+    { category: "裤子", structure: "纯色直筒裤", structureFacts: {}, occlusions: [{ type: "字幕", bbox: [0, 475, 999, 550] }] }
+  );
+  assert.equal(cutout.unsafeReason, "");
+  assert.ok(cutout.repairedPixelCount > 0 || cutout.generatedPixelCount > 0);
+  const output = garmentMaskTest.decodePng(cutout.buffer);
+  const centerColumn = Math.floor(output.width / 2);
+  const centerPixels = [];
+  for (let y = 0; y < output.height; y += 1) centerPixels.push(output.data[(y * output.width + centerColumn) * 4 + 3]);
+  assert.ok(centerPixels.some((alpha) => alpha === 0));
+});
+
+test("裤脚像素偶然闭合时仍不得把纵向裤腿间隙当作内部破洞", () => {
+  const width = 50;
+  const height = 60;
+  const rgba = Buffer.alloc(width * height * 4, 80);
+  const mask = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset + 3] = 255;
+    const insidePants = x >= 10 && x <= 39 && y >= 5 && y <= 54;
+    const legGap = x >= 23 && x <= 26 && y >= 18 && y <= 49;
+    const value = insidePants && !legGap ? 255 : 0;
+    mask[offset] = value; mask[offset + 1] = value; mask[offset + 2] = value; mask[offset + 3] = 255;
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, mask)],
+    [0, 0, width, height],
+    { category: "裤子", structure: "阔腿长裤", structureFacts: { legShape: "阔腿" }, occlusions: [] }
+  );
+  assert.equal(cutout.unsafeReason, "");
+  assert.equal(cutout.generatedPixelCount, 0);
+  assert.equal(cutout.repairedPixelCount, 0);
+});
+
+test("没有明确遮挡框时外部连通缺口不得交给AI猜测", () => {
+  const width = 30;
+  const height = 30;
+  const rgba = Buffer.alloc(width * height * 4, 160);
+  const mask = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset + 3] = 255;
+    const visible = x >= 5 && x <= 24 && y >= 5 && y <= 24 && !(x >= 13 && x <= 16 && y <= 15);
+    const value = visible ? 255 : 0;
+    mask[offset] = value; mask[offset + 1] = value; mask[offset + 2] = value; mask[offset + 3] = 255;
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, mask)],
+    [0, 0, width, height],
+    { category: "上衣", structure: "纯色上衣", structureFacts: {}, occlusions: [] }
+  );
+  assert.equal(cutout.generatedPixelCount, 0);
+  assert.equal(cutout.repairedPixelCount, 0);
+});
+
+test("皮肤遮挡蒙版先移除手部像素再生成局部修补区", () => {
+  const width = 40;
+  const height = 40;
+  const rgba = Buffer.alloc(width * height * 4);
+  const garment = Buffer.alloc(width * height * 4);
+  const skin = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    const hand = x >= 17 && x <= 22 && y >= 18 && y <= 21;
+    rgba[offset] = hand ? 220 : 70; rgba[offset + 1] = hand ? 160 : 105; rgba[offset + 2] = hand ? 130 : 145; rgba[offset + 3] = 255;
+    const clothingValue = x >= 7 && x <= 32 && y >= 5 && y <= 34 ? 255 : 0;
+    garment[offset] = clothingValue; garment[offset + 1] = clothingValue; garment[offset + 2] = clothingValue; garment[offset + 3] = 255;
+    const skinValue = hand ? 255 : 0;
+    skin[offset] = skinValue; skin[offset + 1] = skinValue; skin[offset + 2] = skinValue; skin[offset + 3] = 255;
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, garment)],
+    [0, 0, width, height],
+    { category: "裤子", structure: "浅蓝长裤", structureFacts: {}, occlusions: [{ type: "手", bbox: [400, 400, 600, 600] }] },
+    [garmentMaskTest.encodePng(width, height, skin)]
+  );
+  assert.equal(cutout.repairMode, "image_edit_small_internal_hole");
+  assert.ok(cutout.generatedPixelCount > 0);
+  const output = garmentMaskTest.decodePng(cutout.buffer);
+  let visibleSkinPixels = 0;
+  for (let offset = 0; offset < output.data.length; offset += 4) {
+    if (output.data[offset] === 220 && output.data[offset + 1] === 160 && output.data[offset + 3] >= 16) visibleSkinPixels += 1;
+  }
+  assert.equal(visibleSkinPixels, 0);
+});
+
+test("明确手部遮住裤腰外轮廓时只修补皮肤蒙版覆盖的小区域", () => {
+  const width = 50;
+  const height = 50;
+  const rgba = Buffer.alloc(width * height * 4);
+  const garment = Buffer.alloc(width * height * 4);
+  const skin = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    const hand = x >= 21 && x <= 28 && y >= 8 && y <= 13;
+    rgba[offset] = hand ? 220 : 75; rgba[offset + 1] = hand ? 160 : 115; rgba[offset + 2] = hand ? 130 : 155; rgba[offset + 3] = 255;
+    const pants = x >= 10 && x <= 39 && y >= 10 && y <= 43 && !hand;
+    const pantsValue = pants ? 255 : 0;
+    garment[offset] = pantsValue; garment[offset + 1] = pantsValue; garment[offset + 2] = pantsValue; garment[offset + 3] = 255;
+    const skinValue = hand ? 255 : 0;
+    skin[offset] = skinValue; skin[offset + 1] = skinValue; skin[offset + 2] = skinValue; skin[offset + 3] = 255;
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, garment)],
+    [0, 0, width, height],
+    { category: "裤子", structure: "高腰长裤", structureFacts: { riseAndWaistband: "高腰" }, occlusions: [{ type: "手", bbox: [380, 120, 620, 320] }] },
+    [garmentMaskTest.encodePng(width, height, skin)]
+  );
+  assert.equal(cutout.repairMode, "image_edit_small_internal_hole");
+  assert.ok(cutout.generatedPixelCount > 0);
+  assert.equal(cutout.visiblePixelPreservationScore, 100);
+});
+
+test("两块已明确遮挡可在单块不超过10.5%时合计修补至18%", () => {
+  const width = 60;
+  const height = 60;
+  const rgba = Buffer.alloc(width * height * 4, 90);
+  const garment = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset + 3] = 255;
+    const firstOcclusion = y >= 20 && y <= 23;
+    const secondOcclusion = y >= 36 && y <= 39;
+    const pants = x >= 10 && x <= 49 && y >= 5 && y <= 54 && !firstOcclusion && !secondOcclusion;
+    const pantsValue = pants ? 255 : 0;
+    garment[offset] = pantsValue; garment[offset + 1] = pantsValue; garment[offset + 2] = pantsValue; garment[offset + 3] = 255;
+  }
+  const occlusions = [{ type: "字幕", bbox: [167, 333, 816, 383] }, { type: "文字", bbox: [167, 600, 816, 650] }];
+  const source = garmentMaskTest.encodePng(width, height, rgba);
+  const cutout = garmentMask.buildGarmentCutout(
+    source,
+    [garmentMaskTest.encodePng(width, height, garment)],
+    [0, 0, width, height],
+    { category: "裤子", structure: "高腰长裤", structureFacts: { riseAndWaistband: "高腰" }, occlusions },
+    [garmentMask.buildOcclusionBoxMask(width, height, occlusions, /字幕|文字/)]
+  );
+  assert.equal(cutout.repairMode, "image_edit_small_internal_hole", cutout.unsafeReason);
+  assert.ok(cutout.occlusionRatio > 0.12 && cutout.occlusionRatio <= 0.18);
+  assert.equal(cutout.visiblePixelPreservationScore, 100);
+});
+
+test("单个精确人体遮挡的多块缺口可在单块不超过10.5%时合计修补至15%", () => {
+  const width = 60;
+  const height = 60;
+  const rgba = Buffer.alloc(width * height * 4, 100);
+  const garment = Buffer.alloc(width * height * 4);
+  const hair = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset + 3] = 255;
+    const firstStrand = x >= 15 && x <= 34 && y >= 18 && y <= 24;
+    const secondStrand = x >= 25 && x <= 44 && y >= 34 && y <= 40;
+    const occluded = firstStrand || secondStrand;
+    const clothing = x >= 10 && x <= 49 && y >= 5 && y <= 54 && !occluded;
+    const clothingValue = clothing ? 255 : 0;
+    garment[offset] = clothingValue; garment[offset + 1] = clothingValue; garment[offset + 2] = clothingValue; garment[offset + 3] = 255;
+    const hairValue = occluded ? 255 : 0;
+    hair[offset] = hairValue; hair[offset + 1] = hairValue; hair[offset + 2] = hairValue; hair[offset + 3] = 255;
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, garment)],
+    [0, 0, width, height],
+    { category: "上衣", structure: "长袖上衣", structureFacts: {}, occlusions: [{ type: "头发", bbox: [200, 300, 800, 700] }] },
+    [garmentMaskTest.encodePng(width, height, hair)]
+  );
+  assert.equal(cutout.repairMode, "image_edit_small_internal_hole", cutout.unsafeReason);
+  assert.ok(cutout.occlusionRatio > 0.12 && cutout.occlusionRatio <= 0.15);
+  assert.equal(cutout.visiblePixelPreservationScore, 100);
+});
+
+test("单个明确遮挡块超过10.5%时仍必须拒绝", () => {
+  const width = 100;
+  const height = 100;
+  const rgba = Buffer.alloc(width * height * 4, 120);
+  const mask = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset + 3] = 255;
+    const occluded = x >= 10 && x <= 89 && y >= 45 && y <= 53;
+    const clothing = x >= 10 && x <= 89 && y >= 10 && y <= 89 && !occluded;
+    const value = clothing ? 255 : 0;
+    mask[offset] = value; mask[offset + 1] = value; mask[offset + 2] = value; mask[offset + 3] = 255;
+  }
+  const occlusions = [{ type: "字幕", bbox: [100, 450, 900, 540] }];
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, mask)],
+    [0, 0, width, height],
+    { category: "上衣", structure: "纯色上衣", structureFacts: {}, occlusions },
+    [garmentMask.buildOcclusionBoxMask(width, height, occlusions, /字幕|文字/)]
+  );
+  assert.equal(cutout.repairMode, "rejected");
+  assert.match(cutout.unsafeReason, /10\.5%/);
+});
+
+test("字幕和包带框可生成同尺寸粗遮挡蒙版且框外保持透明", () => {
+  const buffer = garmentMask.buildOcclusionBoxMask(20, 10, [
+    { type: "字幕", bbox: [200, 200, 400, 400] },
+    { type: "头发", bbox: [600, 200, 800, 400] }
+  ], /字幕|文字|包|包带|配饰/);
+  const mask = garmentMaskTest.decodePng(buffer);
+  assert.equal(mask.data[(3 * mask.width + 6) * 4 + 3], 255);
+  assert.equal(mask.data[(3 * mask.width + 14) * 4 + 3], 0);
+});
+
+test("领口和下摆附近的孔洞不得交给生成模型猜测", () => {
+  const width = 40;
+  const height = 40;
+  const rgba = Buffer.alloc(width * height * 4, 180);
+  const mask = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      rgba[offset + 3] = 255;
+      const foreground = x >= 5 && x <= 34 && y >= 5 && y <= 34 && !(x === 20 && y === 7);
+      const value = foreground ? 255 : 0;
+      mask[offset] = value; mask[offset + 1] = value; mask[offset + 2] = value; mask[offset + 3] = 255;
+    }
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, mask)],
+    [0, 0, width, height],
+    { category: "上衣", structure: "圆领长袖上衣", structureFacts: { outerNeckline: "圆领" } }
+  );
+  assert.match(cutout.unsafeReason, /领口|关键结构/);
+  assert.equal(cutout.repairMode, "rejected");
+});
+
+test("关键结构附近不超过0.05%的分割锯齿可确定性修复", () => {
+  const width = 100;
+  const height = 100;
+  const rgba = Buffer.alloc(width * height * 4, 180);
+  const mask = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset + 3] = 255;
+    const foreground = x >= 10 && x <= 89 && y >= 10 && y <= 89 && !(x === 50 && y === 11);
+    const value = foreground ? 255 : 0;
+    mask[offset] = value; mask[offset + 1] = value; mask[offset + 2] = value; mask[offset + 3] = 255;
+  }
+  const cutout = garmentMask.buildGarmentCutout(
+    garmentMaskTest.encodePng(width, height, rgba),
+    [garmentMaskTest.encodePng(width, height, mask)],
+    [0, 0, width, height],
+    { category: "上衣", structure: "圆领上衣", structureFacts: { outerNeckline: "圆领" } }
+  );
+  assert.equal(cutout.unsafeReason, "");
+  assert.equal(cutout.repairMode, "deterministic_small_internal_hole");
+  assert.equal(cutout.visiblePixelPreservationScore, 100);
+});
+
+test("局部遮挡提示词锁定可见证据且只允许修改白色蒙版", () => {
+  const request = cloudTest.buildOcclusionRepairRequestBody(
+    "https://example.com/crop.jpg",
+    "https://example.com/cutout.png",
+    "https://example.com/mask.png",
+    { sourceFingerprint: "b".repeat(64), slot: "top", category: "上衣", color: "米白", structure: "长袖双层系带上衣", structureFacts: { sleeveLength: "wrist_long", necklineRelation: "flush" } },
+    "qwen-image-2.0-pro-2026-06-22",
+    { width: 1024, height: 1024 }
+  );
+  assert.equal(request.input.messages[0].content.filter((item) => item.image).length, 3);
+  assert.equal(request.parameters.n, 2);
+  assert.equal(request.parameters.prompt_extend, false);
+  assert.match(request.input.messages[0].content.at(-1).text, /只允许修改图3白色蒙版/);
+  assert.match(request.input.messages[0].content.at(-1).text, /不得编造/);
+  assert.match(request.input.messages[0].content.at(-1).text, /袖长必须到手腕/);
+});
+
+test("原像素蒙版使用独立准入规则，不再要求穿着图和平铺图向量相似度", () => {
+  const detection = { category: "上衣", isComposite: true };
+  const accepted = {
+    sameGarment: true, colorMatch: true, patternMatch: true, shapeMatch: true, fixedDetailsMatch: true,
+    noPersonResidue: true, clearTransparentContour: true, visibleStructurePreserved: true, layersMatch: true,
+    sleeveLengthMatch: true, necklineHeightMatch: true, layerCoverageMatch: true, fidelityScore: 96
+  };
+  assert.equal(cloudTest.sourceMaskAccepted(accepted, detection, 100), true);
+  assert.equal(cloudTest.sourceMaskAccepted({ ...accepted, noPersonResidue: false }, detection, 100), false);
+  assert.equal(cloudTest.sourceMaskAccepted(accepted, detection, 99.99), false);
+  assert.match(cloudTest.userFacingVerificationReason("fixedDetailsMatch、noPersonResidue"), /固定细节一致性、无人物残留/);
+});
+
+test("原像素蒙版即使总分98也必须通过透明轮廓清晰度", () => {
+  const detection = { category: "上衣", isComposite: false };
+  const verdict = {
+    sameGarment: true, colorMatch: true, patternMatch: true, shapeMatch: true,
+    fixedDetailsMatch: true, noPersonResidue: true, clearTransparentContour: false,
+    visibleStructurePreserved: true, sleeveLengthMatch: true,
+    necklineHeightMatch: true, layerCoverageMatch: true, fidelityScore: 98
+  };
+  assert.equal(cloudTest.sourceMaskAccepted(verdict, detection, 100), false);
+  assert.match(cloudTest.userFacingVerificationReason("clearTransparentContour"), /透明轮廓清晰度/);
+});
+
+test("分析阶段先完成服饰分割再删除人物原图，prepare 不回退整件生成", () => {
+  const apiSource = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
+  const cloudSource = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js", import.meta.url), "utf8");
+  const analyzeRoute = apiSource.match(/const captureAnalyzeMatch[\s\S]*?const prepareDetectionMatch/)?.[0] || "";
+  const prepareBody = cloudSource.match(/const prepareOutfitDetection = async \(detection\) => \{([\s\S]*?)\n\};/)?.[1] || "";
+  assert.match(analyzeRoute, /segmentOutfitGarments\(capture\.source_key, analyzed\.detections/);
+  assert.ok(analyzeRoute.indexOf("segmentOutfitGarments") < analyzeRoute.indexOf("deleteObject(capture.source_key)"));
+  assert.match(prepareBody, /verifySourceGarmentCutout\(detection\)/);
+  assert.doesNotMatch(prepareBody, /prepareGeneratedOutfitDetection|generateFlatLayCandidates/);
+  assert.match(apiSource, /visiblePixelPreservationScore/);
+  assert.match(apiSource, /segmentationStatus/);
+  assert.match(cloudSource, /segmentationStatus === "repair_pending"[\s\S]*?prepareOcclusionRepair\(detection\)/);
+  assert.match(cloudSource, /for \(const clothClass of classes\)/);
+  assert.match(cloudSource, /clothClass: \[clothClass\]/);
+  assert.match(cloudSource, /buildGarmentCutout\(\s*source\.buffer,/);
+  assert.match(apiSource, /item\.repairMaskKey/);
+});
+
+test("同图同阶段使用固定 seed，纠错轮使用不同 seed", () => {
+  const detection = { sourceFingerprint: "a".repeat(64), slot: "top", category: "上衣" };
+  assert.equal(cloudTest.deterministicSeed(detection, "initial"), cloudTest.deterministicSeed(detection, "initial"));
+  assert.notEqual(cloudTest.deterministicSeed(detection, "initial"), cloudTest.deterministicSeed(detection, "correction"));
+  const body = cloudTest.buildFlatLayRequestBody("https://example.com/source.jpg", detection, "qwen-image-2.0-pro-2026-06-22");
+  assert.equal(body.parameters.seed, cloudTest.deterministicSeed(detection, "initial"));
+  assert.equal(body.parameters.prompt_extend, false);
+});
+
+test("只有限流和明确推理内部错误允许自动重试", () => {
+  assert.equal(cloudTest.retryableFlatLayError({ providerStatusCode: 429 }), true);
+  assert.equal(cloudTest.retryableFlatLayError({ code: "InternalError.Algo" }), true);
+  assert.equal(cloudTest.retryableFlatLayError({ code: "IMAGE_EDIT_TIMEOUT", status: 504 }), false);
+  assert.equal(cloudTest.retryableFlatLayError({ providerStatusCode: 401 }), false);
+});
+
+test("结构事实规范组合上装和复杂裤装", () => {
+  const detections = cloudTest.normalizeOutfitDetections({ detections: [{
+    slot: "top", category: "上衣", color: "米白", pattern: "纯色", styles: ["系带"], structure: "长袖固定双层上装",
+    structure_facts: { layer_mode: "fixed_combined", sleeve_length: "wrist_long", neckline_relation: "flush", closure_and_ties: "胸前系带" },
+    is_composite: true, bbox_2d: [1, 2, 300, 400], confidence: 0.9
+  }, {
+    slot: "bottom", category: "裤子", color: "浅蓝", pattern: "纯色", styles: ["水洗"], structure: "高腰牛仔裤有双前袋与前中缝",
+    structure_facts: { rise_and_waistband: "高腰宽腰头", pocket_layout: "左右双前袋", front_seam: "连续前中缝", leg_shape: "阔腿" },
+    is_composite: false, bbox_2d: [1, 400, 300, 900], confidence: 0.9
+  }] });
+  assert.equal(detections[0].structureFacts.layerMode, "fixed_combined");
+  assert.equal(detections[0].structureFacts.sleeveLength, "wrist_long");
+  assert.equal(detections[0].structureFacts.necklineRelation, "flush");
+  assert.equal(detections[1].structureFacts.pocketLayout, "左右双前袋");
+  assert.equal(cloudTest.usesFaithfulPresentation(detections[1]), true);
+});
+
+test("英文颜色图案统一为中文并驱动浅色背景", () => {
+  const [top, bottom] = cloudTest.normalizeOutfitDetections({ detections: [{
+    slot: "top", category: "上衣", color: "white", pattern: "solid", styles: ["基础款"], structure: "普通白色长袖上衣",
+    structure_facts: { layer_mode: "single", sleeve_length: "wrist_long" }, is_composite: false, bbox_2d: [1, 2, 300, 400], confidence: 0.9
+  }, {
+    slot: "bottom", category: "裤子", color: "light_blue", pattern: "solid", styles: [], structure: "浅蓝牛仔裤",
+    structure_facts: {}, is_composite: false, bbox_2d: [1, 400, 300, 900], confidence: 0.9
+  }] });
+  assert.equal(top.color, "白色");
+  assert.equal(top.pattern, "纯色");
+  assert.equal(bottom.color, "浅蓝");
+  assert.equal(cloudTest.usesContrastingUpperBackground(top), true);
+  assert.match(cloudTest.buildFlatLayRequestBody("https://example.com/source.jpg", top, "qwen-image-2.0-pro").input.messages[0].content[1].text, /#4B5563/);
+});
+
+test("识别提示不把透明上衣下的贴身打底误当核心内搭", () => {
+  const source = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js", import.meta.url), "utf8");
+  assert.match(source, /薄纱、半透明或透视上衣下仅为遮挡身体而穿的贴身打底/);
+  assert.match(source, /不得把透过面料看到的身体、裤腰或阴影误写成独立内搭/);
+});
+
+test("固定组合结构字段可纠正冲突布尔值且普通分层不合并", () => {
+  const fixed = cloudTest.normalizeOutfitDetections({ upper_body_mode: "single", detections: [{
+    slot: "top", category: "上衣", color: "米白", pattern: "纯色", styles: [], structure: "长袖固定组合上装",
+    structure_facts: { layer_mode: "fixed_combined", sleeve_length: "wrist_long" }, is_composite: false, bbox_2d: [1, 2, 300, 400], confidence: 0.9
+  }] })[0];
+  assert.equal(fixed.isComposite, true);
+  assert.equal(fixed.structureFacts.layerMode, "fixed_combined");
+  assert.equal(cloudTest.correctionAvailable({ ...fixed, correctionSeedKey: "cutouts/rejected.png", correctionAttempted: false }), true);
+
+  const separate = cloudTest.normalizeOutfitDetections({ upper_body_mode: "separate", detections: [{
+    slot: "top", category: "上衣", color: "白色", pattern: "纯色", styles: [], structure: "可独立替换的内搭",
+    structure_facts: { layer_mode: "separate", sleeve_length: "short" }, is_composite: false, bbox_2d: [1, 2, 300, 400], confidence: 0.9
+  }] })[0];
+  assert.equal(separate.isComposite, false);
+});
+
+test("裤装固定结构任一不匹配时即使98分也拒绝", () => {
+  const detection = { category: "裤子", isComposite: false };
+  const accepted = {
+    sameGarment: true, colorMatch: true, patternMatch: true, shapeMatch: true, fixedDetailsMatch: true,
+    layersMatch: true, waistbandMatch: true, pocketLayoutMatch: true, seamMatch: true, legShapeMatch: true, hemMatch: true,
+    fidelityScore: 98
+  };
+  for (const key of ["waistbandMatch", "pocketLayoutMatch", "seamMatch", "legShapeMatch", "hemMatch"]) {
+    assert.equal(cloudTest.flatLayAccepted(0.95, { ...accepted, [key]: false }, detection), false);
+  }
+  assert.equal(cloudTest.flatLayAccepted(0.95, accepted, detection), true);
+});
+
+test("组合上装第一轮失败后只允许一次双图纠错", () => {
+  const detection = {
+    category: "上衣", color: "米白", pattern: "纯色", styles: ["多层"], structure: "长袖外层与近领系带内层",
+    isComposite: true, correctionSeedKey: "cutouts/rejected.png", correctionReason: "长袖被缩短，内层领口过低", correctionAttempted: false
+  };
+  assert.equal(cloudTest.correctionAvailable(detection), true);
+  assert.equal(cloudTest.correctionAvailable({ ...detection, correctionAttempted: true }), false);
+  assert.equal(cloudTest.correctionAvailable({ ...detection, isComposite: false }), false);
+  const body = cloudTest.buildCorrectiveFlatLayRequestBody("https://example.com/source.jpg", "https://example.com/rejected.png", detection, detection.correctionReason, "qwen-image-2.0-pro");
+  assert.equal(body.input.messages[0].content.filter((item) => item.image).length, 2);
+  assert.equal(body.parameters.n, 2);
+  assert.match(body.input.messages[0].content[2].text, /不得拆成两件/);
+  assert.match(body.input.messages[0].content[2].text, /长袖被缩短，内层领口过低/);
+});
+
+test("核验原因转为中文且客户端显示原像素蒙版阶段", () => {
+  assert.equal(cloudTest.userFacingVerificationReason("necklineHeightMatch 与 layerCoverageMatch 不通过"), "领口高度一致性 与 层次覆盖一致性 不通过");
+  const clientSource = require("node:fs").readFileSync(new URL("../miniprogram/pages/outfit-capture/index.js", import.meta.url), "utf8");
+  const markup = require("node:fs").readFileSync(new URL("../miniprogram/pages/outfit-capture/index.wxml", import.meta.url), "utf8");
+  const apiSource = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
+  assert.doesNotMatch(clientSource, /Promise\.all\(Array\.from\(\{ length: Math\.min\(2/);
+  assert.match(clientSource, /prepared\.processingStatus === "queued"/);
+  assert.match(markup, /正在检查人物残留、袖长、领口和固定结构/);
+  assert.match(markup, /原图衣物像素已保真提取/);
+  assert.match(apiSource, /segmentationStatus:/);
+  assert.match(apiSource, /visiblePixelPreservationScore:/);
+});
+
+test("复杂浅色上装使用保真候选、适配画布和高对比留白背景", () => {
   const asymmetricTop = {
     category: "上衣", color: "浅灰白", pattern: "纯色", styles: ["露肩", "不对称"],
     structure: "左肩固定露肩开口，长袖且下摆不对称", isComposite: false
@@ -15,10 +589,8 @@ test("复杂浅色上装使用保真候选、宽画布和高对比留白背景",
   const asymmetricPrompt = asymmetricBody.input.messages[0].content[1].text;
   assert.equal(cloudTest.usesFaithfulPresentation(asymmetricTop), true);
   assert.equal(asymmetricBody.parameters.n, 3);
-  assert.equal(asymmetricBody.parameters.size, "1536*1024");
-  assert.match(asymmetricPrompt, /露肩或单肩开口/);
-  assert.match(asymmetricPrompt, /不对称或不规则下摆/);
-  assert.match(asymmetricPrompt, /严禁改成普通圆领、对称下摆/);
+  assert.equal(asymmetricBody.parameters.size, "1536*1536");
+  assert.match(asymmetricPrompt, /不得美化、改款/);
 
   const layeredTop = {
     category: "上衣", color: "米白与浅灰白", pattern: "纯色", styles: ["多层", "系带"],
@@ -28,12 +600,14 @@ test("复杂浅色上装使用保真候选、宽画布和高对比留白背景",
   const layeredPrompt = layeredBody.input.messages[0].content[1].text;
   assert.equal(cloudTest.usesContrastingUpperBackground(layeredTop), true);
   assert.equal(layeredBody.parameters.n, 3);
-  assert.equal(layeredBody.parameters.size, "1536*1024");
+  assert.equal(layeredBody.parameters.size, "1536*1536");
   assert.match(layeredPrompt, /#4B5563/);
   assert.match(layeredPrompt, /至少约12%/);
-  assert.match(layeredPrompt, /内外层覆盖关系/);
-  assert.match(layeredPrompt, /长袖到手腕必须仍是完整长袖/);
-  assert.match(layeredPrompt, /内层领口相对外层领口的垂直高度/);
+  assert.match(layeredPrompt, /内外层共同构成同一件衣物/);
+  assert.doesNotMatch(layeredPrompt, /抽绳与腰头/);
+
+  const batwingTop = { ...layeredTop, structure: "固定组合蝙蝠袖上装", structureFacts: { sleeveShape: "蝙蝠袖" } };
+  assert.equal(cloudTest.flatLaySize(batwingTop), "1536*1024");
 });
 
 test("普通上衣不扩大保真路径且复杂上装继续严格拒绝改款", () => {
@@ -61,13 +635,16 @@ test("普通上衣不扩大保真路径且复杂上装继续严格拒绝改款",
   assert.equal(cloudTest.flatLayAccepted(0.95, otherwiseAccepted, compositeTop), true);
   const verifierPrompt = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js", import.meta.url), "utf8");
   assert.match(verifierPrompt, /图1长袖而图2露出明显前臂必须为 false/);
-  assert.match(verifierPrompt, /图1几乎平齐而图2变成明显低领或吊带必须为 false/);
+  assert.match(verifierPrompt, /图1内外领口几乎平齐而图2变成低领或吊带必须为 false/);
 });
 
 test("平铺抠图失败保留可区分的质量原因", () => {
   assert.equal(cloudTest.mattingFailureReason([{ transparentRatio: 0.04, transparentBorderRatio: 0.5 }]), "平铺候选透明背景面积不足。");
   assert.equal(cloudTest.mattingFailureReason([{ transparentRatio: 0.97, transparentBorderRatio: 1 }]), "平铺候选衣物主体过小或被过度去除。");
-  assert.equal(cloudTest.mattingFailureReason([{ transparentRatio: 0.4, transparentBorderRatio: 0.9 }]), "平铺候选触碰画布边缘或仍有连边背景。");
+  assert.equal(cloudTest.mattingFailureReason([{ transparentRatio: 0.4, transparentBorderRatio: 0.9 }]), "平铺候选画布边缘仍有不透明像素。");
+  assert.equal(cloudTest.mattingFailureKind([{ transparentRatio: 0.04, transparentBorderRatio: 0.5 }]), "matting_transparency_low");
+  assert.equal(cloudTest.mattingFailureKind([{ transparentRatio: 0.97, transparentBorderRatio: 1 }]), "matting_subject_too_small");
+  assert.equal(cloudTest.mattingFailureKind([{ transparentRatio: 0.4, transparentBorderRatio: 0.9 }]), "matting_border_opaque");
   assert.equal(cloudTest.mattingFailureReason([]), "平铺图边缘抠图未通过质量检查。");
 });
 
@@ -293,7 +870,18 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(freeQuota.hangerRemoval.limit, 1);
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-06-upper-structure-guard-v18");
+  assert.equal(health.body.buildId, "2026-08-06-wardrobe-display-v25");
+  assert.equal(health.body.models.garmentSegmentation, "SegmentCloth");
+  assert.equal(health.body.garmentSegmentation.provider, "aliyun-viapi");
+  assert.equal(health.body.models.outfitVision, "qwen3-vl-flash-2026-01-22");
+  assert.equal(health.body.models.outfitImageEdit, "qwen-image-2.0-pro-2026-06-22");
+  const firstSlot = await _test.acquireImageEditSlot(fixedNow);
+  const queuedSlot = await _test.acquireImageEditSlot(fixedNow + 1000);
+  const nextSlot = await _test.acquireImageEditSlot(fixedNow + 31000);
+  assert.equal(firstSlot.acquired, true);
+  assert.equal(queuedSlot.acquired, false);
+  assert.equal(queuedSlot.retryAfterMs, 30000);
+  assert.equal(nextSlot.acquired, true);
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", role: "admin", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -376,6 +964,69 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(budget.status, 200);
   assert.equal(budget.body.remainingTasks, 1000);
   assert.equal(budget.body.remainingYuan, 50);
+
+  const outfitEvents = [];
+  cloudServices.analyzeOutfit = async () => {
+    outfitEvents.push("analyze");
+    return { detections: [{
+      detectionId: "d-0", slot: "top", category: "上衣", color: "黑色", pattern: "纯色", styles: [],
+      structure: "黑色长袖上衣", structureFacts: { layerMode: "single", sleeveLength: "wrist_long" },
+      isComposite: false, confidence: 0.99, bbox: [100, 100, 800, 700], cropKey: "outfit-crops/test-top.jpg",
+      cutoutKey: "", flatLayKey: "", selectedImageKey: "", imageOrigin: "", fidelityScore: null,
+      fidelityStatus: "pending", processingStatus: "cropped", processingError: ""
+    }] };
+  };
+  cloudServices.segmentOutfitGarments = async (_sourceKey, detections) => {
+    outfitEvents.push("segment");
+    return detections.map((detection) => ({
+      ...detection,
+      cutoutKey: "outfit-segmented/test-top.png",
+      imageOrigin: "source_garment_mask",
+      visiblePixelPreservationScore: 100,
+      occlusionRatio: 0,
+      segmentationStatus: "ready"
+    }));
+  };
+  cloudServices.prepareOutfitDetection = async (detection) => ({
+    cutoutKey: detection.cutoutKey,
+    flatLayKey: "",
+    selectedImageKey: detection.cutoutKey,
+    imageOrigin: "source_garment_mask",
+    visiblePixelPreservationScore: 100,
+    occlusionRatio: 0,
+    segmentationStatus: "accepted",
+    fidelityScore: 98,
+    fidelityStatus: "accepted",
+    processingStatus: "ready",
+    processingError: "",
+    retryable: false,
+    retryAfterMs: 0,
+    failureKind: ""
+  });
+  cloudServices.requiresOutfitImageEdit = () => false;
+  const previousDeleteObject = cloudServices.deleteObject;
+  const deletedOutfitKeys = [];
+  cloudServices.deleteObject = async (key) => {
+    outfitEvents.push(`delete:${key}`);
+    deletedOutfitKeys.push(key);
+  };
+  const outfitUpload = readResponse(await main(makeEvent("/api/outfit-captures/presign", "POST", { mimeType: "image/jpeg", size: 500000 }, authorization)));
+  assert.equal(outfitUpload.status, 201);
+  const outfitAnalyzed = readResponse(await main(makeEvent(`/api/outfit-captures/${outfitUpload.body.captureId}/analyze`, "POST", {}, authorization)));
+  assert.equal(outfitAnalyzed.status, 200);
+  assert.equal(outfitAnalyzed.body.originalDeleted, true);
+  assert.equal(outfitAnalyzed.body.detections[0].segmentationStatus, "ready");
+  assert.equal(outfitAnalyzed.body.detections[0].visiblePixelPreservationScore, 100);
+  assert.deepEqual(outfitEvents.slice(0, 3).map((entry) => entry.startsWith("delete:") ? "delete" : entry), ["analyze", "segment", "delete"]);
+  const outfitPrepared = readResponse(await main(makeEvent(`/api/outfit-captures/${outfitUpload.body.captureId}/detections/d-0/prepare`, "POST", {}, authorization)));
+  assert.equal(outfitPrepared.status, 200);
+  assert.equal(outfitPrepared.body.processingStatus, "ready");
+  assert.equal(outfitPrepared.body.imageOrigin, "source_garment_mask");
+  const outfitCancelled = readResponse(await main(makeEvent(`/api/outfit-captures/${outfitUpload.body.captureId}`, "DELETE", null, authorization)));
+  assert.equal(outfitCancelled.status, 200);
+  assert.ok(deletedOutfitKeys.includes("outfit-crops/test-top.jpg"));
+  assert.ok(deletedOutfitKeys.includes("outfit-segmented/test-top.png"));
+  cloudServices.deleteObject = previousDeleteObject;
 
   const items = readResponse(await main(makeEvent("/api/items", "GET", null, authorization)));
   assert.equal(items.status, 200);
@@ -619,7 +1270,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-06-upper-structure-guard-v18");
+  assert.equal(failedRecognition.body.buildId, "2026-08-06-wardrobe-display-v25");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

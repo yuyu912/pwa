@@ -1,1 +1,36 @@
-<view class="page"><text class="heading">拍下今日穿搭</text><text class="desc">不用先录完整衣橱。AI 只拆主要衣物，整张人物照在真实裁剪保存后立即删除。</text><button class="primary" loading="{{busy}}" disabled="{{busy}}" bindtap="choosePhoto">{{photo ? '重新选择照片' : '拍照 / 从相册选择'}}</button><image wx:if="{{photo && !originalDeleted}}" class="preview" src="{{photo}}" mode="aspectFit"/><text wx:if="{{originalDeleted}}" class="privacy">✓ 云端人物原图已删除</text><text wx:if="{{error}}" class="error">{{error}}</text><view wx:for="{{detections}}" wx:for-index="slotIndex" wx:key="detectionId" class="card"><text class="title">{{item.category}}{{item.color ? ' · '+item.color : ''}}{{item.pattern ? ' · '+item.pattern : ''}}</text><view wx:if="{{item.processingStatus==='cropped'}}" class="processing">等待抠图</view><view wx:elif="{{item.processingStatus==='processing'}}" class="processing">正在生成平铺图、抠图并核验…</view><view wx:elif="{{item.processingStatus==='failed'}}" class="failed"><text>本件未能可靠拆解</text><text>{{item.processingError}}</text></view><block wx:else><image wx:if="{{item.imageUrl}}" class="detected-image" src="{{item.imageUrl}}" mode="aspectFit"/><text wx:if="{{item.imageOrigin==='flat_lay'}}" class="verified">✓ AI平铺图已通过真实性核验 · {{item.fidelityScore}}%</text><text wx:elif="{{item.imageOrigin==='cutout'}}" class="verified">✓ AI保真整理图已通过真实性核验 · {{item.fidelityScore}}%</text><text class="new-default">默认：作为新衣加入衣橱</text><block wx:if="{{item.topMatches.length}}"><text class="hint">可能已在衣橱 · 找到 {{item.topMatches.length}} 件可靠候选</text><view wx:for="{{item.topMatches}}" wx:for-item="match" wx:key="id" class="match {{selected[slotIndex]===match.id?'active':''}}" data-slot="{{slotIndex}}" data-id="{{match.id}}" bindtap="selectMatch"><image src="{{match.imageUrl}}" mode="aspectFit"/><view><text>{{match.name}}</text><text class="hint">综合相似度 {{match.similarity}}%</text><text class="hint">{{selected[slotIndex]===match.id?'已选择使用这件已有衣物':'点此改为已有衣物'}}</text></view></view></block><block wx:else><text class="hint">未发现明显相同的已有衣物</text><text class="hint">将默认作为新衣加入衣橱</text></block></block></view><view class="card"><text class="title">识别失败或候选不对？</text><text class="hint">直接勾选最近衣物也能完成记录。</text><view class="chips"><text wx:for="{{recentItems}}" wx:key="id" class="chip {{selectedRecent[item.id]?'active':''}}" data-id="{{item.id}}" bindtap="toggleRecent">{{item.name}}</text></view></view><picker mode="selector" range="{{scenes}}" value="{{sceneIndex}}" bindchange="onSceneChange"><view class="picker">场景：{{scenes[sceneIndex]}} ›</view></picker><button class="primary" disabled="{{busy}}" bindtap="confirm">一次确认并记录</button><button class="ghost" bindtap="manualOnly">只用最近衣物</button></view>
+<view class="page">
+  <text class="heading">拍下今日穿搭</text>
+  <text class="desc">不用先录完整衣橱。系统直接保留人物照中的衣物原像素，整张人物照在服饰分割保存后立即删除。</text>
+  <button class="primary" loading="{{busy}}" disabled="{{busy}}" bindtap="choosePhoto">{{photo ? '重新选择照片' : '拍照 / 从相册选择'}}</button>
+  <image wx:if="{{photo && !originalDeleted}}" class="preview" src="{{photo}}" mode="aspectFit"/>
+  <text wx:if="{{originalDeleted}}" class="privacy">✓ 云端人物原图已删除</text>
+  <text wx:if="{{error}}" class="error">{{error}}</text>
+  <view wx:for="{{detections}}" wx:for-index="slotIndex" wx:key="detectionId" class="card">
+    <text class="title">{{item.category}}{{item.color ? ' · '+item.color : ''}}{{item.pattern ? ' · '+item.pattern : ''}}</text>
+    <view wx:if="{{item.processingStatus==='cropped'}}" class="processing">衣物原像素分割完成，等待真实性核验</view>
+    <view wx:elif="{{item.processingStatus==='queued'}}" class="processing">正在排队处理小范围遮挡…</view>
+    <view wx:elif="{{item.processingStatus==='processing'}}" class="processing">{{item.processingStage==='occlusion_repair' ? '正在只补全小范围遮挡，并锁定全部原始可见像素…' : item.processingStage==='source_mask_verification' ? '正在检查人物残留、袖长、领口和固定结构…' : '正在处理衣物蒙版…'}}</view>
+    <view wx:elif="{{item.processingStatus==='failed'}}" class="failed"><text>本件未能可靠拆解</text><text>{{item.processingError}}</text></view>
+    <block wx:else>
+      <image wx:if="{{item.imageUrl}}" class="detected-image" src="{{item.imageUrl}}" mode="aspectFit"/>
+      <text wx:if="{{item.imageOrigin==='flat_lay'}}" class="verified">✓ AI平铺图已通过真实性核验 · {{item.fidelityScore}}%</text>
+      <text wx:elif="{{item.imageOrigin==='cutout'}}" class="verified">✓ AI保真整理图已通过真实性核验 · {{item.fidelityScore}}%</text>
+      <text wx:elif="{{item.imageOrigin==='source_garment_mask'}}" class="verified">✓ 原图衣物像素已保真提取 · {{item.fidelityScore}}%</text>
+      <text wx:elif="{{item.imageOrigin==='source_garment_mask_repaired'}}" class="verified">✓ 原像素已锁定，小范围遮挡已校正 · {{item.fidelityScore}}%</text>
+      <text wx:if="{{item.displayMode==='square_centered_source_pixels'}}" class="hint">透明轮廓已居中整理，未缩放或重画衣物</text>
+      <text class="new-default">默认：作为新衣加入衣橱</text>
+      <block wx:if="{{item.topMatches.length}}">
+        <text class="hint">可能已在衣橱 · 找到 {{item.topMatches.length}} 件可靠候选</text>
+        <view wx:for="{{item.topMatches}}" wx:for-item="match" wx:key="id" class="match {{selected[slotIndex]===match.id?'active':''}}" data-slot="{{slotIndex}}" data-id="{{match.id}}" bindtap="selectMatch">
+          <image src="{{match.imageUrl}}" mode="aspectFit"/>
+          <view><text>{{match.name}}</text><text class="hint">综合相似度 {{match.similarity}}%</text><text class="hint">{{selected[slotIndex]===match.id?'已选择使用这件已有衣物':'点此改为已有衣物'}}</text></view>
+        </view>
+      </block>
+      <block wx:else><text class="hint">未发现明显相同的已有衣物</text><text class="hint">将默认作为新衣加入衣橱</text></block>
+    </block>
+  </view>
+  <view class="card"><text class="title">识别失败或候选不对？</text><text class="hint">直接勾选最近衣物也能完成记录。</text><view class="chips"><text wx:for="{{recentItems}}" wx:key="id" class="chip {{selectedRecent[item.id]?'active':''}}" data-id="{{item.id}}" bindtap="toggleRecent">{{item.name}}</text></view></view>
+  <picker mode="selector" range="{{scenes}}" value="{{sceneIndex}}" bindchange="onSceneChange"><view class="picker">场景：{{scenes[sceneIndex]}} ›</view></picker>
+  <button class="primary" disabled="{{busy}}" bindtap="confirm">一次确认并记录</button>
+  <button class="ghost" bindtap="manualOnly">只用最近衣物</button>
+</view>

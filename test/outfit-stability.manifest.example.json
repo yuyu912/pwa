@@ -1,0 +1,26 @@
+{
+  "repeatCount": 3,
+  "maxEstimatedYuan": 60,
+  "samples": [
+    {
+      "id": "user-asymmetric-top",
+      "localPath": "C:/replace-with-local-path/original-1.jpg",
+      "sourcePage": "user-provided"
+    },
+    {
+      "id": "user-layered-cardigan",
+      "localPath": "C:/replace-with-local-path/original-2.jpg",
+      "sourcePage": "user-provided"
+    },
+    {
+      "id": "pexels-asymmetric-patterned-skirt",
+      "localPath": "C:/replace-with-local-path/pexels-20221341.jpg",
+      "sourcePage": "https://www.pexels.com/photo/woman-wearing-asymmetric-blouse-and-skirt-in-summer-20221341/"
+    },
+    {
+      "id": "pexels-leopard-blouse",
+      "localPath": "C:/replace-with-local-path/pexels-32166793.jpg",
+      "sourcePage": "https://www.pexels.com/photo/fashionable-woman-in-leopard-print-blouse-32166793/"
+    }
+  ]
+}

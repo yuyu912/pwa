@@ -13,6 +13,7 @@
 !uniCloud-aliyun/
 !uniCloud-aliyun/**
 uniCloud-aliyun/**/node_modules/
+uniCloud-aliyun/cloudfunctions/wardrobe-api/.env.local
 !test/
 !test/ai-budget.test.js
 !test/batch-upload.test.js
@@ -24,3 +25,7 @@ uniCloud-aliyun/**/node_modules/
 !test/wardrobe-report.test.js
 !test/weather.test.js
 !test/community.test.js
+!scripts/
+!scripts/outfit-stability.mjs
+!scripts/segment-cloth-pilot.cjs
+!test/outfit-stability.manifest.example.json

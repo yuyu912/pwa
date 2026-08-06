@@ -10,6 +10,7 @@ const COLLECTIONS = Object.freeze({
   drafts: "wr_image_drafts",
   aiUsage: "wr_ai_usage_events",
   aiBudget: "wr_ai_budget",
+  aiProviderSlots: "wr_ai_provider_slots",
   starAccounts: "wr_star_accounts",
   starEvents: "wr_star_events",
   outfitRequests: "wr_outfit_requests",

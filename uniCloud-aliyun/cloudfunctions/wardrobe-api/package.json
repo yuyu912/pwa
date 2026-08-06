@@ -4,9 +4,12 @@
   "private": true,
   "main": "index.js",
   "dependencies": {
+    "@alicloud/imageseg20191230": "4.0.1",
     "bcryptjs": "^2.4.3",
     "cos-nodejs-sdk-v5": "^3.0.0",
-    "jsonwebtoken": "^9.0.2"
+    "jpeg-js": "0.4.4",
+    "jsonwebtoken": "^9.0.2",
+    "pngjs": "7.0.0"
   },
   "overrides": {
     "uuid": "11.1.1"
