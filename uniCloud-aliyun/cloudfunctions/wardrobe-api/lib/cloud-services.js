@@ -169,7 +169,8 @@ const extractGarment = async (sourceKey) => {
       throw Object.assign(new Error("背景去除不完整，请换一张衣物边缘更清楚、四周留有空间的图片。"), {
         status: 422,
         code: "MATTING_QUALITY_LOW",
-        providerCallCount
+        providerCallCount,
+        mattingQuality: quality
       });
     }
     const cutoutKey = `cutouts/${sourceKey.split("/").pop().replace(/\.[^.]+$/, "")}.png`;
@@ -403,7 +404,7 @@ const analyzeOutfit = async (sourceKey, userId, captureId) => {
   const model = process.env.QWEN_VL_MODEL || "qwen3-vl-flash";
   const requestBody = buildQwenRequestBody(signedUrl(sourceKey, "GET", 600), model);
   requestBody.max_completion_tokens = 700;
-  requestBody.messages[0].content[1].text = "识别人物当前实际穿着的核心衣物，只返回 JSON：{upper_body_mode,upper_body_color,upper_body_structure,detections:[{slot,category,color,pattern,styles,structure,is_composite,bbox_2d,confidence}]}。upper_body_mode 仅可为 single、combined、separate：假两件、固定套穿、视觉上依赖内外层共同形成完整款式的上装必须为 combined，并只返回一个 slot=top、category=上衣、is_composite=true 的上身检测，bbox 覆盖内外两层全部可见部分；普通可独立替换的外套和内搭才用 separate。structure 必须用完整中文句子客观写出固定可见结构，例如内外层颜色、领口、前襟系带、袖型、腰头宽窄、抽绳内外位置、褶裥、裤腿宽度与垂坠轮廓；禁止只返回‘腰头、抽绳、裤腿’等字段名。slot 仅允许 top,bottom,dress,outerwear；category 仅允许 上衣,裤子,半身裙,外套,连衣裙；pattern 为纯色、条纹、格纹、印花等简短中文；bbox_2d 为 [x1,y1,x2,y2]，坐标归一化到 0-999。第一版不识别鞋子；忽略首饰、帽子和包；看不清不要猜。";
+  requestBody.messages[0].content[1].text = "识别人物当前实际穿着的核心衣物，只返回 JSON：{upper_body_mode,upper_body_color,upper_body_structure,detections:[{slot,category,color,pattern,styles,structure,is_composite,bbox_2d,confidence}]}。upper_body_mode 仅可为 single、combined、separate：假两件、固定套穿、视觉上依赖内外层共同形成完整款式的上装必须为 combined，并只返回一个 slot=top、category=上衣、is_composite=true 的上身检测，bbox 覆盖内外两层全部可见部分；普通可独立替换的外套和内搭才用 separate。structure 必须用完整中文句子客观写出固定可见结构。上装必须明确袖长是长袖到手腕、七分袖、短袖还是无袖，写清外层与内层各自领口形状，并说明内层领口相对外层领口是几乎平齐、略低还是明显低领，以及内外层覆盖范围、前襟系带和袖型；下装写明腰头宽窄、抽绳内外位置、褶裥、裤腿宽度与垂坠轮廓。禁止只返回‘领口、袖子、腰头、抽绳、裤腿’等字段名。slot 仅允许 top,bottom,dress,outerwear；category 仅允许 上衣,裤子,半身裙,外套,连衣裙；pattern 为纯色、条纹、格纹、印花等简短中文；bbox_2d 为 [x1,y1,x2,y2]，坐标归一化到 0-999。第一版不识别鞋子；忽略首饰、帽子和包；看不清不要猜。";
   const response = await qwenHttpRequest(process.env.DASHSCOPE_VISION_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", requestBody, process.env.DASHSCOPE_API_KEY);
   if (responseStatus(response) < 200 || responseStatus(response) >= 300) throw Object.assign(new Error("今日穿搭定位暂时不可用。"), { status: 502, code: "OUTFIT_DETECTION_FAILED" });
   const raw = parseModelJson(response.data?.choices?.[0]?.message?.content);
@@ -587,17 +588,44 @@ const vectorCosine = (left, right) => {
   return leftNorm && rightNorm ? dot / Math.sqrt(leftNorm * rightNorm) : 0;
 };
 
-const flatLaySize = (category) => {
-  if (category === "裤子" || category === "半身裙" || category === "连衣裙") return "768*1536";
-  return "1024*1024";
-};
+const upperGarmentText = (detection) => [detection.structure, ...(detection.styles || [])].filter(Boolean).join(" ");
+
+const usesFaithfulUpperPresentation = (detection) => ["上衣", "外套"].includes(detection.category)
+  && (detection.isComposite === true || /露肩|单肩|斜肩|不对称|不规则下摆|薄纱|透视|多层|叠层|假两件|系带|蝙蝠袖/.test(upperGarmentText(detection)));
 
 const usesFaithfulArrangement = (detection) => detection.category === "裤子"
   && /双层|宽腰头|内置抽绳|褶裥|超宽|喇叭|垂坠/.test(detection.structure || "");
 
-const flatLayCandidateCount = (detection) => detection.isComposite || usesFaithfulArrangement(detection)
+const usesFaithfulPresentation = (detection) => usesFaithfulArrangement(detection) || usesFaithfulUpperPresentation(detection);
+
+const usesContrastingUpperBackground = (detection) => ["上衣", "外套"].includes(detection.category)
+  && /白|米|奶油|象牙|浅灰/.test(detection.color || "");
+
+const flatLaySize = (detection) => {
+  if (["裤子", "半身裙", "连衣裙"].includes(detection.category)) return "768*1536";
+  if (usesFaithfulUpperPresentation(detection)) return "1536*1024";
+  return "1024*1024";
+};
+
+const flatLayCandidateCount = (detection) => usesFaithfulPresentation(detection)
   ? 3
   : 2;
+
+const flatLayBackgroundRule = (detection) => usesContrastingUpperBackground(detection)
+  ? "使用统一中性深灰色（#4B5563）纯色背景，与浅色衣物形成清晰边界；背景不得有渐变、阴影、纹理或其他物体。"
+  : "使用纯白色背景，背景不得有渐变、阴影、纹理或其他物体。";
+
+const flatLaySpacingRule = (detection) => (["上衣", "外套"].includes(detection.category)
+  && (usesFaithfulUpperPresentation(detection) || usesContrastingUpperBackground(detection)))
+  ? "衣物必须完整居中，领口、袖口和下摆距离画布四边至少约12%，不得触碰或裁断任何边缘。"
+  : "衣物必须完整居中且不得触碰画布边缘。";
+
+const mattingFailureReason = (qualities) => {
+  if (qualities.some((quality) => Number(quality.transparentRatio) < 0.08)) return "平铺候选透明背景面积不足。";
+  if (qualities.some((quality) => Number(quality.transparentRatio) > 0.95)) return "平铺候选衣物主体过小或被过度去除。";
+  if (qualities.some((quality) => Number(quality.transparentBorderRatio) < 0.98)) return "平铺候选触碰画布边缘或仍有连边背景。";
+  return "平铺图边缘抠图未通过质量检查。";
+};
 
 const flatLayCategoryRule = (category) => {
   if (category === "裤子") return "目标只能是一条裤子（pants / trousers），必须完整保留腰头到两个裤脚；严禁输出上衣、裙子、鞋或其他品类。";
@@ -609,13 +637,13 @@ const buildFlatLayRequestBody = (imageUrl, detection, model) => ({
   model,
   input: { messages: [{ role: "user", content: [
     { image: imageUrl },
-    { text: `这是严格的单品图像编辑任务，不是自由生成。${detection.isComposite ? "目标是一件固定组合上装或假两件，内层与外层共同构成同一件衣物；必须同时保留两层的颜色、领口、前襟、系带、袖型和原有覆盖关系，不得拆开、删除或替换其中任何一层。" : flatLayCategoryRule(detection.category)}${usesFaithfulArrangement(detection) ? "这是结构复杂的裤装，采用保真整理而不是标准化重绘：必须原样保留双层或宽腰头、抽绳的内外位置与穿出口、褶裥和超宽垂坠裤腿；只移除人物、鞋和背景，并让左右裤腿自然舒展，严禁改成普通单层松紧腰、外露抽绳、直筒裤或常规运动裤。" : ""}只提取照片中正在穿着的${detection.color || ""}${detection.category}。已识别的固定结构为：${detection.structure || "所有结构以原图为准"}。可见特征为${(detection.styles || []).join("、") || "以原图为准"}、${detection.pattern || "图案以原图为准"}。移除人物、皮肤、肢体、背景以及不属于目标单品的其他衣物，${usesFaithfulArrangement(detection) ? "在保留原始结构和廓形的前提下整理为正面自然展示" : "把同一件目标衣物转换为正面自然平铺展示"}。必须保持原衣物可见的颜色、图案、领口、肩带或袖型、前襟系带、抽绳与腰头、裤型、纽扣、口袋、缝线、明显装饰和材质纹理，尤其不能磨平罗纹针织、牛仔水洗、织纹或压线。衣物轮廓应连续自然，边缘平滑干净，不得出现白边、锯齿、破洞或残留皮肤。不要展示背面，不得美化、改款、缩窄、加宽或增加原图不可确认的细节。纯白背景，画面只能保留目标单品。` }
+    { text: `这是严格的单品图像编辑任务，不是自由生成。${detection.isComposite ? "目标是一件固定组合上装或假两件，内层与外层共同构成同一件衣物；必须同时保留两层的颜色、领口、前襟、系带、袖型和原有覆盖关系，不得拆开、删除或替换其中任何一层。内层领口相对外层领口的垂直高度属于固定设计：原图几乎平齐时不得降低成低领、吊带领或大面积露胸。" : flatLayCategoryRule(detection.category)}${usesFaithfulArrangement(detection) ? "这是结构复杂的裤装，采用保真整理而不是标准化重绘：必须原样保留双层或宽腰头、抽绳的内外位置与穿出口、褶裥和超宽垂坠裤腿；只移除人物、鞋和背景，并让左右裤腿自然舒展，严禁改成普通单层松紧腰、外露抽绳、直筒裤或常规运动裤。" : ""}${usesFaithfulUpperPresentation(detection) ? "这是固定剪裁复杂的上装，采用保真整理而不是标准化平铺重绘：必须保持原图中的穿着朝向和完整轮廓，原样保留露肩或单肩开口、不对称或不规则下摆、薄纱透明层、内外层覆盖关系、系带位置和袖型；长袖到手腕必须仍是完整长袖，严禁缩短成七分袖、五分袖或短袖；只移除人物、其他衣物与背景，严禁改成普通圆领、对称下摆或单层上衣。" : ""}只提取照片中正在穿着的${detection.color || ""}${detection.category}。已识别的固定结构为：${detection.structure || "所有结构以原图为准"}。可见特征为${(detection.styles || []).join("、") || "以原图为准"}、${detection.pattern || "图案以原图为准"}。移除人物、皮肤、肢体、背景以及不属于目标单品的其他衣物，${usesFaithfulPresentation(detection) ? "在保留原始朝向、固定结构和廓形的前提下做自然保真整理" : "把同一件目标衣物转换为正面自然平铺展示"}。必须保持原衣物可见的颜色、图案、领口、袖长、肩带或袖型、前襟系带、抽绳与腰头、内外领口相对高度与覆盖范围、裤型、纽扣、口袋、缝线、明显装饰和材质纹理，尤其不能磨平罗纹针织、牛仔水洗、织纹或压线。衣物轮廓应连续自然，边缘平滑干净，不得出现白边、锯齿、破洞或残留皮肤。不要展示背面，不得美化、改款、缩窄、加宽或增加原图不可确认的细节。${flatLayBackgroundRule(detection)}${flatLaySpacingRule(detection)}画面只能保留目标单品。` }
   ] }] },
   parameters: {
     n: flatLayCandidateCount(detection),
     watermark: false,
     prompt_extend: false,
-    size: flatLaySize(detection.category),
+    size: flatLaySize(detection),
     negative_prompt: "人物、模特、皮肤、手臂、手、头发、脸、其他衣物、鞋子、衣架、背景杂物、锯齿边缘、白边、破损、孔洞、模糊纹理、改变领口、改变裤型、改变口袋、增加装饰"
   }
 });
@@ -633,6 +661,7 @@ const generateFlatLayCandidates = async (sourceKey, detection) => {
     .slice(0, flatLayCandidateCount(detection));
   if (!resultUrls.length) throw Object.assign(new Error("AI 未返回平铺图。"), { status: 502, code: "FLAT_LAY_NO_OUTPUT" });
   const candidates = [];
+  const rejected = [];
   for (const resultUrl of resultUrls) {
     // 每个候选使用独立 UUID，避免二次抠图时互相覆盖。
     const tempKey = `outfit-flat-temp/${crypto.randomUUID()}-flat.png`;
@@ -640,18 +669,28 @@ const generateFlatLayCandidates = async (sourceKey, detection) => {
       await cosCall("putObject", { ...objectOptions(tempKey), Body: await downloadImage(resultUrl), ContentType: "image/png", ACL: "private" });
       const extracted = await extractGarment(tempKey);
       candidates.push({ flatLayKey: extracted.cutoutKey, model });
-    } catch {} finally {
+    } catch (error) {
+      rejected.push(error);
+    } finally {
       await deleteObject(tempKey).catch(() => {});
     }
   }
-  if (!candidates.length) throw Object.assign(new Error("平铺图边缘抠图未通过质量检查。"), { status: 422, code: "FLAT_LAY_MATTING_FAILED" });
+  if (!candidates.length) {
+    const qualities = rejected.map((error) => error.mattingQuality).filter(Boolean);
+    throw Object.assign(new Error(mattingFailureReason(qualities)), { status: 422, code: "FLAT_LAY_MATTING_FAILED" });
+  }
   return candidates;
 };
 
-const flatLayAccepted = (similarity, verdict, isComposite = false) => Number(similarity) >= 0.4
-  && Number(verdict?.fidelityScore) >= 90
-  && ["sameGarment", "colorMatch", "patternMatch", "shapeMatch", "fixedDetailsMatch"].every((key) => verdict?.[key] === true)
-  && (!isComposite || verdict?.layersMatch === true);
+const flatLayAccepted = (similarity, verdict, detection = null) => {
+  const isComposite = typeof detection === "boolean" ? detection : detection?.isComposite === true;
+  const isUpper = typeof detection === "object" && ["上衣", "外套"].includes(detection?.category);
+  return Number(similarity) >= 0.4
+    && Number(verdict?.fidelityScore) >= 90
+    && ["sameGarment", "colorMatch", "patternMatch", "shapeMatch", "fixedDetailsMatch"].every((key) => verdict?.[key] === true)
+    && (!isComposite || verdict?.layersMatch === true)
+    && (!isUpper || ["sleeveLengthMatch", "necklineHeightMatch", "layerCoverageMatch"].every((key) => verdict?.[key] === true));
+};
 
 const verifyGeneratedGarment = async (cropKey, generatedKey, detection, imageOrigin) => {
   const embedding = await generateImageEmbeddings([cropKey, generatedKey]);
@@ -663,21 +702,23 @@ const verifyGeneratedGarment = async (cropKey, generatedKey, detection, imageOri
   const presentationRule = imageOrigin === "cutout"
     ? "图2应保持图1中目标衣物原有的朝向、穿着姿态、轮廓和可见纹理，只允许移除人物、其他衣物和背景；除被手遮挡的极小区域外，不应重绘或改变细节。仅忽略背景是否透明或纯白。"
     : "忽略人物姿态、背景、平铺方式以及穿着造成的临时褶皱、拉伸和遮挡；不得忽略衣物本身固定的剪裁、纹理和装饰差异。";
-  requestBody.messages[0].content[2].text = `图1是真实人物照片中裁出的${detection.category}，图2是系统生成的衣物图。只返回JSON：{sameGarment,colorMatch,patternMatch,shapeMatch,fixedDetailsMatch,layersMatch,fidelityScore,reason}。fidelityScore为0到100整数，表示图2对图1中目标衣物可见设计的真实性。fixedDetailsMatch只判断衣物固定设计：材质纹理、领口或腰头、袖型或裤型、纽扣、口袋、缝线和装饰；人物穿着造成且平铺后理应消失的褶皱、拉伸和遮挡不算固定细节差异。${detection.isComposite ? `这是组合上装，固定结构为：${detection.structure || "以图1为准"}。layersMatch 只有在图2同时保留图1的内层和外层、颜色及覆盖关系时才为 true；少一层或把两层融合成普通单件必须为 false。` : "非组合衣物的 layersMatch 返回 true。"}不能因为品类相同就判定一致。${presentationRule}`;
+  requestBody.messages[0].content[2].text = `图1是真实人物照片中裁出的${detection.category}，图2是系统生成的衣物图。只返回JSON：{sameGarment,colorMatch,patternMatch,shapeMatch,fixedDetailsMatch,layersMatch,sleeveLengthMatch,necklineHeightMatch,layerCoverageMatch,fidelityScore,reason}。fidelityScore为0到100整数，表示图2对图1中目标衣物可见设计的真实性。fixedDetailsMatch只判断衣物固定设计：材质纹理、领口或腰头、袖长、袖型或裤型、纽扣、口袋、缝线和装饰；人物穿着造成且平铺后理应消失的褶皱、拉伸和遮挡不算固定细节差异。上衣必须逐项比较：sleeveLengthMatch 判断长袖到手腕、七分袖、短袖或无袖是否一致，图1长袖而图2露出明显前臂必须为 false；necklineHeightMatch 判断领口形状及垂直高度是否一致，组合上装还要比较内层领口相对外层领口的高度，图1几乎平齐而图2变成明显低领或吊带必须为 false；layerCoverageMatch 判断内外层可见面积、覆盖边界与系带位置是否一致。非上衣的这三项返回 true。任一项为 false 时 fixedDetailsMatch 必须为 false，fidelityScore 不得高于89。${detection.isComposite ? `这是组合上装，固定结构为：${detection.structure || "以图1为准"}。layersMatch 只有在图2同时保留图1的内层和外层、颜色及覆盖关系时才为 true；少一层或把两层融合成普通单件必须为 false。` : "非组合衣物的 layersMatch 返回 true。"}不能因为品类相同就判定一致。${presentationRule}`;
   const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
   const response = await qwenHttpRequest(`${endpoint}/chat/completions`, requestBody, process.env.DASHSCOPE_API_KEY);
   if (responseStatus(response) < 200 || responseStatus(response) >= 300) throw Object.assign(new Error("平铺图细节核验暂时不可用。"), { status: 502, code: "FLAT_LAY_VERIFY_HTTP_ERROR" });
   const verdict = parseModelJson(response.data?.choices?.[0]?.message?.content);
-  const semanticAccepted = ["sameGarment", "colorMatch", "patternMatch", "shapeMatch", "fixedDetailsMatch"].every((key) => verdict[key] === true);
+  const semanticKeys = ["sameGarment", "colorMatch", "patternMatch", "shapeMatch", "fixedDetailsMatch"];
+  if (["上衣", "外套"].includes(detection.category)) semanticKeys.push("sleeveLengthMatch", "necklineHeightMatch", "layerCoverageMatch");
+  const semanticAccepted = semanticKeys.every((key) => verdict[key] === true);
   const score = Math.max(0, Math.min(100, Math.round(Number(verdict.fidelityScore) || 0)));
-  return { accepted: flatLayAccepted(similarity, verdict, detection.isComposite), score, vectorSimilarity: Math.round(similarity * 100), semanticAccepted, reason: cleanText(verdict.reason, 120) };
+  return { accepted: flatLayAccepted(similarity, verdict, detection), score, vectorSimilarity: Math.round(similarity * 100), semanticAccepted, reason: cleanText(verdict.reason, 120) };
 };
 
 const prepareOutfitDetection = async (detection) => {
   try {
     // Pro 编辑模型优先保持真实纹理并整理成平铺形态，生成后再做透明抠图与严格真实性核验。
     const generated = await generateFlatLayCandidates(detection.cropKey, detection);
-    const imageOrigin = usesFaithfulArrangement(detection) ? "cutout" : "flat_lay";
+    const imageOrigin = usesFaithfulPresentation(detection) ? "cutout" : "flat_lay";
     const evaluated = await Promise.all(generated.map(async (candidate) => {
       try {
         return { ...candidate, verification: await verifyGeneratedGarment(detection.cropKey, candidate.flatLayKey, detection, imageOrigin) };
@@ -780,5 +821,5 @@ module.exports = {
   removeHanger,
   signedUrl,
   sourceHash,
-  _test: { assessMattingQuality, buildFlatLayRequestBody, buildHangerEditRequestBody, buildQwenHttpOptions, buildQwenRequestBody, cropOperation, flatLayAccepted, flatLayCandidateCount, normalizeOutfitDetections, paddedPixelBox, parseModelJson, responseStatus, usesFaithfulArrangement, validateCropSize, vectorCosine }
+  _test: { assessMattingQuality, buildFlatLayRequestBody, buildHangerEditRequestBody, buildQwenHttpOptions, buildQwenRequestBody, cropOperation, flatLayAccepted, flatLayCandidateCount, flatLaySize, mattingFailureReason, normalizeOutfitDetections, paddedPixelBox, parseModelJson, responseStatus, usesContrastingUpperBackground, usesFaithfulArrangement, usesFaithfulPresentation, usesFaithfulUpperPresentation, validateCropSize, vectorCosine }
 };

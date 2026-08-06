@@ -11,7 +11,7 @@ const { buildCityTrend, buildOutfitCandidates, buildStyleProfile } = require("./
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-05-outfit-composite-flatlay-v16";
+const BUILD_ID = "2026-08-06-upper-structure-guard-v18";
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });

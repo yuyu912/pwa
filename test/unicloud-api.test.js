@@ -4,6 +4,72 @@ import { createRequire } from "node:module";
 import bcrypt from "bcryptjs";
 
 const require = createRequire(import.meta.url);
+const cloudTest = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js")._test;
+
+test("复杂浅色上装使用保真候选、宽画布和高对比留白背景", () => {
+  const asymmetricTop = {
+    category: "上衣", color: "浅灰白", pattern: "纯色", styles: ["露肩", "不对称"],
+    structure: "左肩固定露肩开口，长袖且下摆不对称", isComposite: false
+  };
+  const asymmetricBody = cloudTest.buildFlatLayRequestBody("https://example.com/source.jpg", asymmetricTop, "qwen-image-2.0-pro");
+  const asymmetricPrompt = asymmetricBody.input.messages[0].content[1].text;
+  assert.equal(cloudTest.usesFaithfulPresentation(asymmetricTop), true);
+  assert.equal(asymmetricBody.parameters.n, 3);
+  assert.equal(asymmetricBody.parameters.size, "1536*1024");
+  assert.match(asymmetricPrompt, /露肩或单肩开口/);
+  assert.match(asymmetricPrompt, /不对称或不规则下摆/);
+  assert.match(asymmetricPrompt, /严禁改成普通圆领、对称下摆/);
+
+  const layeredTop = {
+    category: "上衣", color: "米白与浅灰白", pattern: "纯色", styles: ["多层", "系带"],
+    structure: "米白长袖开衫覆盖浅灰白系带内层", isComposite: true
+  };
+  const layeredBody = cloudTest.buildFlatLayRequestBody("https://example.com/source.jpg", layeredTop, "qwen-image-2.0-pro");
+  const layeredPrompt = layeredBody.input.messages[0].content[1].text;
+  assert.equal(cloudTest.usesContrastingUpperBackground(layeredTop), true);
+  assert.equal(layeredBody.parameters.n, 3);
+  assert.equal(layeredBody.parameters.size, "1536*1024");
+  assert.match(layeredPrompt, /#4B5563/);
+  assert.match(layeredPrompt, /至少约12%/);
+  assert.match(layeredPrompt, /内外层覆盖关系/);
+  assert.match(layeredPrompt, /长袖到手腕必须仍是完整长袖/);
+  assert.match(layeredPrompt, /内层领口相对外层领口的垂直高度/);
+});
+
+test("普通上衣不扩大保真路径且复杂上装继续严格拒绝改款", () => {
+  const ordinaryTop = {
+    category: "上衣", color: "黑色", pattern: "纯色", styles: ["基础款"],
+    structure: "普通圆领短袖上衣", isComposite: false
+  };
+  const body = cloudTest.buildFlatLayRequestBody("https://example.com/source.jpg", ordinaryTop, "qwen-image-2.0-pro");
+  assert.equal(cloudTest.usesFaithfulPresentation(ordinaryTop), false);
+  assert.equal(cloudTest.usesContrastingUpperBackground(ordinaryTop), false);
+  assert.equal(body.parameters.n, 2);
+  assert.equal(body.parameters.size, "1024*1024");
+  assert.match(body.input.messages[0].content[1].text, /使用纯白色背景/);
+
+  const compositeTop = { category: "上衣", isComposite: true };
+  const otherwiseAccepted = {
+    sameGarment: true, colorMatch: true, patternMatch: true, shapeMatch: true, fixedDetailsMatch: true,
+    layersMatch: true, sleeveLengthMatch: true, necklineHeightMatch: true, layerCoverageMatch: true, fidelityScore: 98
+  };
+  assert.equal(cloudTest.flatLayAccepted(0.95, { ...otherwiseAccepted, fixedDetailsMatch: false }, compositeTop), false);
+  assert.equal(cloudTest.flatLayAccepted(0.95, { ...otherwiseAccepted, layersMatch: false }, compositeTop), false);
+  assert.equal(cloudTest.flatLayAccepted(0.95, { ...otherwiseAccepted, sleeveLengthMatch: false }, compositeTop), false);
+  assert.equal(cloudTest.flatLayAccepted(0.95, { ...otherwiseAccepted, necklineHeightMatch: false }, compositeTop), false);
+  assert.equal(cloudTest.flatLayAccepted(0.95, { ...otherwiseAccepted, layerCoverageMatch: false }, compositeTop), false);
+  assert.equal(cloudTest.flatLayAccepted(0.95, otherwiseAccepted, compositeTop), true);
+  const verifierPrompt = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js", import.meta.url), "utf8");
+  assert.match(verifierPrompt, /图1长袖而图2露出明显前臂必须为 false/);
+  assert.match(verifierPrompt, /图1几乎平齐而图2变成明显低领或吊带必须为 false/);
+});
+
+test("平铺抠图失败保留可区分的质量原因", () => {
+  assert.equal(cloudTest.mattingFailureReason([{ transparentRatio: 0.04, transparentBorderRatio: 0.5 }]), "平铺候选透明背景面积不足。");
+  assert.equal(cloudTest.mattingFailureReason([{ transparentRatio: 0.97, transparentBorderRatio: 1 }]), "平铺候选衣物主体过小或被过度去除。");
+  assert.equal(cloudTest.mattingFailureReason([{ transparentRatio: 0.4, transparentBorderRatio: 0.9 }]), "平铺候选触碰画布边缘或仍有连边背景。");
+  assert.equal(cloudTest.mattingFailureReason([]), "平铺图边缘抠图未通过质量检查。");
+});
 
 const createMemoryDatabase = () => {
   let state = new Map();
@@ -227,7 +293,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(freeQuota.hangerRemoval.limit, 1);
   const health = readResponse(await main(makeEvent("/api/health")));
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-05-outfit-composite-flatlay-v16");
+  assert.equal(health.body.buildId, "2026-08-06-upper-structure-guard-v18");
   const passwordHash = await bcrypt.hash("password123", 4);
   const tables = {
     users: [{ id: 1, username: "tester", role: "admin", password_hash: passwordHash, recovery_hash: passwordHash, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -553,7 +619,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-05-outfit-composite-flatlay-v16");
+  assert.equal(failedRecognition.body.buildId, "2026-08-06-upper-structure-guard-v18");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
