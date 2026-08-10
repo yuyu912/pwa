@@ -28,4 +28,6 @@ uniCloud-aliyun/cloudfunctions/wardrobe-api/.env.local
 !scripts/
 !scripts/outfit-stability.mjs
 !scripts/segment-cloth-pilot.cjs
+!scripts/viapi-cloud-diagnostic.mjs
 !test/outfit-stability.manifest.example.json
+!test/viapi-diagnostic.manifest.example.json

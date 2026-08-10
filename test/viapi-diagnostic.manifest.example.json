@@ -1,0 +1,14 @@
+{
+  "samples": [
+    {
+      "id": "polka-dot-top-black-wide-pants",
+      "localPath": "C:/absolute/path/to/first-person-photo.jpg",
+      "expectedCategories": ["上衣", "裤子"]
+    },
+    {
+      "id": "layered-cardigan-light-jeans",
+      "localPath": "C:/absolute/path/to/second-person-photo.png",
+      "expectedCategories": ["上衣", "裤子"]
+    }
+  ]
+}

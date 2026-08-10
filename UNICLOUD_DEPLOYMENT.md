@@ -95,6 +95,7 @@ COS_BUCKET
 COS_REGION
 COS_CI_ENABLED
 DASHSCOPE_API_KEY
+DASHSCOPE_WORKSPACE_ID
 AMAP_WEATHER_KEY
 DASHSCOPE_BASE_URL
 QWEN_VL_MODEL
@@ -114,6 +115,8 @@ ALLOWED_ORIGINS
 - `COS_REGION=ap-guangzhou`
 - `COS_CI_ENABLED=true`
 - `DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
+- `DASHSCOPE_WORKSPACE_ID` 使用百炼华北 2（北京）已开通 AI 试衣的业务空间 ID，不要填写 API Key。
+- 配置 `DASHSCOPE_WORKSPACE_ID` 后，正式整套衣物分割会切换到 `aitryon-parsing-v1`；未配置时继续使用原 SegmentCloth。当前官方价为 0.004 元/张，价格变化时先更新预算说明。
 - `DASHSCOPE_EMBEDDING_URL=https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding`
 - `VISION_EMBEDDING_MODEL=tongyi-embedding-vision-flash-2026-03-06`
 - `VISION_EMBEDDING_DIMENSION=512`

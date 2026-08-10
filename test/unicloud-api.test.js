@@ -1,10 +1,284 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createRequire } from "node:module";
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import bcrypt from "bcryptjs";
 
 const require = createRequire(import.meta.url);
-const cloudTest = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js")._test;
+const cloudModule = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js");
+const cloudTest = cloudModule._test;
+const inspiration = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/inspiration.js");
+
+test("灵感链接只接受小红书 HTTPS 单条地址", () => {
+  assert.equal(inspiration.extractXiaohongshuUrl("复制打开 https://xhslink.com/a1B2C 分享"), "https://xhslink.com/a1B2C");
+  assert.equal(inspiration.extractXiaohongshuUrl("夏天的白色连衣裙 http://xhslink.cn/o/5dr2g4e6GJT 复制后打开小红书"), "https://xhslink.cn/o/5dr2g4e6GJT");
+  assert.throws(() => inspiration.extractXiaohongshuUrl("http://xhslink.com/a1B2C"));
+  assert.throws(() => inspiration.extractXiaohongshuUrl("https://example.com/note"));
+});
+
+test("灵感公开读取拒绝本机和内网地址", () => {
+  for (const address of ["127.0.0.1", "10.0.0.8", "100.64.0.1", "172.16.4.2", "192.168.1.5", "169.254.2.3", "198.18.0.1", "::1", "::ffff:127.0.0.1", "fc00::1", "ff02::1"]) {
+    assert.equal(inspiration.isPrivateAddress(address), true, address);
+  }
+  assert.equal(inspiration.isPrivateAddress("8.8.8.8"), false);
+});
+
+test("灵感图片按文件头接受 JPG PNG WebP 并拒绝伪装内容", () => {
+  assert.equal(inspiration.detectImageMime(Buffer.from([0xff, 0xd8, 0xff, 0x00])), "image/jpeg");
+  assert.equal(inspiration.detectImageMime(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "image/png");
+  assert.equal(inspiration.detectImageMime(Buffer.from("RIFF1234WEBP", "ascii")), "image/webp");
+  assert.equal(inspiration.detectImageMime(Buffer.from("<html>not an image</html>")), "");
+});
+
+test("灵感链接 DNS 固定连接兼容 Node 单地址和 all:true 回调", () => {
+  const lookup = inspiration._test.pinnedLookup({ address: "8.8.8.8", family: 4 });
+  lookup("example.test", {}, (error, address, family) => {
+    assert.equal(error, null);
+    assert.equal(address, "8.8.8.8");
+    assert.equal(family, 4);
+  });
+  lookup("example.test", { all: true }, (error, addresses) => {
+    assert.equal(error, null);
+    assert.deepEqual(addresses, [{ address: "8.8.8.8", family: 4 }]);
+  });
+});
+
+test("灵感图片下载只在已验证公网地址之间容错", async () => {
+  const calls = [];
+  const result = await inspiration._test.withAddressFallback([
+    { address: "8.8.8.8", family: 4 },
+    { address: "1.1.1.1", family: 4 }
+  ], async (address) => {
+    calls.push(address.address);
+    if (calls.length === 1) throw Object.assign(new Error("timeout"), { code: "INSPIRATION_PUBLIC_PAGE_TIMEOUT" });
+    return "downloaded";
+  });
+  assert.equal(result, "downloaded");
+  assert.deepEqual(calls, ["8.8.8.8", "1.1.1.1"]);
+
+  let blockedCalls = 0;
+  await assert.rejects(inspiration._test.withAddressFallback([
+    { address: "8.8.8.8", family: 4 },
+    { address: "1.1.1.1", family: 4 }
+  ], async () => {
+    blockedCalls += 1;
+    throw Object.assign(new Error("blocked"), { code: "INSPIRATION_PUBLIC_PAGE_BLOCKED" });
+  }), (error) => error.code === "INSPIRATION_PUBLIC_PAGE_BLOCKED");
+  assert.equal(blockedCalls, 1);
+});
+
+test("公开元信息只读取标准字段且图片去重后最多三张", () => {
+  const html = `<meta property="og:title" content="一周通勤穿搭">
+    <meta property="og:image" content="https://ci.xiaohongshu.com/a.jpg">
+    <script type="application/ld+json">{"author":{"name":"公开作者"},"image":["https://ci.xiaohongshu.com/a.jpg","https://sns-webpic-qc.xhscdn.com/b.webp","https://sns-webpic-qc.xhscdn.com/c.png","https://sns-webpic-qc.xhscdn.com/d.jpg"]}</script>`;
+  const metadata = inspiration.parsePublicMetadata(html, "https://www.xiaohongshu.com/explore/1");
+  assert.equal(metadata.title, "一周通勤穿搭");
+  assert.equal(metadata.author, "公开作者");
+  assert.equal(metadata.images.length, 3);
+  assert.equal(new Set(metadata.images).size, 3);
+});
+
+test("公开元信息过滤小红书平台 Logo 且识别笔记错误页", () => {
+  const html = `<meta property="og:title" content="公开笔记">
+    <meta property="og:image" content="https://picasso-static.xiaohongshu.com/fe-platform/default.png">`;
+  const metadata = inspiration.parsePublicMetadata(html, "https://www.xiaohongshu.com/explore/1");
+  assert.equal(metadata.title, "公开笔记");
+  assert.deepEqual(metadata.images, []);
+  assert.equal(inspiration._test.isPublicErrorPage("", "https://www.xiaohongshu.com/404?error_code=300031"), true);
+  assert.equal(inspiration._test.isPublicErrorPage("当前笔记暂时无法浏览", "https://www.xiaohongshu.com/explore/1"), true);
+  assert.equal(inspiration._test.isPublicErrorPage("公开笔记正文", "https://www.xiaohongshu.com/explore/1"), false);
+});
+
+test("公开 INITIAL_STATE 只提取当前笔记图片且不执行尾随脚本", () => {
+  delete globalThis.__inspirationUnsafeExecuted;
+  const html = `<meta property="og:image" content="https://picasso-static.xiaohongshu.com/fe-platform/default.png">
+    <script>window.__INITIAL_STATE__ = {"note":{"noteDetailMap":{"abc123":{"note":{"imageList":[
+      {"urlDefault":"http://sns-webpic-qc.xhscdn.com/main.jpg","caption":"undefined"},
+      {"urlPre":"https://sns-webpic-qc.xhscdn.com/second.webp"}
+    ]}},"other456":{"note":{"imageList":[{"urlDefault":"https://sns-webpic-qc.xhscdn.com/other.jpg"}]}}}},"unused":undefined};globalThis.__inspirationUnsafeExecuted=true;</script>`;
+  const metadata = inspiration.parsePublicMetadata(html, "https://www.xiaohongshu.com/explore/abc123");
+  assert.deepEqual(metadata.images, [
+    "https://sns-webpic-qc.xhscdn.com/main.jpg",
+    "https://sns-webpic-qc.xhscdn.com/second.webp"
+  ]);
+  assert.equal(globalThis.__inspirationUnsafeExecuted, undefined);
+  assert.equal(inspiration._test.parseInitialState(html).unused, null);
+  assert.equal(inspiration._test.parseInitialState(html).note.noteDetailMap.abc123.note.imageList[0].caption, "undefined");
+  assert.deepEqual(inspiration._test.initialStateImages(html, "https://www.xiaohongshu.com/explore/other999"), []);
+  assert.equal(inspiration._test.normalizePublicImageUrl("http://example.com/not-allowed.jpg", "https://www.xiaohongshu.com"), "http://example.com/not-allowed.jpg");
+});
+
+test("公开 INITIAL_STATE 异常或超限时安全降级", () => {
+  assert.equal(inspiration._test.parseInitialState("window.__INITIAL_STATE__={broken}"), null);
+  assert.equal(inspiration._test.parseInitialState(`window.__INITIAL_STATE__={"padding":"${"x".repeat(513 * 1024)}"}`), null);
+  assert.deepEqual(inspiration._test.initialStateImages("window.__INITIAL_STATE__={}", "https://www.xiaohongshu.com/explore/abc123"), []);
+});
+
+test("AI 灵感结果过滤越界槽位和人物品牌材质字段", () => {
+  const result = inspiration.sanitizeOutfitAnalysis({
+    mainImageIndex: 8,
+    summary: "一套清爽通勤穿搭",
+    bodyShape: "禁止保存",
+    slots: [
+      { slot: "top", category: "上衣", name: "白衬衫", color: "白色", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"], brand: "禁止保存", material: "禁止保存" },
+      { slot: "shoes", category: "鞋子", name: "鞋" },
+      { slot: "top", category: "上衣", name: "重复上装" }
+    ]
+  });
+  assert.equal(result.mainImageIndex, 2);
+  assert.equal(result.slots.length, 1);
+  assert.equal(result.slots[0].name, "白衬衫");
+  assert.equal("brand" in result.slots[0], false);
+  assert.equal("material" in result.slots[0], false);
+});
+
+test("灵感清洗兼容有限类别修饰、槽位别名和常见外层结构", () => {
+  const decorated = inspiration.sanitizeOutfitAnalysis({
+    garments: [{ slot: "dress", category: "白色无袖连衣裙", name: "亚麻小白裙", color: "白色" }]
+  });
+  assert.equal(decorated.slots[0].category, "连衣裙");
+  assert.equal(decorated.slots[0].slot, "dress");
+  const objectSlots = inspiration.sanitizeOutfitAnalysis({
+    slots: { upper: { slot: "上装", category: "衬衫", name: "蓝色衬衫" }, lower: { slot: "lower", category: "阔腿裤" } }
+  });
+  assert.deepEqual(objectSlots.slots.map((slot) => [slot.slot, slot.category]), [["top", "上衣"], ["bottom", "裤子"]]);
+  assert.throws(() => inspiration.sanitizeOutfitAnalysis({ outfit: [{ category: "裙装", name: "裙装" }] }), (error) => {
+    assert.equal(error.code, "INSPIRATION_NO_OUTFIT");
+    assert.equal(error.safeDiagnostic.source, "outfit_array");
+    return true;
+  });
+});
+
+test("灵感 AI 首次有效不重试，首次无效只重试一次并合并 Token", async () => {
+  const response = (payload, usage) => ({
+    statusCode: 200,
+    data: { model: "qwen-test", usage, choices: [{ message: { content: JSON.stringify(payload) } }] }
+  });
+  let calls = 0;
+  const firstSuccess = await cloudTest.analyzeInspirationWithRequester(["https://image.test/1.jpg"], { model: "qwen-test", sourceTitle: "白裙" }, async () => {
+    calls += 1;
+    return response({ slots: [{ slot: "dress", category: "连衣裙", name: "白裙" }] }, { prompt_tokens: 10, completion_tokens: 2 });
+  });
+  assert.equal(calls, 1);
+  assert.equal(firstSuccess.retryCount, 0);
+
+  calls = 0;
+  const retried = await cloudTest.analyzeInspirationWithRequester(["https://image.test/1.jpg"], { model: "qwen-test", sourceTitle: "夏天的白色连衣裙穿搭" }, async (body) => {
+    calls += 1;
+    if (calls === 1) return response({ slots: [{ slot: "shoes", category: "鞋子" }] }, { input_tokens: 11, output_tokens: 3 });
+    assert.match(body.messages[0].content[1].text, /公开标题仅作辅助背景/);
+    return response({ slots: [{ slot: "dress", category: "白色连衣裙", name: "小白裙" }] }, { prompt_tokens: 13, completion_tokens: 5 });
+  });
+  assert.equal(calls, 2);
+  assert.equal(retried.retryCount, 1);
+  assert.deepEqual(retried.usage, { prompt_tokens: 24, completion_tokens: 8 });
+  assert.equal(retried.result.slots[0].category, "连衣裙");
+});
+
+test("灵感 AI 第二次仍无有效槽位时返回不含原始内容的安全诊断", async () => {
+  let calls = 0;
+  await assert.rejects(
+    cloudTest.analyzeInspirationWithRequester(["https://image.test/1.jpg"], { model: "qwen-test", sourceTitle: "标题" }, async () => {
+      calls += 1;
+      return { statusCode: 200, data: { usage: { prompt_tokens: 10, completion_tokens: 2 }, choices: [{ message: { content: JSON.stringify({ slots: [] }) } }] } };
+    }),
+    (error) => {
+      assert.equal(error.code, "INSPIRATION_NO_OUTFIT");
+      assert.equal(error.safeDiagnostic.retryCount, 1);
+      assert.equal(JSON.stringify(error.safeDiagnostic).includes("标题"), false);
+      assert.deepEqual(error.providerUsage, { prompt_tokens: 20, completion_tokens: 4 });
+      return true;
+    }
+  );
+  assert.equal(calls, 2);
+});
+
+test("灵感 AI 第二次网络失败也只重试一次并保留首次用量", async () => {
+  let calls = 0;
+  await assert.rejects(
+    cloudTest.analyzeInspirationWithRequester(["https://image.test/1.jpg"], { model: "qwen-test", sourceTitle: "标题" }, async () => {
+      calls += 1;
+      if (calls === 2) throw Object.assign(new Error("timeout"), { code: "QWEN_TIMEOUT" });
+      return { statusCode: 200, data: { usage: { prompt_tokens: 9, completion_tokens: 1 }, choices: [{ message: { content: JSON.stringify({ slots: [] }) } }] } };
+    }),
+    (error) => {
+      assert.equal(error.code, "QWEN_TIMEOUT");
+      assert.equal(error.safeDiagnostic.retryCount, 1);
+      assert.deepEqual(error.providerUsage, { prompt_tokens: 9, completion_tokens: 1 });
+      return true;
+    }
+  );
+  assert.equal(calls, 2);
+});
+
+test("衣橱匹配坚持同品类、55分门槛和每槽位前三件", () => {
+  const slot = { slot: "top", category: "上衣", name: "白色通勤上衣", color: "米白", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] };
+  const items = [
+    { id: "1", category: "上衣", color: "白色", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] },
+    { id: "2", category: "上衣", color: "米白", pattern: "纯色", styles: ["通勤"], scenes: [] },
+    { id: "3", category: "上衣", color: "奶油", pattern: "条纹", styles: [], scenes: [] },
+    { id: "4", category: "上衣", color: "白色", pattern: "波点", styles: [], scenes: [] },
+    { id: "5", category: "裤子", color: "白色", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] },
+    { id: "6", category: "上衣", color: "黑色", pattern: "条纹", styles: [], scenes: [] }
+  ];
+  const result = inspiration.matchWardrobe([slot], items);
+  assert.deepEqual(result.matches[0].candidates.map((entry) => entry.item.id), ["1", "2", "3"]);
+  assert.equal(result.matches[0].candidates.some((entry) => entry.item.id === "5"), false);
+  assert.equal(result.matches[0].candidates.some((entry) => entry.item.id === "6"), false);
+});
+
+test("整套衣物完整度区分完整、局部遮挡和需要单件补拍", () => {
+  assert.equal(cloudTest.outfitCompleteness({
+    category: "裤子", structureFacts: { riseAndWaistband: "高腰腰头" },
+    occlusions: [], segmentationStatus: "ready", processingStatus: "cropped"
+  }).completenessStatus, "ready");
+  assert.equal(cloudTest.outfitCompleteness({
+    category: "裤子", structureFacts: { riseAndWaistband: "" },
+    occlusions: [{ type: "上衣遮挡裤腰" }], segmentationStatus: "ready", processingStatus: "cropped"
+  }).completenessStatus, "partial_visible");
+  assert.equal(cloudTest.outfitCompleteness({
+    category: "裤子", structureFacts: {}, occlusions: [],
+    segmentationStatus: "failed", processingStatus: "failed", processingError: "轮廓不清"
+  }).completenessStatus, "needs_single_item_photo");
+});
+
+test("局部可见衣物只按真实可见像素验收", () => {
+  const verdict = {
+    sameGarment: true, colorMatch: true, patternMatch: true,
+    noPersonResidue: true, clearTransparentContour: true,
+    visibleStructurePreserved: true, shapeMatch: false,
+    fixedDetailsMatch: false, fidelityScore: 95
+  };
+  assert.equal(cloudTest.sourceMaskAccepted(verdict, { category: "裤子" }, 100, true), true);
+  assert.equal(cloudTest.sourceMaskAccepted(verdict, { category: "裤子" }, 100, false), false);
+});
+
+test("百炼原像素抠图不因隐藏结构或综合分数被二次判退", () => {
+  const verdict = {
+    sameGarment: true, colorMatch: true, patternMatch: true,
+    noPersonResidue: true, clearTransparentContour: true,
+    visibleStructurePreserved: true, shapeMatch: false,
+    fixedDetailsMatch: false, waistbandMatch: false, fidelityScore: 85
+  };
+  const parsed = {
+    category: "裤子", segmentationProvider: "aliyun_aitryon_parsing",
+    segmentationStatus: "ready", completenessStatus: "ready", cutoutKey: "parsed.png"
+  };
+  assert.equal(cloudTest.sourceMaskAccepted(verdict, parsed, 100, false), true);
+  assert.equal(cloudTest.usesParsedSourceDisplay(parsed), true);
+  assert.equal(cloudModule.requiresOutfitImageEdit(parsed), false);
+});
+
+test("生产图片分割请求一次同时提取上衣和下装", () => {
+  assert.equal(cloudTest.outfitParsingType({ slot: "top" }), "upper");
+  assert.equal(cloudTest.outfitParsingType({ slot: "bottom" }), "lower");
+  assert.deepEqual(cloudTest.buildOutfitParsingRequestBody("https://images.test/person.jpg", ["upper", "lower"]), {
+    model: "aitryon-parsing-v1",
+    input: { image_url: "https://images.test/person.jpg" },
+    parameters: { clothes_type: ["upper", "lower"] }
+  });
+});
 const garmentMask = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/garment-mask.js");
 const garmentMaskTest = garmentMask._test;
 
@@ -12,6 +286,11 @@ test("衣橱展示画布保持原像素并将衣物居中放入正方形透明�
   const width = 8;
   const height = 4;
   const rgba = Buffer.alloc(width * height * 4);
+  for (let index = 0; index < width * height; index += 1) {
+    rgba[index * 4] = 255;
+    rgba[index * 4 + 1] = 255;
+    rgba[index * 4 + 2] = 255;
+  }
   for (let y = 1; y <= 2; y += 1) for (let x = 2; x <= 5; x += 1) {
     const offset = (y * width + x) * 4;
     rgba[offset] = 80 + x;
@@ -31,6 +310,10 @@ test("衣橱展示画布保持原像素并将衣物居中放入正方形透明�
   assert.equal(visible.length, 8);
   assert.deepEqual(visible[0], [82, 121, 160, 255]);
   assert.deepEqual(visible.at(-1), [85, 122, 160, 255]);
+  for (let index = 0; index < output.width * output.height; index += 1) {
+    const offset = index * 4;
+    if (output.data[offset + 3] === 0) assert.deepEqual([...output.data.subarray(offset, offset + 4)], [0, 0, 0, 0]);
+  }
 });
 
 test("矩形人物裁剪不得伪装成清晰衣物轮廓", () => {
@@ -62,6 +345,277 @@ test("SegmentCloth 类别地址兼容直接 Map 和 SDK key 包装格式", () =>
     cloudTest.normalizeSegmentClothClassUrls({ key: `{'tops':${topsUrl},'pants':${pantsUrl}}` }),
     { tops: topsUrl, pants: pantsUrl }
   );
+});
+
+test("VIAPI 临时 OSS 上传使用真实主机、Content-Length 和完整 multipart 表单", async () => {
+  const https = require("node:https");
+  const originalRequest = https.request;
+  let capturedOptions;
+  let capturedBody;
+  https.request = (options, callback) => {
+    capturedOptions = options;
+    const request = new EventEmitter();
+    request.end = (body) => {
+      capturedBody = Buffer.from(body);
+      const response = new EventEmitter();
+      response.statusCode = 201;
+      callback(response);
+      queueMicrotask(() => response.emit("end"));
+    };
+    request.destroy = (error) => request.emit("error", error);
+    return request;
+  };
+  try {
+    await cloudTest.postAuthorizedOssObject("temporary-bucket", {
+      host: "temporary-bucket.oss-cn-shanghai.aliyuncs.com",
+      OSSAccessKeyId: "temporary-id",
+      policy: "encoded-policy",
+      Signature: "temporary-signature",
+      key: "inputs/test.jpg",
+      success_action_status: "201",
+      file: { filename: "inputs/test.jpg", contentType: "image/jpeg", content: Readable.from(Buffer.from("image-bytes")) }
+    });
+  } finally {
+    https.request = originalRequest;
+  }
+  assert.equal(capturedOptions.hostname, "temporary-bucket.oss-cn-shanghai.aliyuncs.com");
+  assert.equal(capturedOptions.headers["Content-Length"], capturedBody.length);
+  const multipart = capturedBody.toString("utf8");
+  assert.match(multipart, /name="OSSAccessKeyId"\r\n\r\ntemporary-id/);
+  assert.match(multipart, /name="Signature"\r\n\r\ntemporary-signature/);
+  assert.match(multipart, /filename="inputs\/test.jpg"/);
+  assert.match(multipart, /image-bytes/);
+  assert.doesNotMatch(multipart, /name="host"/);
+});
+
+test("VIAPI RPC v2 使用固定排序与查询签名，不依赖 x-acs 请求头", async () => {
+  const previousId = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+  const previousSecret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+  const previousSecurityToken = process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+  const previousDedicatedId = process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+  const previousDedicatedSecret = process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+  delete process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+  delete process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+  process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = "testid";
+  process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = "testsecret";
+  delete process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+  try {
+    assert.equal(cloudTest.viapiPercentEncode("a b!*'()"), "a%20b%21%2A%27%28%29");
+    assert.deepEqual(cloudTest.flattenViapiQuery({ ClothClass: ["tops", "coat"], OutMode: 1, Empty: null }), {
+      "ClothClass.1": "tops",
+      "ClothClass.2": "coat",
+      OutMode: "1"
+    });
+    const requestInfo = cloudTest.buildViapiRpcV2Request("SegmentCloth", {
+      ImageURL: "https://example.test/a b.jpg",
+      "ClothClass.1": "tops"
+    }, { timestamp: "2026-08-07T00:00:00Z", nonce: "fixed" });
+    assert.equal(requestInfo.signature, "TwIkhe3Ya8wFfTwx9T9UecsKEso=");
+    assert.match(requestInfo.path, /Action=SegmentCloth/);
+    assert.match(requestInfo.path, /AccessKeyId=testid/);
+    assert.match(requestInfo.path, /SignatureMethod=HMAC-SHA1/);
+    assert.match(requestInfo.path, /Signature=TwIkhe3Ya8wFfTwx9T9UecsKEso%3D/);
+    process.env.ALIBABA_CLOUD_SECURITY_TOKEN = "test-security-token";
+    const authorizationInfo = cloudTest.buildViapiRpcV2Request("AuthorizeFileUpload", {
+      Product: "imageseg",
+      RegionId: "cn-shanghai"
+    }, {
+      hostname: "openplatform.aliyuncs.com",
+      method: "GET",
+      version: "2019-12-19",
+      timestamp: "2026-08-07T00:00:00Z",
+      nonce: "fixed"
+    });
+    assert.equal(authorizationInfo.hostname, "openplatform.aliyuncs.com");
+    assert.equal(authorizationInfo.method, "GET");
+    assert.match(authorizationInfo.path, /Action=AuthorizeFileUpload/);
+    assert.match(authorizationInfo.path, /Version=2019-12-19/);
+    assert.match(authorizationInfo.path, /SecurityToken=test-security-token/);
+    assert.match(authorizationInfo.stringToSign, /^GET&%2F&/);
+    process.env.WARDROBE_VIAPI_ACCESS_KEY_ID = "dedicated-id";
+    process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET = "dedicated-secret";
+    const dedicatedInfo = cloudTest.buildViapiRpcV2Request("SegmentCloth", { ImageURL: "https://example.test/a.jpg" }, {
+      timestamp: "2026-08-07T00:00:00Z",
+      nonce: "dedicated"
+    });
+    assert.match(dedicatedInfo.path, /AccessKeyId=dedicated-id/);
+    assert.doesNotMatch(dedicatedInfo.path, /SecurityToken=/);
+    delete process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+    delete process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+    delete process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+
+    const https = require("node:https");
+    const originalRequest = https.request;
+    let capturedOptions;
+    https.request = (options, callback) => {
+      capturedOptions = options;
+      const request = new EventEmitter();
+      request.end = () => {
+        const response = new EventEmitter();
+        response.statusCode = 200;
+        callback(response);
+        queueMicrotask(() => {
+          response.emit("data", Buffer.from('{"RequestId":"provider-test","Data":{}}'));
+          response.emit("end");
+        });
+      };
+      request.destroy = (error) => request.emit("error", error);
+      return request;
+    };
+    try {
+      const response = await cloudTest.viapiRpcV2Request("SegmentCloth", { "ClothClass.1": "tops", ImageURL: "https://example.test/a.jpg" }, { timestamp: "2026-08-07T00:00:00Z", nonce: "fixed", stage: "服饰类别分割" });
+      assert.equal(response.body.RequestId, "provider-test");
+    } finally {
+      https.request = originalRequest;
+    }
+    assert.equal(capturedOptions.hostname, "imageseg.cn-shanghai.aliyuncs.com");
+    assert.equal(capturedOptions.headers["Content-Length"], 0);
+    assert.ok(!Object.keys(capturedOptions.headers).some((name) => name.toLowerCase().startsWith("x-acs-")));
+  } finally {
+    if (previousId === undefined) delete process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+    else process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = previousId;
+    if (previousSecret === undefined) delete process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+    else process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = previousSecret;
+    if (previousSecurityToken === undefined) delete process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+    else process.env.ALIBABA_CLOUD_SECURITY_TOKEN = previousSecurityToken;
+    if (previousDedicatedId === undefined) delete process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+    else process.env.WARDROBE_VIAPI_ACCESS_KEY_ID = previousDedicatedId;
+    if (previousDedicatedSecret === undefined) delete process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+    else process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET = previousDedicatedSecret;
+  }
+});
+
+test("VIAPI RPC v2 Advance 全链路不再调用 SDK ACS3 文件授权", async () => {
+  const previousId = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+  const previousSecret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+  const previousSecurityToken = process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+  const previousDedicatedId = process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+  const previousDedicatedSecret = process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+  delete process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+  delete process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+  process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = "testid";
+  process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = "testsecret";
+  process.env.ALIBABA_CLOUD_SECURITY_TOKEN = "test-security-token";
+  const https = require("node:https");
+  const originalRequest = https.request;
+  const calls = [];
+  const responses = [
+    {
+      status: 200,
+      body: JSON.stringify({
+        RequestId: "authorize-request",
+        Bucket: "temporary-bucket",
+        Endpoint: "oss-cn-shanghai.aliyuncs.com",
+        ObjectKey: "inputs/test.jpg",
+        AccessKeyId: "temporary-id",
+        EncodedPolicy: "temporary-policy",
+        Signature: "temporary-signature"
+      })
+    },
+    { status: 201, body: "" },
+    { status: 200, body: '{"RequestId":"segment-request","Data":{"Elements":[{"ImageURL":"https://example.test/mask.png"}]}}' }
+  ];
+  https.request = (options, callback) => {
+    const current = responses.shift();
+    calls.push(options);
+    const request = new EventEmitter();
+    request.end = () => {
+      const response = new EventEmitter();
+      response.statusCode = current.status;
+      callback(response);
+      queueMicrotask(() => {
+        if (current.body) response.emit("data", Buffer.from(current.body));
+        response.emit("end");
+      });
+    };
+    request.destroy = (error) => request.emit("error", error);
+    return request;
+  };
+  try {
+    const ImagesegClient = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/node_modules/@alicloud/imageseg20191230");
+    const client = cloudTest.getGarmentSegmentationDiagnosticClient();
+    await client.segmentClothAdvance(new ImagesegClient.SegmentClothAdvanceRequest({
+      imageURLObject: Readable.from(Buffer.from("image-bytes")),
+      clothClass: ["tops"],
+      outMode: 1,
+      returnForm: "mask"
+    }), { autoretry: false });
+    assert.deepEqual(calls.map((item) => [item.hostname, item.method]), [
+      ["openplatform.aliyuncs.com", "GET"],
+      ["temporary-bucket.oss-cn-shanghai.aliyuncs.com", "POST"],
+      ["imageseg.cn-shanghai.aliyuncs.com", "POST"]
+    ]);
+    assert.ok(calls.filter((item) => item.hostname !== "temporary-bucket.oss-cn-shanghai.aliyuncs.com")
+      .every((item) => !Object.keys(item.headers).some((name) => name.toLowerCase().startsWith("x-acs-"))));
+    assert.match(calls[2].path, /ImageURL=http%3A%2F%2Ftemporary-bucket\.oss-cn-shanghai\.aliyuncs\.com%2Finputs%2Ftest\.jpg/);
+    assert.match(calls[0].path, /SecurityToken=test-security-token/);
+    assert.match(calls[2].path, /SecurityToken=test-security-token/);
+  } finally {
+    https.request = originalRequest;
+    if (previousId === undefined) delete process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+    else process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = previousId;
+    if (previousSecret === undefined) delete process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+    else process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = previousSecret;
+    if (previousSecurityToken === undefined) delete process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+    else process.env.ALIBABA_CLOUD_SECURITY_TOKEN = previousSecurityToken;
+    if (previousDedicatedId === undefined) delete process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+    else process.env.WARDROBE_VIAPI_ACCESS_KEY_ID = previousDedicatedId;
+    if (previousDedicatedSecret === undefined) delete process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+    else process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET = previousDedicatedSecret;
+  }
+});
+
+test("VIAPI RPC v2 将供应商失败映射为可定位的中文阶段", async () => {
+  const previousId = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+  const previousSecret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+  const previousDedicatedId = process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+  const previousDedicatedSecret = process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+  delete process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+  delete process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+  process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = "testid";
+  process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = "testsecret";
+  const https = require("node:https");
+  const originalRequest = https.request;
+  const responses = [
+    { status: 403, body: '{"Code":"Forbidden","RequestId":"request-403"}' },
+    { status: 429, body: '{"Code":"Throttling","RequestId":"request-429"}' },
+    { status: 500, body: '{"Code":"InternalError","RequestId":"request-500"}' },
+    { status: 200, body: "not-json" }
+  ];
+  https.request = (_options, callback) => {
+    const current = responses.shift();
+    const request = new EventEmitter();
+    request.end = () => {
+      const response = new EventEmitter();
+      response.statusCode = current.status;
+      callback(response);
+      queueMicrotask(() => { response.emit("data", Buffer.from(current.body)); response.emit("end"); });
+    };
+    request.destroy = (error) => request.emit("error", error);
+    return request;
+  };
+  try {
+    for (const [code, status, requestId] of [["Forbidden", 403, "request-403"], ["Throttling", 429, "request-429"], ["InternalError", 500, "request-500"]]) {
+      await assert.rejects(
+        cloudTest.viapiRpcV2Request("SegmentCloth", { ImageURL: "https://example.test/a.jpg" }, { stage: "服饰类别分割" }),
+        (error) => error.code === code && error.providerStatus === status && error.providerRequestId === requestId && error.segmentationStage === "服饰类别分割"
+      );
+    }
+    await assert.rejects(
+      cloudTest.viapiRpcV2Request("SegmentCloth", { ImageURL: "https://example.test/a.jpg" }, { stage: "服饰类别分割" }),
+      (error) => error.code === "VIAPI_INVALID_JSON" && error.segmentationStage === "服饰类别分割"
+    );
+  } finally {
+    https.request = originalRequest;
+    if (previousId === undefined) delete process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+    else process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = previousId;
+    if (previousSecret === undefined) delete process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+    else process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = previousSecret;
+    if (previousDedicatedId === undefined) delete process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+    else process.env.WARDROBE_VIAPI_ACCESS_KEY_ID = previousDedicatedId;
+    if (previousDedicatedSecret === undefined) delete process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+    else process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET = previousDedicatedSecret;
+  }
 });
 
 test("原像素蒙版裁剪保留全部可见像素并只修补低纹理小孔洞", () => {
@@ -409,21 +963,21 @@ test("关键结构附近不超过0.05%的分割锯齿可确定性修复", () => 
   assert.equal(cutout.visiblePixelPreservationScore, 100);
 });
 
-test("局部遮挡提示词锁定可见证据且只允许修改白色蒙版", () => {
-  const request = cloudTest.buildOcclusionRepairRequestBody(
+test("衣橱商品展示提示词引用原图、原像素与可选遮挡蒙版并锁定固定设计", () => {
+  const request = cloudTest.buildWardrobeProductRequestBody(
     "https://example.com/crop.jpg",
     "https://example.com/cutout.png",
     "https://example.com/mask.png",
     { sourceFingerprint: "b".repeat(64), slot: "top", category: "上衣", color: "米白", structure: "长袖双层系带上衣", structureFacts: { sleeveLength: "wrist_long", necklineRelation: "flush" } },
-    "qwen-image-2.0-pro-2026-06-22",
-    { width: 1024, height: 1024 }
+    "qwen-image-2.0-pro-2026-06-22"
   );
   assert.equal(request.input.messages[0].content.filter((item) => item.image).length, 3);
   assert.equal(request.parameters.n, 2);
   assert.equal(request.parameters.prompt_extend, false);
-  assert.match(request.input.messages[0].content.at(-1).text, /只允许修改图3白色蒙版/);
-  assert.match(request.input.messages[0].content.at(-1).text, /不得编造/);
+  assert.match(request.input.messages[0].content.at(-1).text, /完整、平整、居中的单件上衣商品展示图/);
+  assert.match(request.input.messages[0].content.at(-1).text, /不得标准化成基础款/);
   assert.match(request.input.messages[0].content.at(-1).text, /袖长必须到手腕/);
+  assert.equal(request.parameters.seed, cloudTest.deterministicSeed({ sourceFingerprint: "b".repeat(64), slot: "top", category: "上衣", color: "米白", structure: "长袖双层系带上衣", structureFacts: { sleeveLength: "wrist_long", necklineRelation: "flush" } }, "wardrobe-product"));
 });
 
 test("原像素蒙版使用独立准入规则，不再要求穿着图和平铺图向量相似度", () => {
@@ -451,19 +1005,23 @@ test("原像素蒙版即使总分98也必须通过透明轮廓清晰度", () => 
   assert.match(cloudTest.userFacingVerificationReason("clearTransparentContour"), /透明轮廓清晰度/);
 });
 
-test("分析阶段先完成服饰分割再删除人物原图，prepare 不回退整件生成", () => {
+test("分析阶段先完成服饰分割再删除人物原图，prepare 使用原像素参照生成商品展示且不回退人物裁剪", () => {
   const apiSource = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
   const cloudSource = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js", import.meta.url), "utf8");
   const analyzeRoute = apiSource.match(/const captureAnalyzeMatch[\s\S]*?const prepareDetectionMatch/)?.[0] || "";
   const prepareBody = cloudSource.match(/const prepareOutfitDetection = async \(detection\) => \{([\s\S]*?)\n\};/)?.[1] || "";
   assert.match(analyzeRoute, /segmentOutfitGarments\(capture\.source_key, analyzed\.detections/);
   assert.ok(analyzeRoute.indexOf("segmentOutfitGarments") < analyzeRoute.indexOf("deleteObject(capture.source_key)"));
-  assert.match(prepareBody, /verifySourceGarmentCutout\(detection\)/);
-  assert.doesNotMatch(prepareBody, /prepareGeneratedOutfitDetection|generateFlatLayCandidates/);
+  assert.match(prepareBody, /prepareWardrobeProductDisplay\(detection\)/);
+  assert.doesNotMatch(prepareBody, /selectedImageKey: detection\.cropKey/);
   assert.match(apiSource, /visiblePixelPreservationScore/);
   assert.match(apiSource, /segmentationStatus/);
-  assert.match(cloudSource, /segmentationStatus === "repair_pending"[\s\S]*?prepareOcclusionRepair\(detection\)/);
+  assert.match(cloudSource, /\["ready", "repair_pending"\][\s\S]*?prepareWardrobeProductDisplay\(detection\)/);
+  assert.match(cloudSource, /segmentCommodity/);
   assert.match(cloudSource, /for \(const clothClass of classes\)/);
+  assert.match(cloudSource, /SegmentClothAdvanceRequest/);
+  assert.match(cloudSource, /segmentCommodityAdvance/);
+  assert.doesNotMatch(cloudSource, /SegmentClothRequest\(\{\s*imageURL: source\.url/);
   assert.match(cloudSource, /clothClass: \[clothClass\]/);
   assert.match(cloudSource, /buildGarmentCutout\(\s*source\.buffer,/);
   assert.match(apiSource, /item\.repairMaskKey/);
@@ -567,15 +1125,15 @@ test("组合上装第一轮失败后只允许一次双图纠错", () => {
   assert.match(body.input.messages[0].content[2].text, /长袖被缩短，内层领口过低/);
 });
 
-test("核验原因转为中文且客户端显示原像素蒙版阶段", () => {
+test("核验原因转为中文且客户端显示平整商品图阶段", () => {
   assert.equal(cloudTest.userFacingVerificationReason("necklineHeightMatch 与 layerCoverageMatch 不通过"), "领口高度一致性 与 层次覆盖一致性 不通过");
   const clientSource = require("node:fs").readFileSync(new URL("../miniprogram/pages/outfit-capture/index.js", import.meta.url), "utf8");
   const markup = require("node:fs").readFileSync(new URL("../miniprogram/pages/outfit-capture/index.wxml", import.meta.url), "utf8");
   const apiSource = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
   assert.doesNotMatch(clientSource, /Promise\.all\(Array\.from\(\{ length: Math\.min\(2/);
   assert.match(clientSource, /prepared\.processingStatus === "queued"/);
-  assert.match(markup, /正在检查人物残留、袖长、领口和固定结构/);
-  assert.match(markup, /原图衣物像素已保真提取/);
+  assert.match(markup, /正在依据原图整理平整商品展示图/);
+  assert.match(markup, /平整商品展示图已通过原图真实性核验/);
   assert.match(apiSource, /segmentationStatus:/);
   assert.match(apiSource, /visiblePixelPreservationScore:/);
 });
@@ -806,7 +1364,9 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     });
   };
   let embeddingShouldFail = false;
+  let embeddingCallCount = 0;
   cloudServices.generateImageEmbeddings = async (keys) => {
+    embeddingCallCount += 1;
     if (embeddingShouldFail) throw Object.assign(new Error("test embedding unavailable"), { status: 502 });
     return ({
     model: "tongyi-embedding-vision-flash-2026-03-06",
@@ -821,7 +1381,25 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
       requestId: "test-embedding-request"
     });
   };
-  cloudServices.deleteObject = async () => {};
+  const deletedCloudKeys = [];
+  cloudServices.deleteObject = async (key) => { deletedCloudKeys.push(key); };
+  cloudServices.createInspirationUpload = (userId, recordId, mimeType) => ({
+    sourceKey: `inspirations/${userId}/${recordId}/source.${mimeType === "image/png" ? "png" : "jpg"}`,
+    uploadUrl: "https://cos.test/inspiration-upload",
+    expiresIn: 300
+  });
+  cloudServices.readObject = async () => Buffer.from([0xff, 0xd8, 0xff, 0x00]);
+  const successfulInspirationAnalysis = async () => ({
+    result: {
+      mainImageIndex: 0,
+      summary: "白色通勤上装",
+      slots: [{ slot: "top", category: "上衣", name: "白色通勤上装", color: "白色", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"], confidence: 92, evidence: "画面可见" }]
+    },
+    usage: { prompt_tokens: 120, completion_tokens: 40 },
+    provider: "dashscope",
+    model: "qwen-test"
+  });
+  cloudServices.analyzeInspirationImages = successfulInspirationAnalysis;
 
   const { main, _test } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
   const fixedNow = Date.parse("2026-08-03T00:00:00.000Z");
@@ -830,6 +1408,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(_test.entitlementSummary({ trial_ends_at: "2026-08-02T00:00:00.000Z", subscription_ends_at: "2026-09-01T00:00:00.000Z" }, fixedNow).status, "active");
   const trialQuota = _test.quotaSummary({ trial_started_at: "2026-08-01T00:00:00.000Z", trial_ends_at: "2026-08-08T00:00:00.000Z" }, [
     { status: "completed", prompt_tokens: 10, completion_tokens: 5, hanger_edit_key: "edit.png", created_at: "2026-08-02T00:00:00.000Z" },
+    { mode: "inspiration", status: "completed", prompt_tokens: 100, completion_tokens: 50, created_at: "2026-08-02T00:30:00.000Z" },
     { status: "failed_retryable", prompt_tokens: 10, completion_tokens: 0, created_at: "2026-08-02T01:00:00.000Z" }
   ], fixedNow);
   assert.equal(trialQuota.mode, "trial");
@@ -868,11 +1447,36 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(freeQuota.mode, "free");
   assert.equal(freeQuota.recognition.limit, 3);
   assert.equal(freeQuota.hangerRemoval.limit, 1);
+  const previousDedicatedId = process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+  const previousDedicatedSecret = process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+  const previousDashscopeKey = process.env.DASHSCOPE_API_KEY;
+  const previousWorkspaceId = process.env.DASHSCOPE_WORKSPACE_ID;
+  process.env.WARDROBE_VIAPI_ACCESS_KEY_ID = "health-dedicated-id";
+  process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET = "health-dedicated-secret";
+  process.env.DASHSCOPE_API_KEY = "health-dashscope-key";
+  process.env.DASHSCOPE_WORKSPACE_ID = "health-workspace-id";
   const health = readResponse(await main(makeEvent("/api/health")));
+  if (previousDedicatedId === undefined) delete process.env.WARDROBE_VIAPI_ACCESS_KEY_ID;
+  else process.env.WARDROBE_VIAPI_ACCESS_KEY_ID = previousDedicatedId;
+  if (previousDedicatedSecret === undefined) delete process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET;
+  else process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET = previousDedicatedSecret;
+  if (previousDashscopeKey === undefined) delete process.env.DASHSCOPE_API_KEY;
+  else process.env.DASHSCOPE_API_KEY = previousDashscopeKey;
+  if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
+  else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-06-wardrobe-display-v25");
-  assert.equal(health.body.models.garmentSegmentation, "SegmentCloth");
-  assert.equal(health.body.garmentSegmentation.provider, "aliyun-viapi");
+  assert.equal(health.body.buildId, "2026-08-10-inspiration-initial-state-v38");
+  assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
+  assert.equal(health.body.models.productSegmentation, "SegmentCommodity");
+  assert.equal(health.body.garmentSegmentation.provider, "aliyun-bailian");
+  assert.deepEqual(health.body.outfitParsing, { enabled: true, region: "cn-beijing" });
+  assert.deepEqual(health.body.garmentSegmentationDiagnostic, {
+    enabled: true,
+    transport: "native_rpc_v2",
+    fileAuthorizationTransport: "native_rpc_v2",
+    credentialMode: "dedicated_ram",
+    productionEnabled: false
+  });
   assert.equal(health.body.models.outfitVision, "qwen3-vl-flash-2026-01-22");
   assert.equal(health.body.models.outfitImageEdit, "qwen-image-2.0-pro-2026-06-22");
   const firstSlot = await _test.acquireImageEditSlot(fixedNow);
@@ -928,6 +1532,15 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(login.body.user.role, "admin");
 
   const authorization = { authorization: `Bearer ${login.body.token}` };
+  const diagnosticInvite = readResponse(await main(makeEvent("/api/admin/invites", "POST", { code: "DIAGNOSTIC-MEMBER" }, { "x-admin-token": "test-admin-token" })));
+  assert.equal(diagnosticInvite.status, 201);
+  const diagnosticMember = readResponse(await main(makeEvent("/api/auth/register", "POST", { inviteCode: "DIAGNOSTIC-MEMBER", username: "diagnostic-member", password: "password123" })));
+  const memberAuthorization = { authorization: `Bearer ${diagnosticMember.body.token}` };
+  const memberUpload = readResponse(await main(makeEvent("/api/outfit-captures/presign", "POST", { mimeType: "image/jpeg", size: 500000 }, memberAuthorization)));
+  const forbiddenDiagnostic = readResponse(await main(makeEvent(`/api/admin/outfit-captures/${memberUpload.body.captureId}/segmentation-diagnostic`, "POST", {}, memberAuthorization)));
+  assert.equal(forbiddenDiagnostic.status, 403);
+  assert.match(forbiddenDiagnostic.body.error, /没有服饰分割诊断权限/);
+  assert.equal(readResponse(await main(makeEvent(`/api/outfit-captures/${memberUpload.body.captureId}`, "DELETE", null, memberAuthorization))).status, 200);
   process.env.AMAP_WEATHER_KEY = "test-amap-key";
   globalThis.uniCloud.httpclient.request = async () => ({
     status: 200,
@@ -976,22 +1589,25 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
       fidelityStatus: "pending", processingStatus: "cropped", processingError: ""
     }] };
   };
-  cloudServices.segmentOutfitGarments = async (_sourceKey, detections) => {
+  const segmentationTransports = [];
+  cloudServices.segmentOutfitGarments = async (_sourceKey, detections, _userId, _captureId, options = {}) => {
     outfitEvents.push("segment");
+    segmentationTransports.push(options.transport || "production_default");
     return detections.map((detection) => ({
       ...detection,
       cutoutKey: "outfit-segmented/test-top.png",
       imageOrigin: "source_garment_mask",
       visiblePixelPreservationScore: 100,
       occlusionRatio: 0,
-      segmentationStatus: "ready"
+      segmentationStatus: "ready",
+      segmentationProvider: "aliyun_aitryon_parsing"
     }));
   };
   cloudServices.prepareOutfitDetection = async (detection) => ({
     cutoutKey: detection.cutoutKey,
     flatLayKey: "",
     selectedImageKey: detection.cutoutKey,
-    imageOrigin: "source_garment_mask",
+    imageOrigin: "generated_wardrobe_display",
     visiblePixelPreservationScore: 100,
     occlusionRatio: 0,
     segmentationStatus: "accepted",
@@ -1017,15 +1633,28 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(outfitAnalyzed.body.originalDeleted, true);
   assert.equal(outfitAnalyzed.body.detections[0].segmentationStatus, "ready");
   assert.equal(outfitAnalyzed.body.detections[0].visiblePixelPreservationScore, 100);
+  assert.equal(segmentationTransports[0], "production_default");
   assert.deepEqual(outfitEvents.slice(0, 3).map((entry) => entry.startsWith("delete:") ? "delete" : entry), ["analyze", "segment", "delete"]);
+  const embeddingCallsBeforeOutfitPrepare = embeddingCallCount;
   const outfitPrepared = readResponse(await main(makeEvent(`/api/outfit-captures/${outfitUpload.body.captureId}/detections/d-0/prepare`, "POST", {}, authorization)));
   assert.equal(outfitPrepared.status, 200);
   assert.equal(outfitPrepared.body.processingStatus, "ready");
-  assert.equal(outfitPrepared.body.imageOrigin, "source_garment_mask");
+  assert.equal(outfitPrepared.body.imageOrigin, "generated_wardrobe_display");
+  assert.equal(outfitPrepared.body.topMatches.length, 0);
+  assert.equal(embeddingCallCount, embeddingCallsBeforeOutfitPrepare);
   const outfitCancelled = readResponse(await main(makeEvent(`/api/outfit-captures/${outfitUpload.body.captureId}`, "DELETE", null, authorization)));
   assert.equal(outfitCancelled.status, 200);
   assert.ok(deletedOutfitKeys.includes("outfit-crops/test-top.jpg"));
   assert.ok(deletedOutfitKeys.includes("outfit-segmented/test-top.png"));
+  const diagnosticUpload = readResponse(await main(makeEvent("/api/outfit-captures/presign", "POST", { mimeType: "image/jpeg", size: 500000 }, authorization)));
+  const diagnostic = readResponse(await main(makeEvent(`/api/admin/outfit-captures/${diagnosticUpload.body.captureId}/segmentation-diagnostic`, "POST", {}, authorization)));
+  assert.equal(diagnostic.status, 200);
+  assert.equal(diagnostic.body.transport, "native_rpc_v2");
+  assert.equal(diagnostic.body.originalDeleted, true);
+  assert.match(diagnostic.body.detections[0].cutoutUrl, /^https:\/\/images\.test\//);
+  assert.equal(segmentationTransports.at(-1), "native_rpc_v2");
+  const diagnosticCancelled = readResponse(await main(makeEvent(`/api/outfit-captures/${diagnosticUpload.body.captureId}`, "DELETE", null, authorization)));
+  assert.equal(diagnosticCancelled.status, 200);
   cloudServices.deleteObject = previousDeleteObject;
 
   const items = readResponse(await main(makeEvent("/api/items", "GET", null, authorization)));
@@ -1270,7 +1899,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-06-wardrobe-display-v25");
+  assert.equal(failedRecognition.body.buildId, "2026-08-10-inspiration-initial-state-v38");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
@@ -1314,6 +1943,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
 
   const saved = readResponse(await main(makeEvent("/api/items", "POST", {
     draftId: recognition.body.draftId,
+    sourceType: "outfit_supplement",
     name: "用户确认后的上衣",
     category: "上衣",
     color: "浅紫",
@@ -1327,6 +1957,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(saved.status, 201);
   assert.equal(saved.body.name, "用户确认后的上衣");
   assert.equal(saved.body.material, "棉混纺");
+  assert.equal(saved.body.source_type, "outfit_supplement");
 
   cloudServices.sourceHash = async () => "d".repeat(64);
   const manualUpload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
@@ -1343,12 +1974,14 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(recognitionCallCount, recognitionCallsBeforeManual);
   const manualSaved = readResponse(await main(makeEvent("/api/items/manual", "POST", {
     taskId: manualUpload.body.taskId,
+    sourceType: "single_item_upload",
     name: "基础抠图手动上衣",
     category: "上衣",
     color: "白色"
   }, authorization)));
   assert.equal(manualSaved.status, 201);
   assert.match(manualSaved.body.imageUrl, /cutouts/);
+  assert.equal(manualSaved.body.source_type, "single_item_upload");
   assert.equal(recognitionCallCount, recognitionCallsBeforeManual);
 
   const candidateUpload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
@@ -1492,6 +2125,78 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const deletedStoredResult = await memoryDatabase.collection("wr_clothing_items").doc(purchasedItem.id).get();
   assert.equal(deletedStoredResult.data[0].status, "inactive");
 
+  // 私密灵感截图经过确认后只匹配本人当前衣橱；历史可重开并删除。
+  const inspirationCreated = readResponse(await main(makeEvent("/api/inspirations", "POST", {
+    sourceType: "user_screenshot",
+    mimeType: "image/jpeg",
+    idempotencyKey: "inspiration-test-1"
+  }, authorization)));
+  assert.equal(inspirationCreated.status, 201);
+  assert.equal(inspirationCreated.body.record.status, "screenshot_required");
+  const inspirationId = inspirationCreated.body.record.id;
+  const inspirationAnalyzed = readResponse(await main(makeEvent(`/api/inspirations/${inspirationId}/analyze`, "POST", {}, authorization)));
+  assert.equal(inspirationAnalyzed.status, 200);
+  assert.equal(inspirationAnalyzed.body.status, "awaiting_confirmation");
+  const inspirationConfirmed = readResponse(await main(makeEvent(`/api/inspirations/${inspirationId}/confirm`, "PATCH", {
+    summary: "确认后的白色通勤上装",
+    slots: [{ slot: "top", category: "上衣", name: "白色通勤上装", color: "白色", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] }]
+  }, authorization)));
+  assert.equal(inspirationConfirmed.status, 200);
+  assert.equal(inspirationConfirmed.body.status, "ready");
+  assert.equal(inspirationConfirmed.body.matches[0].candidates.every((candidate) => candidate.item.category === "上衣"), true);
+  const inspirationHistory = readResponse(await main(makeEvent("/api/inspirations", "GET", null, authorization)));
+  assert.equal(inspirationHistory.body.records.length, 1);
+  const inspirationReopened = readResponse(await main(makeEvent(`/api/inspirations/${inspirationId}`, "GET", null, authorization)));
+  assert.equal(inspirationReopened.body.status, "ready");
+  assert.equal(Array.isArray(inspirationReopened.body.matches), true);
+  const inspirationDeleted = readResponse(await main(makeEvent(`/api/inspirations/${inspirationId}`, "DELETE", {}, authorization)));
+  assert.equal(inspirationDeleted.status, 204);
+  const inspirationHistoryAfterDelete = readResponse(await main(makeEvent("/api/inspirations", "GET", null, authorization)));
+  assert.equal(inspirationHistoryAfterDelete.body.records.length, 0);
+
+  // 平台图两次都无法形成槽位时转截图兜底；用户截图则提示更换截图，两者都正常返回记录。
+  const timestamp = "2026-08-10T00:00:00.000Z";
+  await memoryDatabase.collection("wr_inspiration_records").add({
+    _id: "inspiration-link-fallback",
+    user_id: String(login.body.user.id),
+    idempotency_key: "inspiration-link-fallback",
+    source_type: "xiaohongshu_link",
+    platform: "xiaohongshu",
+    source_url: "https://xhslink.cn/o/test",
+    source_title: "夏天的白色连衣裙穿搭",
+    source_author: "公开作者",
+    saved_image_key: "",
+    temporary_image_keys: ["inspiration-temporary/user/link/0.jpg"],
+    temporary_deleted_at: "",
+    status: "ready_to_analyze",
+    detected_outfit: {},
+    confirmed_slots: [],
+    summary: "",
+    error_code: "",
+    created_at: timestamp,
+    updated_at: timestamp
+  });
+  cloudServices.analyzeInspirationImages = async () => {
+    throw Object.assign(new Error("没有识别到可确认的主要穿搭。"), {
+      code: "INSPIRATION_NO_OUTFIT",
+      status: 422,
+      providerUsage: { prompt_tokens: 20, completion_tokens: 4 },
+      safeDiagnostic: { retryCount: 1, first: { rawSlotCount: 1 }, second: { rawSlotCount: 0 } }
+    });
+  };
+  const linkFallback = readResponse(await main(makeEvent("/api/inspirations/inspiration-link-fallback/analyze", "POST", {}, authorization)));
+  assert.equal(linkFallback.status, 200);
+  assert.equal(linkFallback.body.status, "screenshot_required");
+  assert.equal(deletedCloudKeys.includes("inspiration-temporary/user/link/0.jpg"), true);
+
+  const screenshotFallbackCreated = readResponse(await main(makeEvent("/api/inspirations", "POST", {
+    sourceType: "user_screenshot", mimeType: "image/jpeg", idempotencyKey: "screenshot-no-outfit"
+  }, authorization)));
+  const screenshotFallback = readResponse(await main(makeEvent(`/api/inspirations/${screenshotFallbackCreated.body.record.id}/analyze`, "POST", {}, authorization)));
+  assert.equal(screenshotFallback.status, 200);
+  assert.equal(screenshotFallback.body.status, "failed");
+  cloudServices.analyzeInspirationImages = successfulInspirationAnalysis;
+
   // 投诉必须登录、限制类型和长度，并由云函数写入只读集合。
   const unauthenticatedComplaint = readResponse(await main(makeEvent("/api/complaints", "POST", {
     category: "功能问题", detail: "无法正常使用好友帮搭。"
@@ -1507,9 +2212,16 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(complaint.status, 201);
   assert.equal(complaint.body.status, "submitted");
 
+  const inspirationBeforeAccountDeletion = readResponse(await main(makeEvent("/api/inspirations", "POST", {
+    sourceType: "user_screenshot", mimeType: "image/jpeg", idempotencyKey: "delete-with-account"
+  }, authorization)));
+  assert.equal(inspirationBeforeAccountDeletion.status, 201);
+
   // 注销后旧 JWT 也必须立即失效，不能只阻止下一次登录。
   const accountDeletion = readResponse(await main(makeEvent("/api/auth/delete-request", "POST", {}, authorization)));
   assert.equal(accountDeletion.status, 202);
+  const inspirationsAfterAccountDeletion = await memoryDatabase.collection("wr_inspiration_records").where({ user_id: String(login.body.user.id) }).get();
+  assert.equal(inspirationsAfterAccountDeletion.data.length, 0);
   const accessAfterDeletion = readResponse(await main(makeEvent("/api/items", "GET", null, authorization)));
   assert.equal(accessAfterDeletion.status, 401);
   const loginAfterDeletion = readResponse(await main(makeEvent("/api/auth/login", "POST", {

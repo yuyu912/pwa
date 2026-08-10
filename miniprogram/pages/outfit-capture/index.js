@@ -37,9 +37,9 @@ Page({
     for (let index = 0; index < detections.length; index += 1) {
       this.setData({
         [`detections[${index}].processingStatus`]: "processing",
-        [`detections[${index}].processingStage`]: detections[index].segmentationStatus === "repair_pending"
-          ? "occlusion_repair"
-          : detections[index].segmentationStatus === "ready" ? "source_mask_verification" : "segmentation_failed",
+        [`detections[${index}].processingStage`]: ["ready", "repair_pending"].includes(detections[index].segmentationStatus)
+          ? "wardrobe_product"
+          : "segmentation_failed",
         [`detections[${index}].processingError`]: ""
       });
       try {
@@ -82,6 +82,11 @@ Page({
     if (selectedRecent[id]) delete selectedRecent[id]; else selectedRecent[id] = id;
     this.setData({ selectedRecent });
   },
+  supplementDetection(event) {
+    const category = String(event.currentTarget.dataset.category || "");
+    wx.navigateTo({ url: `/pages/add-item/index?source=outfit_supplement&category=${encodeURIComponent(category)}` });
+  },
+  toSingleItem() { wx.navigateTo({ url: "/pages/add-item/index" }); },
   onSceneChange(event) { this.setData({ sceneIndex: Number(event.detail.value) }); },
   async confirm() {
     const itemIds = [...new Set([...Object.values(this.data.selected), ...Object.values(this.data.selectedRecent)].filter(Boolean))];

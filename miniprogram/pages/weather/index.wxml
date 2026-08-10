@@ -1,15 +1,24 @@
 <view class="page">
-  <view class="region-bar" bindtap="chooseRegion"><text>{{location ? location.fullName : '请选择省、市、区县'}}</text><text>›</text></view>
-  <view wx:if="{{!location}}" class="empty"><text class="empty-icon">⌖</text><text class="empty-title">先设置你的所在地区</text><text class="empty-copy">选择省、市、区县后，才能给出适合今天的衣橱建议。</text><button class="primary" bindtap="chooseRegion">选择地区</button></view>
+  <view class="region-bar" bindtap="chooseRegion"><view class="pin"></view><text>{{location ? location.fullName : '请选择省、市、区县'}}</text><text class="region-arrow">›</text></view>
+  <view wx:if="{{!location}}" class="empty"><image class="empty-art" src="/assets/weather-handdrawn-v3.jpg" mode="aspectFill"/><text class="empty-title">先设置你的所在地区</text><text class="empty-copy">选择地区后，会按今天的天气从真实衣橱中推荐。</text><button class="primary" bindtap="chooseRegion">选择地区</button></view>
   <block wx:else>
     <view wx:if="{{loading}}" class="empty"><text class="empty-title">正在获取实时天气</text></view>
     <view wx:elif="{{error}}" class="card warning"><text class="label">天气暂不可用</text><text class="body">{{error}}</text></view>
     <block wx:elif="{{weather}}">
-    <view class="demo-label">高德实时天气 · 数据时间 {{weather.reportTime}}</view>
-    <view class="hero"><text class="weather">{{weather.icon}}</text><text class="temp">{{weather.temperature}}°C</text><text class="condition">{{weather.condition}}</text><text class="tip">湿度 {{weather.humidity}}% · {{weather.windDirection}}风 {{weather.windPower}}级</text><text class="tip">{{weather.tip}}</text></view>
+    <view class="demo-label">{{weather.isManual ? '当前为手动天气' : '实时天气 · ' + weather.reportTime}}</view>
+    <view class="hero"><image class="weather-art" src="/assets/weather-handdrawn-v3.jpg" mode="aspectFill"/><view class="weather-reading"><text class="temp">{{weather.temperature}}°C</text><text class="condition">{{weather.condition}}</text><text class="tip">湿度 {{weather.humidity}}% · {{weather.windDirection}}风 {{weather.windPower}}级</text><text class="tip advice">{{weather.tip}}</text></view></view>
+    <view class="manual-toggle" bindtap="toggleManual"><text>实际天气不一样？手动调整</text><text>{{manualOpen ? '⌃' : '⌄'}}</text></view>
+    <view wx:if="{{manualOpen}}" class="manual-panel">
+      <text class="label">选择天气</text>
+      <view class="condition-grid"><view wx:for="{{conditions}}" wx:key="*this" class="condition-option {{manualCondition === item ? 'selected' : ''}}" data-condition="{{item}}" bindtap="onConditionTap"><text>{{item}}</text></view></view>
+      <text class="label temperature-label">当前温度</text>
+      <view class="temperature-control"><button class="temperature-button" data-delta="-1" bindtap="changeTemperature">−</button><text class="temperature-value">{{manualTemperature}}°C</text><button class="temperature-button" data-delta="1" bindtap="changeTemperature">＋</button></view>
+      <text class="temperature-range">可调整范围 −30°C 至 50°C</text>
+      <button class="restore" bindtap="restoreLiveWeather">恢复实时天气</button>
+    </view>
     <view class="card"><text class="label">衣橱适配结果</text><text class="title">找到 {{recommendation.suitableCount}} 件适合今天的衣物</text><view wx:if="{{recommendation.items.length}}" class="item-list"><text wx:for="{{recommendation.items}}" wx:key="id" class="item-pill">{{item.name}}</text></view><text wx:else class="body">暂未找到完整搭配。</text></view>
-    <view wx:if="{{recommendation.missing.length}}" class="card warning"><text class="label">还缺什么</text><text class="body">{{recommendation.missing.join('、')}}</text></view>
-    <button class="primary" bindtap="toOutfit">查看今天穿什么</button>
+    <view wx:if="{{recommendation.missing.length}}" class="card warning"><text class="label">还缺什么</text><text class="body">{{recommendation.missingText}}</text></view>
+    <button class="primary" bindtap="toOutfit">按这个天气搭配</button>
     </block>
   </block>
 </view>

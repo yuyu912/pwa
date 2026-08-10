@@ -161,6 +161,8 @@ const buildWardrobeDisplayCanvas = (buffer, paddingRatio = 0.12) => {
     for (let x = 0; x < subjectWidth; x += 1) {
       const sourceOffset = pixelOffset(source.width, bounds.minX + x, bounds.minY + y);
       const targetOffset = pixelOffset(output.width, offsetX + x, offsetY + y);
+      // 完全透明像素可能仍藏着白底或棋盘格 RGB；不复制它，避免缩略图压缩后出现白边。
+      if (source.data[sourceOffset + 3] === 0) continue;
       source.data.copy(output.data, targetOffset, sourceOffset, sourceOffset + 4);
       if (source.data[sourceOffset + 3] >= 16) {
         visiblePixels += 1;

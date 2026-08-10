@@ -1,0 +1,86 @@
+<view class="page inspiration-page">
+  <view class="hero">
+    <view class="eyebrow">PRIVATE INSPIRATION</view>
+    <view class="title">把灵感变成你的衣橱答案</view>
+    <view class="subtitle">单条小红书笔记 · 只分析一套主穿搭 · 仅本人可见</view>
+  </view>
+
+  <view class="tabs">
+    <view class="tab {{tab === 'import' ? 'active' : ''}}" bindtap="showImport">新建匹配</view>
+    <view class="tab {{tab === 'history' ? 'active' : ''}}" bindtap="showHistory">私密历史</view>
+  </view>
+
+  <block wx:if="{{tab === 'import'}}">
+    <view class="card import-card" wx:if="{{!record}}">
+      <view class="section-title">粘贴分享文本</view>
+      <textarea value="{{shareText}}" maxlength="1000" placeholder="粘贴小红书分享文本或 https 链接" bindinput="onShareInput"/>
+      <button class="primary" loading="{{busy}}" disabled="{{busy}}" bindtap="startLink">读取公开信息</button>
+      <view class="divider"><text>读取不到也没关系</text></view>
+      <button class="secondary" disabled="{{busy}}" bindtap="chooseScreenshot">直接上传截图</button>
+      <view class="privacy-note">不模拟登录，不使用 Cookie，不绕过验证码；链接受阻会立即转为截图。</view>
+    </view>
+
+    <view class="progress card" wx:if="{{busy}}">
+      <view class="progress-dot"></view><text>{{progressText}}</text>
+    </view>
+    <view class="error card" wx:if="{{errorText}}">{{errorText}}</view>
+
+    <view wx:if="{{record}}">
+      <view class="card source-card">
+        <view class="source-row"><text class="source-platform">小红书</text><text class="status-pill">{{statusText[record.status]}}</text></view>
+        <view class="source-title">{{record.sourceTitle || '我的穿搭灵感'}}</view>
+        <view class="source-author" wx:if="{{record.sourceAuthor}}">公开作者：{{record.sourceAuthor}}</view>
+        <view class="source-link" wx:if="{{record.sourceUrl}}">来源链接：{{record.sourceUrl}}</view>
+        <image wx:if="{{record.screenshotUrl}}" class="source-image" src="{{record.screenshotUrl}}" mode="aspectFill"/>
+      </view>
+
+      <view class="card fallback" wx:if="{{record.status === 'screenshot_required' || record.status === 'failed'}}">
+        <view class="section-title">{{record.fallbackTitle}}</view>
+        <view class="muted">{{record.fallbackNote}}</view>
+        <button class="primary" disabled="{{busy}}" bindtap="chooseScreenshot">上传截图继续</button>
+      </view>
+
+      <view class="card confirm-card" wx:if="{{record.status === 'awaiting_confirmation'}}">
+        <view class="section-kicker">帖子识别</view>
+        <view class="section-title">确认这一套主穿搭</view>
+        <view class="muted">只修改可见的品类、颜色、图案、风格和场景；不会推断尺码、品牌或材质。</view>
+        <view class="slot" wx:for="{{editSlots}}" wx:key="slot">
+          <view class="slot-name">{{item.slot === 'top' ? '上装' : item.slot === 'bottom' ? '下装' : item.slot === 'dress' ? '连衣裙' : '外套'}}</view>
+          <view class="field"><text>品类</text><input value="{{item.category}}" data-index="{{index}}" data-field="category" bindinput="onSlotInput"/></view>
+          <view class="field"><text>颜色</text><input value="{{item.color}}" data-index="{{index}}" data-field="color" bindinput="onSlotInput"/></view>
+          <view class="field"><text>图案</text><input value="{{item.pattern}}" data-index="{{index}}" data-field="pattern" bindinput="onSlotInput"/></view>
+          <view class="field"><text>风格</text><input value="{{item.stylesText}}" placeholder="用顿号分隔" data-index="{{index}}" data-field="stylesText" bindinput="onSlotInput"/></view>
+          <view class="field"><text>场景</text><input value="{{item.scenesText}}" placeholder="休闲、通勤等" data-index="{{index}}" data-field="scenesText" bindinput="onSlotInput"/></view>
+        </view>
+        <button class="primary" loading="{{busy}}" disabled="{{busy}}" bindtap="confirmTags">确认并匹配我的衣橱</button>
+      </view>
+
+      <view wx:if="{{record.status === 'ready'}}">
+        <view class="result-heading">你的衣橱匹配</view>
+        <view class="card match-card" wx:for="{{record.matches}}" wx:key="slot">
+          <view class="match-title">{{item.inspiration.name || item.inspiration.category}}</view>
+          <view class="recognized">帖子识别：{{item.inspiration.color}} · {{item.inspiration.pattern || '无明确图案'}}</view>
+          <view class="candidate-list" wx:if="{{!item.missing}}">
+            <view class="candidate" wx:for="{{item.candidates}}" wx:for-item="candidate" wx:key="key">
+              <image src="{{candidate.item.imageUrl}}" mode="aspectFill"/>
+              <view class="candidate-copy"><view>{{candidate.item.name}}</view><text>衣橱已有 · {{candidate.score}} 分</text><text>{{candidate.reasonsText}}</text></view>
+            </view>
+          </view>
+          <view class="gap" wx:else>建议缺口：衣橱中暂无 55 分以上的同品类衣物，不用其他品类硬凑。</view>
+        </view>
+        <button class="secondary new-button" bindtap="resetImport">新建一条灵感</button>
+      </view>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="empty card" wx:if="{{!history.length}}">还没有私密灵感记录</view>
+    <view class="history-card card" wx:for="{{history}}" wx:key="id">
+      <view class="history-main" data-id="{{item.id}}" bindtap="openHistory">
+        <view class="history-title">{{item.sourceTitle || item.summary || '穿搭灵感'}}</view>
+        <view class="muted">{{statusText[item.status]}} · {{item.updatedAt}}</view>
+      </view>
+      <view class="delete" data-id="{{item.id}}" catchtap="deleteHistory">删除</view>
+    </view>
+  </block>
+</view>

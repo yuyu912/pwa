@@ -61,10 +61,11 @@ if (missing.length) {
 
 const classArgument = process.argv.slice(2).find((value) => value.startsWith("--classes="));
 const combinedRequest = process.argv.includes("--combined");
+const rpcV2 = process.argv.includes("--rpc-v2");
 const selectedClasses = classArgument
   ? classArgument.slice("--classes=".length).split(",").map((value) => value.trim()).filter((value) => clothClasses.includes(value))
   : [];
-const inputPaths = process.argv.slice(2).filter((value) => !value.startsWith("--classes=") && value !== "--combined").map((value) => path.resolve(value));
+const inputPaths = process.argv.slice(2).filter((value) => !value.startsWith("--classes=") && value !== "--combined" && value !== "--rpc-v2").map((value) => path.resolve(value));
 if (inputPaths.length < 1 || inputPaths.length > 2) {
   console.error("用法：node scripts/segment-cloth-pilot.cjs <单张原图>，或同时传入两张原图");
   process.exit(2);
@@ -107,14 +108,16 @@ const download = (url, redirects = 0) => new Promise((resolve, reject) => {
   request.on("error", reject);
 });
 
-const client = new ImagesegClient.default({
-  accessKeyId: process.env.ALIBABA_CLOUD_ACCESS_KEY_ID,
-  accessKeySecret: process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
-  endpoint: "imageseg.cn-shanghai.aliyuncs.com",
-  regionId: "cn-shanghai",
-  connectTimeout: 10000,
-  readTimeout: 30000
-});
+const client = rpcV2
+  ? require(path.join(__dirname, "..", "uniCloud-aliyun", "cloudfunctions", "wardrobe-api", "lib", "cloud-services.js"))._test.getGarmentSegmentationDiagnosticClient()
+  : new ImagesegClient.default({
+    accessKeyId: process.env.ALIBABA_CLOUD_ACCESS_KEY_ID,
+    accessKeySecret: process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+    endpoint: "imageseg.cn-shanghai.aliyuncs.com",
+    regionId: "cn-shanghai",
+    connectTimeout: 10000,
+    readTimeout: 30000
+  });
 
 const outputDirectory = path.join(__dirname, "..", "tmp", `segment-cloth-pilot-${Date.now()}`);
 fs.mkdirSync(outputDirectory, { recursive: true });
@@ -179,7 +182,7 @@ const run = async () => {
     });
   }
   const reportPath = path.join(outputDirectory, "report.json");
-  fs.writeFileSync(reportPath, `${JSON.stringify({ createdAt: new Date().toISOString(), service: "SegmentCloth", report }, null, 2)}\n`);
+  fs.writeFileSync(reportPath, `${JSON.stringify({ createdAt: new Date().toISOString(), service: "SegmentCloth", transport: rpcV2 ? "native_rpc_v2" : "sdk_default", report }, null, 2)}\n`);
   console.log(`验证输出：${outputDirectory}`);
   console.log(`报告文件：${reportPath}`);
 };

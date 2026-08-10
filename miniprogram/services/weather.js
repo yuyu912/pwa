@@ -1,7 +1,11 @@
 const { areaList } = require("./area-data");
 
 const STORAGE_KEY = "wardrobe_selected_region";
+const WEATHER_OVERRIDE_KEY = "wardrobe_weather_override";
 const LEVELS = ["province_list", "city_list", "county_list"];
+const WEATHER_CONDITIONS = ["晴", "多云", "阴", "阵雨", "小雨", "中雨", "大雨", "雷雨", "雨夹雪", "雪", "雾霾", "大风"];
+const MIN_TEMPERATURE = -30;
+const MAX_TEMPERATURE = 50;
 
 function entries(level) {
   return Object.keys(areaList[level]).map((code) => ({ code, name: areaList[level][code] }));
@@ -51,10 +55,64 @@ function search(keyword) {
 function loadLocation() { return wx.getStorageSync(STORAGE_KEY) || null; }
 function saveLocation(location) { wx.setStorageSync(STORAGE_KEY, location); }
 
+function localDateKey(value = new Date()) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function locationKey(location) {
+  return location?.districtCode || location?.cityCode || location?.provinceCode || location?.fullName || location?.cityName || "";
+}
+
+function clampTemperature(value) {
+  const temperature = Number(value);
+  if (!Number.isFinite(temperature)) return 20;
+  return Math.min(MAX_TEMPERATURE, Math.max(MIN_TEMPERATURE, Math.round(temperature)));
+}
+
+function createWeatherOverride(location, condition, temperature, now = new Date()) {
+  return {
+    locationKey: locationKey(location),
+    date: localDateKey(now),
+    condition: WEATHER_CONDITIONS.includes(condition) ? condition : "晴",
+    temperature: clampTemperature(temperature)
+  };
+}
+
+function isWeatherOverrideValid(override, location, now = new Date()) {
+  return Boolean(
+    override &&
+    override.locationKey &&
+    override.locationKey === locationKey(location) &&
+    override.date === localDateKey(now) &&
+    WEATHER_CONDITIONS.includes(override.condition) &&
+    Number.isFinite(Number(override.temperature))
+  );
+}
+
+function loadWeatherOverride(location, now = new Date()) {
+  const override = wx.getStorageSync(WEATHER_OVERRIDE_KEY) || null;
+  if (isWeatherOverrideValid(override, location, now)) return override;
+  if (override) wx.removeStorageSync(WEATHER_OVERRIDE_KEY);
+  return null;
+}
+
+function saveWeatherOverride(location, condition, temperature) {
+  const override = createWeatherOverride(location, condition, temperature);
+  wx.setStorageSync(WEATHER_OVERRIDE_KEY, override);
+  return override;
+}
+
+function clearWeatherOverride() { wx.removeStorageSync(WEATHER_OVERRIDE_KEY); }
+
 function formatLiveWeather(value, location) {
   const temperature = Number(value.temperature);
   const condition = value.condition || "未知";
   const rainy = /雨|雷|雪|冰雹/.test(condition);
+  const windy = /大风|强风|狂风|台风/.test(condition);
+  const hazy = /雾|霾/.test(condition);
   const cold = temperature <= 16;
   const hot = temperature >= 28;
   return {
@@ -65,15 +123,42 @@ function formatLiveWeather(value, location) {
     icon: /晴/.test(condition) ? "☀" : /雪/.test(condition) ? "❄" : rainy ? "☂" : "☁",
     tip: rainy
       ? "当前有降水，优先选择方便叠穿的衣物并留意防雨。"
+      : windy
+        ? "当前风力较强，建议准备轻外套并优先选择方便活动的衣物。"
+        : hazy
+          ? "当前有雾或霾，穿搭按温度选择，外出请同时留意能见度和空气质量。"
       : hot
         ? "当前气温偏高，优先选择轻薄透气的衣物。"
         : cold
           ? "当前气温偏凉，建议采用内搭加外套的方式。"
           : "当前体感较温和，可优先选择轻薄或适中厚度的衣物。",
-    needsOuterwear: rainy || temperature <= 20,
+    needsOuterwear: rainy || windy || temperature <= 20,
     city: value.city || location.cityName,
     area: location.fullName
   };
+}
+
+function applyWeatherOverride(weather, override) {
+  if (!override) return { ...weather, isManual: false };
+  const overridden = formatLiveWeather({
+    ...weather,
+    condition: override.condition,
+    temperature: clampTemperature(override.temperature)
+  }, {
+    cityName: weather.city,
+    fullName: weather.area
+  });
+  return {
+    ...overridden,
+    isManual: true,
+    liveCondition: weather.condition,
+    liveTemperature: weather.temperature
+  };
+}
+
+function effectiveWeather(value, location) {
+  const liveWeather = formatLiveWeather(value, location);
+  return applyWeatherOverride(liveWeather, loadWeatherOverride(location));
 }
 
 function isSeasonSuitable(item, weather) {
@@ -121,6 +206,8 @@ function recommend(items, weather, scene = "休闲", offset = 0) {
     items: base,
     suitableCount: suitable.length,
     missing,
+    // WXML 不能直接调用 Array.join，提前生成展示文本，避免只出现空的“还缺什么”卡片。
+    missingText: missing.join("、"),
     complete: missing.length === 0,
     reason: sceneMatchedCount
       ? `优先选择了适合${scene}、且符合当前实时温度的衣物。`
@@ -128,4 +215,24 @@ function recommend(items, weather, scene = "休闲", offset = 0) {
   };
 }
 
-module.exports = { provinces, cities, districts, search, getPath, loadLocation, saveLocation, formatLiveWeather, recommend };
+module.exports = {
+  WEATHER_CONDITIONS,
+  MIN_TEMPERATURE,
+  MAX_TEMPERATURE,
+  provinces,
+  cities,
+  districts,
+  search,
+  getPath,
+  loadLocation,
+  saveLocation,
+  createWeatherOverride,
+  isWeatherOverrideValid,
+  loadWeatherOverride,
+  saveWeatherOverride,
+  clearWeatherOverride,
+  formatLiveWeather,
+  applyWeatherOverride,
+  effectiveWeather,
+  recommend
+};

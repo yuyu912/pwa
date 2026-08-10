@@ -82,6 +82,7 @@ test("缺少下装时返回真实单品并给出缺失提示", () => {
   assert.deepEqual(result.items.map((item) => item.id), ["2"]);
   assert.equal(result.complete, false);
   assert.deepEqual(result.missing, ["下装或连衣裙"]);
+  assert.equal(result.missingText, "下装或连衣裙");
 });
 
 test("7 天胶囊按品类限额选择真实衣物并计算基础组合", () => {

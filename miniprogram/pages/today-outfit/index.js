@@ -13,7 +13,7 @@ Page({
         api.getWeather(location.districtCode || location.cityCode || location.provinceCode),
         api.listItems()
       ]);
-      const weather = weatherService.formatLiveWeather(weatherData, location);
+      const weather = weatherService.effectiveWeather(weatherData, location);
       const recommendation = weatherService.recommend(items, weather, this.data.scene, this.data.outfitOffset);
       this.setData({ weather, items, recommendation });
     } catch (error) {

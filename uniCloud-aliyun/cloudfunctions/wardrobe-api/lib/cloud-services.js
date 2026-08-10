@@ -3,14 +3,17 @@
 const crypto = require("crypto");
 const http = require("http");
 const https = require("https");
+const { Readable } = require("stream");
 const COS = require("cos-nodejs-sdk-v5");
+const inspiration = require("./inspiration");
 const { assessMattingQuality } = require("./png-alpha");
-const { applyRepairCandidate, assessGarmentContourQuality, buildGarmentCutout, buildOcclusionBoxMask, buildWardrobeDisplayCanvas, imageSizeFromPng, placeMaskOnCanvas } = require("./garment-mask");
+const { assessGarmentContourQuality, buildGarmentCutout, buildOcclusionBoxMask, buildWardrobeDisplayCanvas, imageSizeFromPng, placeMaskOnCanvas } = require("./garment-mask");
 
 let cosClient;
 let garmentSegmentationClient;
+let garmentSegmentationDiagnosticClient;
 
-const OUTFIT_STABILITY_VERSION = "2026-08-06-wardrobe-display-v25";
+const OUTFIT_STABILITY_VERSION = "2026-08-07-viapi-rpc-diagnostic-v29";
 const DEFAULT_VISION_MODEL = "qwen3-vl-flash-2026-01-22";
 const DEFAULT_IMAGE_EDIT_MODEL = "qwen-image-2.0-pro-2026-06-22";
 const GARMENT_SEGMENTATION_MODEL = "SegmentCloth";
@@ -126,6 +129,35 @@ const createUpload = (userId, mimeType, taskId = crypto.randomUUID()) => {
   return { taskId, sourceKey, uploadUrl: signedUrl(sourceKey, "PUT", 300), expiresIn: 300 };
 };
 
+const imageExtension = (mimeType) => mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg";
+
+// 灵感截图属于用户私密长期文件；平台公开图片使用单独的 temporary 前缀，分析后必须删除。
+const createInspirationUpload = (userId, recordId, mimeType) => {
+  const sourceKey = `inspirations/${userId}/${recordId}/source.${imageExtension(mimeType)}`;
+  return { sourceKey, uploadUrl: signedUrl(sourceKey, "PUT", 300), expiresIn: 300 };
+};
+
+const storeTemporaryInspirationImages = async (userId, recordId, images) => {
+  const keys = [];
+  try {
+    for (let index = 0; index < Math.min(3, images.length); index += 1) {
+      const image = images[index];
+      const key = `inspiration-temporary/${userId}/${recordId}/${index}.${imageExtension(image.contentType)}`;
+      await cosCall("putObject", {
+        ...objectOptions(key),
+        Body: image.buffer,
+        ContentType: image.contentType,
+        ACL: "private"
+      });
+      keys.push(key);
+    }
+    return keys;
+  } catch (error) {
+    await Promise.all(keys.map((key) => deleteObject(key).catch(() => {})));
+    throw error;
+  }
+};
+
 const readObject = async (key) => {
   const result = await cosCall("getObject", objectOptions(key));
   return Buffer.from(result.Body);
@@ -152,23 +184,291 @@ const createWardrobeDisplay = async (sourceKey) => {
 const deleteObject = (key) => cosCall("deleteObject", objectOptions(key));
 const sourceHash = async (key) => crypto.createHash("sha256").update(await readObject(key)).digest("hex");
 
-const garmentSegmentationConfigured = () => Boolean(
-  process.env.ALIBABA_CLOUD_ACCESS_KEY_ID && process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET
-);
+const viapiCredentials = () => {
+  const dedicatedId = String(process.env.WARDROBE_VIAPI_ACCESS_KEY_ID || "").trim();
+  const dedicatedSecret = String(process.env.WARDROBE_VIAPI_ACCESS_KEY_SECRET || "").trim();
+  if (dedicatedId || dedicatedSecret) {
+    return {
+      accessKeyId: dedicatedId,
+      accessKeySecret: dedicatedSecret,
+      securityToken: "",
+      mode: dedicatedId && dedicatedSecret ? "dedicated_ram" : "dedicated_ram_incomplete"
+    };
+  }
+  const accessKeyId = String(process.env.ALIBABA_CLOUD_ACCESS_KEY_ID || "").trim();
+  const accessKeySecret = String(process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET || "").trim();
+  const securityToken = String(process.env.ALIBABA_CLOUD_SECURITY_TOKEN || "").trim();
+  return {
+    accessKeyId,
+    accessKeySecret,
+    securityToken,
+    mode: accessKeyId && accessKeySecret ? (securityToken ? "runtime_sts" : "standard_access_key") : "not_configured"
+  };
+};
+
+const garmentSegmentationConfigured = () => {
+  const credentials = viapiCredentials();
+  return Boolean(credentials.accessKeyId && credentials.accessKeySecret);
+};
+
+const requireViapiCredentials = () => {
+  const credentials = viapiCredentials();
+  if (!credentials.accessKeyId || !credentials.accessKeySecret) {
+    throw Object.assign(new Error("服饰分割独立 RAM 凭证未完整配置。"), { code: "VIAPI_CREDENTIALS_INCOMPLETE" });
+  }
+  return credentials;
+};
+
+const readStreamBuffer = async (stream) => {
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+};
+
+const viapiPercentEncode = (value) => encodeURIComponent(String(value))
+  .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+
+const buildViapiRpcV2Request = (action, businessQuery, options = {}) => {
+  const credentials = requireViapiCredentials();
+  const method = String(options.method || "POST").toUpperCase();
+  const timestamp = options.timestamp || new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const nonce = options.nonce || crypto.randomUUID();
+  const query = {
+    Action: action,
+    Format: "json",
+    Version: options.version || "2019-12-30",
+    Timestamp: timestamp,
+    SignatureNonce: nonce,
+    SignatureMethod: "HMAC-SHA1",
+    SignatureVersion: "1.0",
+    AccessKeyId: credentials.accessKeyId,
+    ...businessQuery
+  };
+  if (credentials.securityToken) query.SecurityToken = credentials.securityToken;
+  const canonicalizedQuery = Object.keys(query).sort()
+    .map((key) => `${viapiPercentEncode(key)}=${viapiPercentEncode(query[key])}`)
+    .join("&");
+  const stringToSign = `${method}&%2F&${viapiPercentEncode(canonicalizedQuery)}`;
+  const signature = crypto.createHmac("sha1", `${credentials.accessKeySecret}&`)
+    .update(stringToSign)
+    .digest("base64");
+  return {
+    hostname: options.hostname || "imageseg.cn-shanghai.aliyuncs.com",
+    method,
+    path: `/?${canonicalizedQuery}&Signature=${viapiPercentEncode(signature)}`,
+    signature,
+    stringToSign
+  };
+};
+
+const viapiRpcV2Request = (action, businessQuery, options = {}) => new Promise((resolve, reject) => {
+  requireViapiCredentials();
+  const requestInfo = buildViapiRpcV2Request(action, businessQuery, options);
+  const request = https.request({
+    protocol: "https:",
+    hostname: requestInfo.hostname,
+    method: requestInfo.method,
+    path: requestInfo.path,
+    headers: { Accept: "application/json", "Content-Length": 0 },
+    timeout: 30000
+  }, (response) => {
+    const chunks = [];
+    response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    response.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; }
+      catch {
+        return reject(Object.assign(new Error("服饰分割服务返回了无法解析的响应。"), {
+          code: "VIAPI_INVALID_JSON",
+          providerStatus: Number(response.statusCode || 0),
+          segmentationStage: options.stage || action
+        }));
+      }
+      const providerStatus = Number(response.statusCode || 0);
+      const providerCode = cleanText(data.Code || data.code, 80);
+      const providerRequestId = cleanText(data.RequestId || data.requestId, 120);
+      if (providerStatus < 200 || providerStatus >= 300 || providerCode) {
+        return reject(Object.assign(new Error("服饰分割服务调用失败。"), {
+          code: providerCode || `VIAPI_HTTP_${providerStatus || 0}`,
+          providerStatus,
+          providerRequestId,
+          segmentationStage: options.stage || action
+        }));
+      }
+      resolve({ statusCode: providerStatus, body: data });
+    });
+  });
+  request.on("timeout", () => request.destroy(Object.assign(new Error("服饰分割服务响应超时。"), {
+    code: "VIAPI_RPC_TIMEOUT",
+    segmentationStage: options.stage || action
+  })));
+  request.on("error", (error) => reject(Object.assign(error, { segmentationStage: error.segmentationStage || options.stage || action })));
+  request.end();
+});
+
+// Darabonba 的 multipart 上传只依赖手工 Host 头；部分云函数网关会重写该头。
+// 这里直接以授权返回的 OSS 域名建立 HTTPS 连接，并显式给出 Content-Length。
+const postAuthorizedOssObject = async (_bucketName, form) => {
+  const host = cleanText(form.host, 300);
+  if (!host || !form.file?.content) {
+    throw Object.assign(new Error("服饰分割临时上传参数不完整。"), { code: "VIAPI_UPLOAD_FORM_INVALID", segmentationStage: "临时文件上传" });
+  }
+  const boundary = `----wardrobe-${crypto.randomBytes(12).toString("hex")}`;
+  const parts = [];
+  for (const [name, value] of Object.entries(form)) {
+    if (name === "host" || name === "file" || value === undefined || value === null) continue;
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${String(value)}\r\n`));
+  }
+  const fileBuffer = await readStreamBuffer(form.file.content);
+  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${form.file.filename || "image"}"\r\nContent-Type: ${form.file.contentType || "application/octet-stream"}\r\n\r\n`));
+  parts.push(fileBuffer, Buffer.from(`\r\n--${boundary}--\r\n`));
+  const body = Buffer.concat(parts);
+  return new Promise((resolve, reject) => {
+    const request = https.request({
+      protocol: "https:",
+      hostname: host,
+      method: "POST",
+      path: "/",
+      headers: {
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+        "Content-Length": body.length
+      },
+      timeout: 30000
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => {
+        if (Number(response.statusCode) >= 200 && Number(response.statusCode) < 300) return resolve({});
+        const text = Buffer.concat(chunks).toString("utf8");
+        const code = text.match(/<Code>([^<]+)<\/Code>/)?.[1] || "VIAPI_OSS_UPLOAD_FAILED";
+        const requestId = text.match(/<RequestId>([^<]+)<\/RequestId>/)?.[1] || "";
+        reject(Object.assign(new Error("服饰分割临时文件上传失败。"), { code, providerRequestId: requestId, segmentationStage: "临时文件上传" }));
+      });
+    });
+    request.on("timeout", () => request.destroy(Object.assign(new Error("服饰分割临时文件上传超时。"), { code: "VIAPI_OSS_UPLOAD_TIMEOUT", segmentationStage: "临时文件上传" })));
+    request.on("error", (error) => reject(Object.assign(error, { segmentationStage: "临时文件上传" })));
+    request.end(body);
+  });
+};
 
 const getGarmentSegmentationClient = () => {
-  required(["ALIBABA_CLOUD_ACCESS_KEY_ID", "ALIBABA_CLOUD_ACCESS_KEY_SECRET"]);
+  const credentials = requireViapiCredentials();
   if (garmentSegmentationClient) return garmentSegmentationClient;
   const ImagesegClient = require("@alicloud/imageseg20191230");
   garmentSegmentationClient = new ImagesegClient.default({
-    accessKeyId: process.env.ALIBABA_CLOUD_ACCESS_KEY_ID,
-    accessKeySecret: process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+    accessKeyId: credentials.accessKeyId,
+    accessKeySecret: credentials.accessKeySecret,
+    securityToken: credentials.securityToken || undefined,
     endpoint: "imageseg.cn-shanghai.aliyuncs.com",
     regionId: "cn-shanghai",
     connectTimeout: 10000,
     readTimeout: 30000
   });
+  garmentSegmentationClient._postOSSObject = postAuthorizedOssObject;
   return garmentSegmentationClient;
+};
+
+const flattenViapiQuery = (input) => {
+  const output = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) value.forEach((item, index) => { output[`${key}.${index + 1}`] = String(item); });
+    else output[key] = String(value);
+  }
+  return output;
+};
+
+const authorizeViapiFileUpload = async (content, stage) => {
+  const authorization = await viapiRpcV2Request("AuthorizeFileUpload", {
+    Product: "imageseg",
+    RegionId: "cn-shanghai"
+  }, {
+    hostname: "openplatform.aliyuncs.com",
+    method: "GET",
+    version: "2019-12-19",
+    stage: `${stage}·临时文件授权`
+  });
+  const body = authorization.body || {};
+  const bucket = cleanText(body.Bucket, 180);
+  const endpoint = cleanText(body.Endpoint, 240).replace(/^https?:\/\//i, "");
+  const objectKey = cleanText(body.ObjectKey, 500);
+  if (!bucket || !endpoint || !objectKey || !body.AccessKeyId || !body.EncodedPolicy || !body.Signature) {
+    throw Object.assign(new Error("服饰分割临时文件授权响应不完整。"), {
+      code: "VIAPI_UPLOAD_AUTH_INVALID",
+      providerRequestId: cleanText(body.RequestId, 120),
+      segmentationStage: `${stage}·临时文件授权`
+    });
+  }
+  const buffer = await readStreamBuffer(content);
+  await postAuthorizedOssObject(bucket, {
+    host: `${bucket}.${endpoint}`,
+    OSSAccessKeyId: body.AccessKeyId,
+    policy: body.EncodedPolicy,
+    Signature: body.Signature,
+    key: objectKey,
+    success_action_status: "201",
+    file: { filename: objectKey, contentType: "application/octet-stream", content: Readable.from(buffer) }
+  });
+  return `http://${bucket}.${endpoint}/${objectKey}`;
+};
+
+const getGarmentSegmentationDiagnosticClient = () => {
+  const credentials = requireViapiCredentials();
+  if (garmentSegmentationDiagnosticClient) return garmentSegmentationDiagnosticClient;
+  const ImagesegClient = require("@alicloud/imageseg20191230");
+  const $dara = require("@darabonba/typescript");
+  const client = new ImagesegClient.default({
+    accessKeyId: credentials.accessKeyId,
+    accessKeySecret: credentials.accessKeySecret,
+    securityToken: credentials.securityToken || undefined,
+    endpoint: "imageseg.cn-shanghai.aliyuncs.com",
+    regionId: "cn-shanghai",
+    connectTimeout: 10000,
+    readTimeout: 30000
+  });
+  client._postOSSObject = postAuthorizedOssObject;
+  const nativeResponse = async (action, query, ResponseType, stage) => {
+    const response = await viapiRpcV2Request(action, flattenViapiQuery(query), { stage });
+    return $dara.cast(response, new ResponseType({}));
+  };
+  client.segmentClothWithOptions = (request) => nativeResponse("SegmentCloth", {
+    ClothClass: request.clothClass,
+    ImageURL: request.imageURL,
+    OutMode: request.outMode,
+    ReturnForm: request.returnForm
+  }, ImagesegClient.SegmentClothResponse, `服饰类别分割(${request.clothClass?.[0] || "unknown"})`);
+  client.segmentHairWithOptions = (request) => nativeResponse("SegmentHair", { ImageURL: request.imageURL }, ImagesegClient.SegmentHairResponse, "头发遮挡分割");
+  client.segmentSkinWithOptions = (request) => nativeResponse("SegmentSkin", { URL: request.URL }, ImagesegClient.SegmentSkinResponse, "皮肤遮挡分割");
+  client.segmentCommodityWithOptions = (request) => nativeResponse("SegmentCommodity", { ImageURL: request.imageURL }, ImagesegClient.SegmentCommodityResponse, "商品前景分割");
+  client.segmentClothAdvance = async (request) => {
+    const clothClass = request.clothClass?.[0] || "unknown";
+    const stage = `服饰类别分割(${clothClass})`;
+    const imageURL = request.imageURLObject ? await authorizeViapiFileUpload(request.imageURLObject, stage) : request.imageURL;
+    return nativeResponse("SegmentCloth", {
+      ClothClass: request.clothClass,
+      ImageURL: imageURL,
+      OutMode: request.outMode,
+      ReturnForm: request.returnForm
+    }, ImagesegClient.SegmentClothResponse, stage);
+  };
+  client.segmentHairAdvance = async (request) => {
+    const stage = "头发遮挡分割";
+    const imageURL = request.imageURLObject ? await authorizeViapiFileUpload(request.imageURLObject, stage) : request.imageURL;
+    return nativeResponse("SegmentHair", { ImageURL: imageURL }, ImagesegClient.SegmentHairResponse, stage);
+  };
+  client.segmentSkinAdvance = async (request) => {
+    const stage = "皮肤遮挡分割";
+    const URL = request.URLObject ? await authorizeViapiFileUpload(request.URLObject, stage) : request.URL;
+    return nativeResponse("SegmentSkin", { URL }, ImagesegClient.SegmentSkinResponse, stage);
+  };
+  client.segmentCommodityAdvance = async (request) => {
+    const stage = "商品前景分割";
+    const imageURL = request.imageURLObject ? await authorizeViapiFileUpload(request.imageURLObject, stage) : request.imageURL;
+    return nativeResponse("SegmentCommodity", { ImageURL: imageURL, ReturnForm: request.returnForm }, ImagesegClient.SegmentCommodityResponse, stage);
+  };
+  garmentSegmentationDiagnosticClient = client;
+  return client;
 };
 
 const clothingClassesForDetection = (detection) => {
@@ -456,6 +756,38 @@ const normalizeStructureFacts = (value, item = {}) => {
   };
 };
 
+// 整套照片只承诺保留真实可见区域；关键结构看不清时交给单件补拍，不让生成模型冒充真实恢复。
+const outfitCompleteness = (detection = {}) => {
+  if (detection.segmentationStatus === "failed" || detection.processingStatus === "failed") {
+    return {
+      completenessStatus: "needs_single_item_photo",
+      completenessNote: detection.processingError || "关键结构无法从整套照片中可靠提取，请单独补拍这件衣物。"
+    };
+  }
+  const facts = detection.structureFacts || {};
+  const occlusionText = (detection.occlusions || []).map((item) => item.type || "").join(" ");
+  const hasOcclusion = (detection.occlusions || []).length > 0;
+  const adjacentGarmentOcclusion = /相邻衣物|其他衣物|上衣|外套|内搭|裙摆/.test(occlusionText);
+  const criticalStructureMissing = detection.category === "裤子"
+    ? !facts.riseAndWaistband
+    : detection.category === "半身裙"
+      ? !facts.riseAndWaistband || !facts.hemShape
+      : ["上衣", "外套"].includes(detection.category)
+        ? !facts.hemShape
+        : false;
+  if (detection.segmentationStatus === "repair_pending"
+    || Number(detection.occlusionRatio || 0) > 0
+    || hasOcclusion
+    || adjacentGarmentOcclusion
+    || criticalStructureMissing) {
+    return {
+      completenessStatus: "partial_visible",
+      completenessNote: "衣物主体已识别，但局部边缘或关键结构被遮挡；当前只保存原图中的真实可见区域。"
+    };
+  }
+  return { completenessStatus: "ready", completenessNote: "衣物关键结构清楚。" };
+};
+
 const normalizeOutfitDetections = (raw) => {
   const slots = ["top", "bottom", "dress", "outerwear"];
   const normalizeOcclusions = (items) => (Array.isArray(items) ? items : [])
@@ -465,7 +797,7 @@ const normalizeOutfitDetections = (raw) => {
       type: cleanText(item.type, 20),
       bbox: item.bbox_2d.map((value) => Math.max(0, Math.min(999, Number(value) || 0)))
     }))
-    .filter((item) => /字幕|文字|头发|手|手臂|皮肤|包|包带|配饰/.test(item.type) && item.bbox[2] > item.bbox[0] && item.bbox[3] > item.bbox[1]);
+    .filter((item) => /字幕|文字|头发|手|手臂|皮肤|包|包带|配饰|相邻衣物|其他衣物|上衣|外套|内搭|裙摆/.test(item.type) && item.bbox[2] > item.bbox[0] && item.bbox[3] > item.bbox[1]);
   const detections = (Array.isArray(raw?.detections) ? raw.detections : [])
     .filter((item) => slots.includes(item.slot) && outfitCategories.includes(item.category) && Array.isArray(item.bbox_2d) && item.bbox_2d.length === 4)
     .slice(0, 4)
@@ -531,7 +863,7 @@ const analyzeOutfit = async (sourceKey, userId, captureId) => {
   const sourceFingerprint = await sourceHash(sourceKey);
   const requestBody = buildQwenRequestBody(signedUrl(sourceKey, "GET", 600), model);
   requestBody.max_completion_tokens = 900;
-  requestBody.messages[0].content[1].text = "识别人物当前实际穿着的核心衣物，只返回 JSON：{upper_body_mode,upper_body_color,upper_body_structure,detections:[{slot,category,color,pattern,styles,structure,structure_facts,is_composite,bbox_2d,occlusions:[{type,bbox_2d}],confidence}]}。upper_body_mode 仅可为 single、combined、separate：假两件、固定套穿、视觉上依赖内外层共同形成完整款式的上装必须为 combined，并只返回一个 slot=top、category=上衣、is_composite=true 的上身检测，bbox 覆盖内外两层全部可见部分；普通可独立替换的外套和内搭才用 separate。structure 必须用完整中文句子客观写出固定可见结构。structure_facts 必须客观填写：上装使用 layer_mode(single/fixed_combined/separate)、sleeve_length(wrist_long/three_quarter/short/sleeveless)、sleeve_shape、outer_neckline、inner_neckline、neckline_relation(flush/slightly_lower/clearly_lower/not_applicable)、layer_coverage、closure_and_ties、transparency、hem_shape、decorations；下装使用 rise_and_waistband、lower_closure、pleats、leg_shape、pocket_layout、front_seam、hem_shape、decorations。occlusions 只记录明确盖住该衣物的字幕/文字、头发、手、手臂、皮肤、包、包带或配饰，每个 bbox_2d 只框遮挡物与该衣物重叠的局部，不要框整件衣物；没有明确遮挡时返回空数组。上装必须明确袖长，写清外层与内层各自领口及相对高度、覆盖范围、前襟系带和袖型；下装写明腰头、纽扣或抽绳、褶裥、口袋、前中缝、裤腿和裤脚。slot 仅允许 top,bottom,dress,outerwear；category 仅允许 上衣,裤子,半身裙,外套,连衣裙；所有 bbox_2d 均归一化到 0-999。不识别鞋子；包只作为遮挡物，不作为衣物；看不清不要猜。";
+  requestBody.messages[0].content[1].text = "识别人物当前实际穿着的核心衣物，只返回 JSON：{upper_body_mode,upper_body_color,upper_body_structure,detections:[{slot,category,color,pattern,styles,structure,structure_facts,is_composite,bbox_2d,occlusions:[{type,bbox_2d}],confidence}]}。upper_body_mode 仅可为 single、combined、separate：假两件、固定套穿、视觉上依赖内外层共同形成完整款式的上装必须为 combined，并只返回一个 slot=top、category=上衣、is_composite=true 的上身检测，bbox 覆盖内外两层全部可见部分；普通可独立替换的外套和内搭才用 separate。structure 必须用完整中文句子客观写出固定可见结构。structure_facts 必须客观填写：上装使用 layer_mode(single/fixed_combined/separate)、sleeve_length(wrist_long/three_quarter/short/sleeveless)、sleeve_shape、outer_neckline、inner_neckline、neckline_relation(flush/slightly_lower/clearly_lower/not_applicable)、layer_coverage、closure_and_ties、transparency、hem_shape、decorations；下装使用 rise_and_waistband、lower_closure、pleats、leg_shape、pocket_layout、front_seam、hem_shape、decorations。occlusions 记录明确盖住该衣物的字幕/文字、头发、手、手臂、皮肤、包、配饰或相邻衣物，每个 bbox_2d 只框遮挡物与该衣物重叠的局部；上衣遮住裤腰时 type 写“上衣遮挡裤腰”；没有明确遮挡时返回空数组。上装必须明确袖长，写清外层与内层各自领口及相对高度、覆盖范围、前襟系带和袖型；下装写明腰头、纽扣或抽绳、褶裥、口袋、前中缝、裤腿和裤脚。slot 仅允许 top,bottom,dress,outerwear；category 仅允许 上衣,裤子,半身裙,外套,连衣裙；所有 bbox_2d 均归一化到 0-999。不识别鞋子；包只作为遮挡物，不作为衣物；看不清不要猜。";
   requestBody.messages[0].content[1].text += "color、pattern、upper_body_color 必须使用中文。薄纱、半透明或透视上衣下仅为遮挡身体而穿的贴身打底、内衣或肤色层不算第二件核心衣物：upper_body_mode 必须为 single，layer_mode 必须为 single，只在 transparency 中描述透视程度；不得把透过面料看到的身体、裤腰或阴影误写成独立内搭。";
   const response = await qwenHttpRequest(process.env.DASHSCOPE_VISION_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", requestBody, process.env.DASHSCOPE_API_KEY);
   if (responseStatus(response) < 200 || responseStatus(response) >= 300) throw Object.assign(new Error("今日穿搭定位暂时不可用。"), { status: 502, code: "OUTFIT_DETECTION_FAILED" });
@@ -540,7 +872,7 @@ const analyzeOutfit = async (sourceKey, userId, captureId) => {
   if (!detections.some((item) => ["bottom", "dress"].includes(item.slot))) {
     const lowerBodyRequest = buildQwenRequestBody(signedUrl(sourceKey, "GET", 600), model);
     lowerBodyRequest.max_completion_tokens = 350;
-    lowerBodyRequest.messages[0].content[1].text = "只定位人物实际穿着的下装；只返回 JSON：{detections:[{slot,category,color,pattern,styles,structure,structure_facts,is_composite,bbox_2d,occlusions:[{type,bbox_2d}],confidence}]}。slot 仅允许 bottom 或 dress；category 仅允许 裤子、半身裙、连衣裙。structure 必须是30到120字完整中文句子；structure_facts 填写 rise_and_waistband、lower_closure、pleats、leg_shape、pocket_layout、front_seam、hem_shape、decorations。occlusions 只记录明确覆盖下装的字幕/文字、手、手臂、皮肤、包或配饰，并只框与下装重叠部分；没有则返回空数组。必须明确腰头、纽扣或抽绳、褶裥、口袋布局、前中缝、裤腿形态和裤脚；看不清的字段留空，不得猜测。所有 bbox_2d 均归一化到 0-999。不识别鞋子。";
+    lowerBodyRequest.messages[0].content[1].text = "只定位人物实际穿着的下装；只返回 JSON：{detections:[{slot,category,color,pattern,styles,structure,structure_facts,is_composite,bbox_2d,occlusions:[{type,bbox_2d}],confidence}]}。slot 仅允许 bottom 或 dress；category 仅允许 裤子、半身裙、连衣裙。structure 必须是30到120字完整中文句子；structure_facts 填写 rise_and_waistband、lower_closure、pleats、leg_shape、pocket_layout、front_seam、hem_shape、decorations。occlusions 记录明确覆盖下装的字幕/文字、手、手臂、皮肤、包、配饰或相邻上衣/外套，并只框遮挡物与下装重叠的局部；上衣遮住裤腰时 type 写“上衣遮挡裤腰”；没有则返回空数组。必须明确腰头、纽扣或抽绳、褶裥、口袋布局、前中缝、裤腿形态和裤脚；看不清的字段留空，不得猜测。所有 bbox_2d 均归一化到 0-999。不识别鞋子。";
     const lowerBodyResponse = await qwenHttpRequest(process.env.DASHSCOPE_VISION_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", lowerBodyRequest, process.env.DASHSCOPE_API_KEY);
     if (responseStatus(lowerBodyResponse) >= 200 && responseStatus(lowerBodyResponse) < 300) {
       const lowerRaw = parseModelJson(lowerBodyResponse.data?.choices?.[0]?.message?.content);
@@ -649,6 +981,29 @@ const downloadImage = (url, redirects = 0, maxBytes = 10 * 1024 * 1024) => new P
   request.on("error", reject);
 });
 
+// 完整商品展示图使用商品分割一次返回四通道 PNG；组合上装的内外层必须作为同一前景保留。
+const extractGeneratedCommodity = async (sourceKey) => {
+  const ImagesegClient = require("@alicloud/imageseg20191230");
+  const response = await getGarmentSegmentationClient().segmentCommodityAdvance(
+    new ImagesegClient.SegmentCommodityAdvanceRequest({ imageURLObject: Readable.from(await readObject(sourceKey)) }),
+    { connectTimeout: 10000, readTimeout: 30000, autoretry: false }
+  );
+  const resultUrl = response?.body?.data?.imageURL;
+  if (!resultUrl) throw Object.assign(new Error("商品展示图分割没有返回透明前景。"), { status: 502, code: "PRODUCT_SEGMENTATION_EMPTY" });
+  const output = await downloadImage(resultUrl);
+  const quality = assessMattingQuality(output);
+  if (!quality.accepted) {
+    throw Object.assign(new Error("商品展示图透明边缘未通过质量检查。"), {
+      status: 422,
+      code: "PRODUCT_SEGMENTATION_QUALITY_LOW",
+      mattingQuality: quality
+    });
+  }
+  const cutoutKey = `outfit-product-cutouts/${crypto.randomUUID()}.png`;
+  await cosCall("putObject", { ...objectOptions(cutoutKey), Body: output, ContentType: "image/png", ACL: "private" });
+  return { cutoutKey, modelName: "SegmentCommodity" };
+};
+
 const segmentationSource = async (sourceKey, userId, captureId) => {
   const [buffer, size] = await Promise.all([readObject(sourceKey), imageSize(sourceKey)]);
   if (buffer.length <= 3 * 1024 * 1024 && size.width < 2000 && size.height < 2000) {
@@ -701,7 +1056,152 @@ const normalizeSegmentClothClassUrls = (classUrl) => {
   return direct;
 };
 
-const segmentOutfitGarments = async (sourceKey, detections, userId, captureId) => {
+const outfitParsingType = (detection = {}) => {
+  if (["top", "outerwear"].includes(detection.slot)) return "upper";
+  if (detection.slot === "bottom") return "lower";
+  if (detection.slot === "dress") return "dress";
+  return "";
+};
+
+const buildOutfitParsingRequestBody = (imageUrl, clothesTypes) => ({
+  model: "aitryon-parsing-v1",
+  input: { image_url: imageUrl },
+  parameters: { clothes_type: clothesTypes }
+});
+
+const outfitParsingEndpoint = () => {
+  const workspaceId = cleanText(process.env.DASHSCOPE_WORKSPACE_ID, 100);
+  if (!/^[A-Za-z0-9_-]+$/.test(workspaceId)) {
+    throw Object.assign(new Error("AI试衣图片分割缺少北京地域业务空间 ID。"), { status: 503, code: "OUTFIT_PARSING_WORKSPACE_MISSING" });
+  }
+  return `https://${workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/services/vision/image-process/process`;
+};
+
+const segmentOutfitGarmentsWithOutfitParsing = async (sourceKey, detections, userId, captureId) => {
+  required(["DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID"]);
+  const source = await segmentationSource(sourceKey, userId, captureId);
+  const createdKeys = [];
+  try {
+    const typeCounts = detections.reduce((counts, detection) => {
+      const type = outfitParsingType(detection);
+      if (type) counts.set(type, (counts.get(type) || 0) + 1);
+      return counts;
+    }, new Map());
+    const clothesTypes = [...typeCounts.keys()];
+    if (!clothesTypes.length) return detections.map((detection) => ({
+      ...detection,
+      segmentationStatus: "failed",
+      segmentationProvider: "aliyun_aitryon_parsing",
+      processingStatus: "failed",
+      processingError: "没有可分割的衣物类别，请单独补拍。",
+      failureKind: "outfit_parsing_type_missing",
+      ...outfitCompleteness({ ...detection, segmentationStatus: "failed", processingStatus: "failed" })
+    }));
+    const response = await qwenHttpRequest(
+      outfitParsingEndpoint(),
+      buildOutfitParsingRequestBody(source.url, clothesTypes),
+      process.env.DASHSCOPE_API_KEY
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Object.assign(new Error("AI试衣图片分割暂时不可用。"), {
+        status: 502,
+        code: cleanText(response.data?.code, 80) || "OUTFIT_PARSING_HTTP_ERROR",
+        providerStatusCode: response.statusCode
+      });
+    }
+    const urls = Array.isArray(response.data?.output?.parsing_img_url) ? response.data.output.parsing_img_url : [];
+    const boxes = Array.isArray(response.data?.output?.bbox) ? response.data.output.bbox : [];
+    const outputs = new Map();
+    for (let index = 0; index < clothesTypes.length; index += 1) {
+      const url = urls[index];
+      if (!url) continue;
+      outputs.set(clothesTypes[index], {
+        buffer: await downloadImage(url, 0, 30 * 1024 * 1024),
+        bbox: Array.isArray(boxes[index]) ? boxes[index].map(Number) : []
+      });
+    }
+    const segmented = [];
+    for (let index = 0; index < detections.length; index += 1) {
+      const detection = detections[index];
+      const type = outfitParsingType(detection);
+      if ((typeCounts.get(type) || 0) > 1) {
+        const failed = {
+          ...detection,
+          segmentationStatus: "failed",
+          segmentationProvider: "aliyun_aitryon_parsing",
+          processingStatus: "failed",
+          processingError: "检测到可独立穿着的同类叠穿，当前无法可靠拆成两件，请分别补拍。",
+          failureKind: "outfit_parsing_same_type_layers"
+        };
+        segmented.push({ ...failed, ...outfitCompleteness(failed) });
+        continue;
+      }
+      const output = outputs.get(type);
+      if (!output?.buffer?.length) {
+        const failed = {
+          ...detection,
+          segmentationStatus: "failed",
+          segmentationProvider: "aliyun_aitryon_parsing",
+          processingStatus: "failed",
+          processingError: "没有从人物照片中得到对应衣物的透明分割结果，请单独补拍。",
+          failureKind: "outfit_parsing_result_missing"
+        };
+        segmented.push({ ...failed, ...outfitCompleteness(failed) });
+        continue;
+      }
+      const quality = assessMattingQuality(output.buffer);
+      const contour = quality.accepted ? assessGarmentContourQuality(output.buffer) : { accepted: false, failureReason: "透明边缘未通过质量检查。" };
+      if (!quality.accepted || !contour.accepted) {
+        const failed = {
+          ...detection,
+          segmentationStatus: "failed",
+          segmentationProvider: "aliyun_aitryon_parsing",
+          processingStatus: "failed",
+          processingError: `${contour.failureReason || "透明边缘未通过质量检查。"} 请单独补拍。`,
+          failureKind: "outfit_parsing_quality_failed"
+        };
+        segmented.push({ ...failed, ...outfitCompleteness(failed) });
+        continue;
+      }
+      const cutoutKey = `outfit-segmented/${userId}/${captureId}-${index}.png`;
+      await cosCall("putObject", { ...objectOptions(cutoutKey), Body: output.buffer, ContentType: "image/png", ACL: "private" });
+      createdKeys.push(cutoutKey);
+      const prepared = {
+        ...detection,
+        cutoutKey,
+        repairMaskKey: "",
+        repairMode: "visible_pixels_only",
+        referenceRequired: false,
+        imageOrigin: "source_garment_mask",
+        visiblePixelPreservationScore: 100,
+        occlusionRatio: null,
+        segmentationStatus: "ready",
+        segmentationProvider: "aliyun_aitryon_parsing",
+        parsingBbox: output.bbox,
+        processingStatus: "cropped",
+        processingError: "",
+        failureKind: ""
+      };
+      const completeness = outfitCompleteness(prepared);
+      segmented.push({ ...prepared, ...completeness, referenceRequired: completeness.completenessStatus === "partial_visible" });
+    }
+    return segmented;
+  } catch (error) {
+    await Promise.all(createdKeys.map((key) => deleteObject(key).catch(() => {})));
+    if (error.status) throw error;
+    throw Object.assign(new Error("AI试衣图片分割暂时不可用，人物原图将被清理，请稍后重试。"), {
+      status: 502,
+      code: cleanText(error.code, 80) || "OUTFIT_PARSING_FAILED"
+    });
+  } finally {
+    if (source.temporaryKey) await deleteObject(source.temporaryKey).catch(() => {});
+  }
+};
+
+const segmentOutfitGarments = async (sourceKey, detections, userId, captureId, options = {}) => {
+  if (options.transport !== "native_rpc_v2" && cleanText(process.env.DASHSCOPE_WORKSPACE_ID, 100)) {
+    return segmentOutfitGarmentsWithOutfitParsing(sourceKey, detections, userId, captureId);
+  }
   if (!garmentSegmentationConfigured()) {
     throw Object.assign(new Error("服饰分割服务尚未配置，请先设置独立 RAM 子账号密钥。"), { status: 503, code: "GARMENT_SEGMENTATION_NOT_CONFIGURED" });
   }
@@ -710,16 +1210,20 @@ const segmentOutfitGarments = async (sourceKey, detections, userId, captureId) =
   const createdKeys = [];
   try {
     const ImagesegClient = require("@alicloud/imageseg20191230");
+    const segmentationClient = options.transport === "native_rpc_v2"
+      ? getGarmentSegmentationDiagnosticClient()
+      : getGarmentSegmentationClient();
     const downloadedMasks = [];
     for (const clothClass of classes) {
-      const request = new ImagesegClient.SegmentClothRequest({
-        imageURL: source.url,
+      const request = new ImagesegClient.SegmentClothAdvanceRequest({
+        imageURLObject: Readable.from(source.buffer),
         outMode: 1,
         clothClass: [clothClass],
         returnForm: "mask"
       });
       const response = await withTimeout(
-        getGarmentSegmentationClient().segmentClothWithOptions(request, { connectTimeout: 10000, readTimeout: 30000, autoretry: false }),
+        segmentationClient.segmentClothAdvance(request, { connectTimeout: 10000, readTimeout: 30000, autoretry: false })
+          .catch((error) => { throw Object.assign(error, { segmentationStage: error.segmentationStage || `服饰类别分割(${clothClass})` }); }),
         "服饰分割响应超时，请稍后重试。",
         35000
       );
@@ -734,7 +1238,7 @@ const segmentOutfitGarments = async (sourceKey, detections, userId, captureId) =
     const occluderMasks = new Map();
     if (/头发/.test(occlusionText)) {
       const response = await withTimeout(
-        getGarmentSegmentationClient().segmentHairWithOptions(new ImagesegClient.SegmentHairRequest({ imageURL: source.url }), { connectTimeout: 10000, readTimeout: 30000, autoretry: false }),
+        segmentationClient.segmentHairAdvance(new ImagesegClient.SegmentHairAdvanceRequest({ imageURLObject: Readable.from(source.buffer) }), { connectTimeout: 10000, readTimeout: 30000, autoretry: false }),
         "头发遮挡分割响应超时，请稍后重试。",
         35000
       );
@@ -747,7 +1251,7 @@ const segmentOutfitGarments = async (sourceKey, detections, userId, captureId) =
     }
     if (/手|手臂|皮肤/.test(occlusionText)) {
       const response = await withTimeout(
-        getGarmentSegmentationClient().segmentSkinWithOptions(new ImagesegClient.SegmentSkinRequest({ URL: source.url }), { connectTimeout: 10000, readTimeout: 30000, autoretry: false }),
+        segmentationClient.segmentSkinAdvance(new ImagesegClient.SegmentSkinAdvanceRequest({ URLObject: Readable.from(source.buffer) }), { connectTimeout: 10000, readTimeout: 30000, autoretry: false }),
         "皮肤遮挡分割响应超时，请稍后重试。",
         35000
       );
@@ -865,13 +1369,16 @@ const segmentOutfitGarments = async (sourceKey, detections, userId, captureId) =
         });
       }
     }
-    return segmented;
+    return segmented.map((item) => ({ ...item, ...outfitCompleteness(item) }));
   } catch (error) {
     await Promise.all(createdKeys.map((key) => deleteObject(key).catch(() => {})));
     if (error.status) throw error;
     throw Object.assign(new Error("服饰分割暂时不可用，人物原图将被清理，请稍后重试。"), {
       status: 502,
-      code: cleanText(error.code || error.data?.Code, 80) || "GARMENT_SEGMENTATION_FAILED"
+      code: cleanText(error.code || error.data?.Code, 80) || "GARMENT_SEGMENTATION_FAILED",
+      aiTaskStage: cleanText(error.segmentationStage, 80) || "服饰分割",
+      providerRequestId: cleanText(error.providerRequestId || error.data?.requestId || error.data?.RequestId, 120),
+      providerStatus: Number(error.providerStatus || error.statusCode || error.data?.statusCode || 0)
     });
   } finally {
     if (source.temporaryKey) await deleteObject(source.temporaryKey).catch(() => {});
@@ -1057,21 +1564,21 @@ const buildFlatLayRequestBody = (imageUrl, detection, model) => ({
   }
 });
 
-const buildOcclusionRepairRequestBody = (cropUrl, cutoutUrl, maskUrl, detection, model, size) => ({
+const buildWardrobeProductRequestBody = (cropUrl, cutoutUrl, maskUrl, detection, model) => ({
   model,
   input: { messages: [{ role: "user", content: [
     { image: cropUrl },
     { image: cutoutUrl },
-    { image: maskUrl },
-    { text: `这是严格的衣物局部补全任务，不是整件重绘。图1是真实人物照片中的目标${detection.category}，图2是已经按服饰蒙版提取的原始可见衣物像素，图3是修补蒙版。只允许修改图3白色蒙版覆盖的小孔洞；图3黑色区域、图2全部已有可见像素、透明画布位置和衣物外轮廓必须保持原坐标不变。${flatLayFactRule(detection)}可见结构描述：${detection.structure || "全部以图1和图2为准"}。只延续孔洞四周已经可见的颜色、材质、纹理走向和连续缝线。优先省略而不是发明：不得编造文字、Logo、印花、纽扣、拉链、口袋、五金、标签、装饰或隐藏剪裁。不得改变袖长、袖型、领口高度、内外层覆盖、系带、下摆、腰头、前中缝、裤型和裤脚。不得输出人物、皮肤、手臂、手、头发、脸、包带、其他衣物或背景。输出必须保持与图2完全相同的画布尺寸和对齐位置，只输出补全后的透明衣物图。` }
+    ...(maskUrl ? [{ image: maskUrl }] : []),
+    { text: `根据图1真人穿着和图2原始可见衣物像素，生成一张完整、平整、居中的单件${detection.category}商品展示图。${maskUrl ? "图3只标示原图中的小范围遮挡位置，可在有充分上下文时补全，但不得改变其他固定设计。" : "不得凭空增加原图未出现的设计。"}${detection.isComposite ? "这是固定组合上装，内外层共同构成一件衣物；必须同时保留两层、各自领口及原有覆盖关系，不得拆开、删除、融合或替换。" : flatLayCategoryRule(detection.category)}${flatLayFactRule(detection)}可见结构描述：${detection.structure || "全部以图1和图2为准"}。必须保持颜色、图案、文字、材质纹理、袖长、袖型、领口相对高度、层次、系带、下摆、腰头、口袋、缝线、裤型、裤脚和固定装饰。只允许消除人物穿着造成的姿态、褶皱及少量遮挡，使轮廓自然平整；不得标准化成基础款或发明不可确认的细节。画面只能有这一件衣物，四周保留约12%空白，背景使用与衣物高对比的纯色，禁止人物、皮肤、头发、手、包、其他衣物、鞋、衣架、场景和水印。` }
   ] }] },
   parameters: {
     n: 2,
     watermark: false,
     prompt_extend: false,
-    size: `${size.width}*${size.height}`,
-    seed: deterministicSeed(detection, "occlusion-repair"),
-    negative_prompt: "整件重绘、改变原始像素、改变轮廓、改变袖长、改变领口、融合层次、改变下摆、改变腰头、改变口袋、增加文字、增加印花、增加装饰、人物、皮肤、手、手臂、头发、脸、包带、其他衣物、背景"
+    size: flatLaySize(detection),
+    seed: deterministicSeed(detection, "wardrobe-product"),
+    negative_prompt: "人物、模特、皮肤、手、手臂、头发、脸、包、腰带、其他衣物、鞋、衣架、场景、水印、改变文字、改变印花、改变袖长、改变领口、融合层次、改变下摆、改变腰头、改变口袋、标准基础款"
   }
 });
 
@@ -1136,29 +1643,23 @@ const generateFlatLayCandidates = async (sourceKey, detection, correction = null
   return candidates;
 };
 
-const generateOcclusionRepairCandidates = async (detection) => {
+const generateWardrobeProductCandidates = async (detection) => {
   required(["DASHSCOPE_API_KEY", "AI_IMAGE_EDIT_COST_MICROS"]);
-  if (!detection.cutoutKey || !detection.repairMaskKey) {
-    throw Object.assign(new Error("局部遮挡修补缺少原像素图或修补蒙版。"), { status: 422, code: "GARMENT_REPAIR_INPUT_MISSING" });
+  if (!detection.cropKey || !detection.cutoutKey) {
+    throw Object.assign(new Error("商品展示整理缺少人物裁剪或原像素参照图。"), { status: 422, code: "WARDROBE_PRODUCT_INPUT_MISSING" });
   }
-  const [originalBuffer, repairMaskBuffer] = await Promise.all([
-    readObject(detection.cutoutKey),
-    readObject(detection.repairMaskKey)
-  ]);
-  const size = imageSizeFromPng(originalBuffer);
-  const requestBody = buildOcclusionRepairRequestBody(
+  const requestBody = buildWardrobeProductRequestBody(
     signedUrl(detection.cropKey, "GET", 600),
     signedUrl(detection.cutoutKey, "GET", 600),
-    signedUrl(detection.repairMaskKey, "GET", 600),
+    detection.repairMaskKey ? signedUrl(detection.repairMaskKey, "GET", 600) : "",
     detection,
-    DEFAULT_IMAGE_EDIT_MODEL,
-    size
+    DEFAULT_IMAGE_EDIT_MODEL
   );
   const endpoint = process.env.DASHSCOPE_IMAGE_EDIT_URL || "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
   const response = await imageEditHttpRequest(endpoint, requestBody, process.env.DASHSCOPE_API_KEY);
-  if (response.statusCode < 200 || response.statusCode >= 300) throw Object.assign(new Error("衣物局部补全暂时不可用。"), {
+  if (response.statusCode < 200 || response.statusCode >= 300) throw Object.assign(new Error("衣橱商品展示图生成暂时不可用。"), {
     status: 502,
-    code: cleanText(response.data?.code, 80) || "GARMENT_REPAIR_HTTP_ERROR",
+    code: cleanText(response.data?.code, 80) || "WARDROBE_PRODUCT_HTTP_ERROR",
     providerStatusCode: response.statusCode,
     retryAfterMs: Math.max(0, Number(response.headers?.["retry-after"] || 0) * 1000)
   });
@@ -1167,23 +1668,32 @@ const generateOcclusionRepairCandidates = async (detection) => {
     .map((item) => item?.image)
     .filter(Boolean)
     .slice(0, 2);
-  if (!resultUrls.length) throw Object.assign(new Error("AI 未返回衣物局部补全候选。"), { status: 502, code: "GARMENT_REPAIR_NO_OUTPUT" });
+  if (!resultUrls.length) throw Object.assign(new Error("AI 未返回衣橱商品展示候选。"), { status: 502, code: "WARDROBE_PRODUCT_NO_OUTPUT" });
   const candidates = [];
+  const rejected = [];
   for (let candidateIndex = 0; candidateIndex < resultUrls.length; candidateIndex += 1) {
+    const tempKey = `outfit-product-temp/${crypto.randomUUID()}-${candidateIndex}.png`;
     try {
-      const repaired = applyRepairCandidate(originalBuffer, await downloadImage(resultUrls[candidateIndex]), repairMaskBuffer);
-      if (repaired.visiblePixelPreservationScore !== 100) continue;
-      const repairedKey = `outfit-repaired/${crypto.randomUUID()}-${candidateIndex}.png`;
-      await cosCall("putObject", { ...objectOptions(repairedKey), Body: repaired.buffer, ContentType: "image/png", ACL: "private" });
+      await cosCall("putObject", { ...objectOptions(tempKey), Body: await downloadImage(resultUrls[candidateIndex]), ContentType: "image/png", ACL: "private" });
+      const extracted = await extractGeneratedCommodity(tempKey);
       candidates.push({
-        cutoutKey: repairedKey,
-        candidateIndex,
-        visiblePixelPreservationScore: repaired.visiblePixelPreservationScore,
-        repairedPixelCount: repaired.repairedPixelCount
+        cutoutKey: extracted.cutoutKey,
+        candidateIndex
       });
-    } catch {}
+    } catch (error) {
+      rejected.push(error);
+    } finally {
+      await deleteObject(tempKey).catch(() => {});
+    }
   }
-  if (!candidates.length) throw Object.assign(new Error("局部补全候选尺寸或像素保真未通过检查。"), { status: 422, code: "GARMENT_REPAIR_CANDIDATES_INVALID" });
+  if (!candidates.length) {
+    const qualities = rejected.map((error) => error.mattingQuality).filter(Boolean);
+    throw Object.assign(new Error(mattingFailureReason(qualities)), {
+      status: 422,
+      code: "WARDROBE_PRODUCT_SEGMENTATION_FAILED",
+      failureKind: mattingFailureKind(qualities)
+    });
+  }
   return candidates;
 };
 
@@ -1259,8 +1769,13 @@ const verifyGeneratedGarment = async (cropKey, generatedKey, detection, imageOri
   };
 };
 
-const sourceMaskAccepted = (verdict, detection, preservationScore) => {
-  const requiredChecks = ["sameGarment", "colorMatch", "patternMatch", "shapeMatch", "fixedDetailsMatch", "noPersonResidue", "clearTransparentContour", "visibleStructurePreserved"];
+const sourceMaskAccepted = (verdict, detection, preservationScore, allowPartial = false) => {
+  const visibleSourceOnly = allowPartial || detection?.segmentationProvider === "aliyun_aitryon_parsing";
+  const requiredChecks = visibleSourceOnly
+    ? ["sameGarment", "colorMatch", "patternMatch", "noPersonResidue", "clearTransparentContour", "visibleStructurePreserved"]
+    : ["sameGarment", "colorMatch", "patternMatch", "shapeMatch", "fixedDetailsMatch", "noPersonResidue", "clearTransparentContour", "visibleStructurePreserved"];
+  if (visibleSourceOnly) return Number(preservationScore) === 100
+    && requiredChecks.every((key) => verdict?.[key] === true);
   if (detection.isComposite === true) requiredChecks.push("layersMatch");
   if (["上衣", "外套"].includes(detection.category)) requiredChecks.push("sleeveLengthMatch", "necklineHeightMatch", "layerCoverageMatch");
   if (detection.category === "裤子") requiredChecks.push("waistbandMatch", "pocketLayoutMatch", "seamMatch", "legShapeMatch", "hemMatch");
@@ -1269,23 +1784,28 @@ const sourceMaskAccepted = (verdict, detection, preservationScore) => {
     && requiredChecks.every((key) => verdict?.[key] === true);
 };
 
-const verifySourceGarmentCutout = async (detection) => {
+const verifySourceGarmentCutout = async (detection, allowPartial = false) => {
   required(["DASHSCOPE_API_KEY"]);
+  const visibleSourceOnly = allowPartial || detection.segmentationProvider === "aliyun_aitryon_parsing";
   const model = process.env.QWEN_VL_MODEL || DEFAULT_VISION_MODEL;
   const requestBody = buildQwenRequestBody(signedUrl(detection.cropKey, "GET", 600), model);
   requestBody.max_completion_tokens = 350;
   requestBody.messages[0].content.splice(1, 0, { type: "image_url", image_url: { url: signedUrl(detection.cutoutKey, "GET", 600) }, max_pixels: 786432 });
-  requestBody.messages[0].content[2].text = `图1是真实人物照片中裁出的${detection.category}，图2是直接从同一张照片按服饰类别蒙版提取的透明衣物图，不是重新生成的商品图。只返回JSON：{sameGarment,colorMatch,patternMatch,shapeMatch,fixedDetailsMatch,noPersonResidue,clearTransparentContour,visibleStructurePreserved,layersMatch,sleeveLengthMatch,necklineHeightMatch,layerCoverageMatch,waistbandMatch,pocketLayoutMatch,seamMatch,legShapeMatch,hemMatch,fidelityScore,reason}。reason必须只用自然中文，不得输出英文核验字段。重点检查图2是否残留皮肤、手、手臂、头发、脸、包带、背景或其他衣物；有任何人物或配饰残留时 noPersonResidue=false。clearTransparentContour 只有在衣物外边缘完整、背景完全透明，且边缘没有矩形照片块、白底或木纹背景、字幕、鞋、人体及其他物体时才为 true；边缘模糊、粘连背景或无法确认裤腿间隙时必须为 false。规范化固定事实：${structureFactsText(detection) || "以图1可见衣物为准"}。图2允许保持人物穿着时的姿态和自然褶皱，不要求平铺或左右对称；但图1中可见的袖长、领口相对高度、层次、系带、下摆、腰头、口袋、缝线、裤型、裤脚、花纹和固定装饰必须保留。图2出现明显缺口、遮挡残留、轮廓不清或把两个层次错误合并时 visibleStructurePreserved=false，相关专项字段也必须为false，fidelityScore不得高于89。非对应品类的专项字段返回true。`;
+  requestBody.messages[0].content[2].text = `图1是真实人物照片中裁出的${detection.category}，图2是直接从同一张照片按服饰类别蒙版提取的透明衣物图，不是重新生成的商品图。只返回JSON：{sameGarment,colorMatch,patternMatch,shapeMatch,fixedDetailsMatch,noPersonResidue,clearTransparentContour,visibleStructurePreserved,layersMatch,sleeveLengthMatch,necklineHeightMatch,layerCoverageMatch,waistbandMatch,pocketLayoutMatch,seamMatch,legShapeMatch,hemMatch,fidelityScore,reason}。reason必须只用自然中文，不得输出英文核验字段。重点检查图2是否残留皮肤、手、手臂、头发、脸、包带、背景或其他衣物；有任何人物或配饰残留时 noPersonResidue=false。clearTransparentContour 只有在可见衣物外边缘清楚、背景完全透明，且边缘没有矩形照片块、白底或木纹背景、字幕、鞋、人体及其他物体时才为 true；边缘模糊、粘连背景或无法确认裤腿间隙时必须为 false。规范化固定事实：${structureFactsText(detection) || "以图1可见衣物为准"}。图2允许保持人物穿着时的姿态和自然褶皱，不要求平铺或左右对称；图1中实际可见的袖长、领口、层次、系带、下摆、腰头、口袋、缝线、裤型、裤脚、花纹和固定装饰必须保留。${visibleSourceOnly ? "本件只核验图1真实可见部分，不得因为裤腰或衣边被相邻衣物遮住而判失败，也不得把被遮住部分当作已经恢复。" : "关键结构应完整可见。"}图2出现遮挡物残留、轮廓不清或把两件衣物错误合并时 visibleStructurePreserved=false。非对应品类的专项字段返回true。`;
   const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
   const response = await qwenHttpRequest(`${endpoint}/chat/completions`, requestBody, process.env.DASHSCOPE_API_KEY);
   if (responseStatus(response) < 200 || responseStatus(response) >= 300) {
     throw Object.assign(new Error("衣物蒙版真实性核验暂时不可用。"), { status: 502, code: "SOURCE_MASK_VERIFY_HTTP_ERROR" });
   }
   const verdict = parseModelJson(response.data?.choices?.[0]?.message?.content);
-  const checks = ["sameGarment", "colorMatch", "patternMatch", "shapeMatch", "fixedDetailsMatch", "noPersonResidue", "clearTransparentContour", "visibleStructurePreserved"];
-  if (detection.isComposite === true) checks.push("layersMatch");
-  if (["上衣", "外套"].includes(detection.category)) checks.push("sleeveLengthMatch", "necklineHeightMatch", "layerCoverageMatch");
-  if (detection.category === "裤子") checks.push("waistbandMatch", "pocketLayoutMatch", "seamMatch", "legShapeMatch", "hemMatch");
+  const checks = visibleSourceOnly
+    ? ["sameGarment", "colorMatch", "patternMatch", "noPersonResidue", "clearTransparentContour", "visibleStructurePreserved"]
+    : ["sameGarment", "colorMatch", "patternMatch", "shapeMatch", "fixedDetailsMatch", "noPersonResidue", "clearTransparentContour", "visibleStructurePreserved"];
+  if (!visibleSourceOnly) {
+    if (detection.isComposite === true) checks.push("layersMatch");
+    if (["上衣", "外套"].includes(detection.category)) checks.push("sleeveLengthMatch", "necklineHeightMatch", "layerCoverageMatch");
+    if (detection.category === "裤子") checks.push("waistbandMatch", "pocketLayoutMatch", "seamMatch", "legShapeMatch", "hemMatch");
+  }
   const failedChecks = checks.filter((key) => verdict[key] !== true);
   const score = Math.max(0, Math.min(100, Math.round(Number(verdict.fidelityScore) || 0)));
   const preservationScore = Number(detection.visiblePixelPreservationScore || 0);
@@ -1294,7 +1814,7 @@ const verifySourceGarmentCutout = async (detection) => {
     failedChecks.length ? `未通过：${userFacingVerificationReason(failedChecks.join("、"))}` : ""
   ].filter(Boolean).join("；");
   return {
-    accepted: sourceMaskAccepted(verdict, detection, preservationScore),
+    accepted: sourceMaskAccepted(verdict, detection, preservationScore, allowPartial),
     score,
     failedChecks,
     reason: [diagnostic, userFacingVerificationReason(verdict.reason)].filter(Boolean).join("；")
@@ -1393,17 +1913,28 @@ const prepareGeneratedOutfitDetection = async (detection) => {
   }
 };
 
-const prepareOcclusionRepair = async (detection) => {
+const prepareWardrobeProductDisplay = async (detection) => {
   let candidates = [];
   try {
-    candidates = await generateOcclusionRepairCandidates(detection);
+    if (detection.segmentationStatus === "ready") {
+      const sourceVerification = await verifySourceGarmentCutout(detection);
+      if (!sourceVerification.accepted) {
+        await Promise.all([detection.cutoutKey, detection.repairMaskKey].filter(Boolean).map((key) => deleteObject(key).catch(() => {})));
+        return {
+          cutoutKey: "", repairMaskKey: "", flatLayKey: "", selectedImageKey: "",
+          imageOrigin: "", fidelityScore: sourceVerification.score, fidelityStatus: "rejected",
+          visiblePixelPreservationScore: detection.visiblePixelPreservationScore, occlusionRatio: detection.occlusionRatio,
+          segmentationStatus: "rejected", repairMode: "rejected", referenceRequired: true,
+          retryable: false, retryAfterMs: 0, failureKind: "source_mask_rejected",
+          processingStatus: "failed",
+          processingError: `本件原始衣物参照未通过检查：${sourceVerification.reason || "含人物残留或固定结构不完整"}`
+        };
+      }
+    }
+    candidates = await generateWardrobeProductCandidates(detection);
     const evaluated = await Promise.all(candidates.map(async (candidate) => {
       try {
-        const verification = await verifySourceGarmentCutout({
-          ...detection,
-          cutoutKey: candidate.cutoutKey,
-          visiblePixelPreservationScore: candidate.visiblePixelPreservationScore
-        });
+        const verification = await verifyGeneratedGarment(detection.cropKey, candidate.cutoutKey, detection, "flat_lay");
         return { ...candidate, verification };
       } catch (error) {
         return { ...candidate, verification: { accepted: false, score: 0, reason: cleanText(error.message, 120) } };
@@ -1419,11 +1950,11 @@ const prepareOcclusionRepair = async (detection) => {
       return {
         cutoutKey: "", repairMaskKey: "", flatLayKey: "", selectedImageKey: "",
         imageOrigin: "", fidelityScore: bestRejected?.verification.score || 0, fidelityStatus: "rejected",
-        visiblePixelPreservationScore: 100, occlusionRatio: detection.occlusionRatio,
+        visiblePixelPreservationScore: detection.visiblePixelPreservationScore, occlusionRatio: detection.occlusionRatio,
         segmentationStatus: "rejected", repairMode: "rejected", referenceRequired: true,
-        retryable: false, retryAfterMs: 0, failureKind: "repair_quality_failed",
+        retryable: false, retryAfterMs: 0, failureKind: "wardrobe_product_quality_failed",
         processingStatus: "failed",
-        processingError: `本件小范围遮挡未能可靠补全：${bestRejected?.verification.reason || "候选未通过真实性核验"} 请补充同一件衣服的另一角度或单品照片。`
+        processingError: `本件未能可靠整理成商品展示图：${bestRejected?.verification.reason || "候选未通过真实性核验"} 请补充同一件衣服的另一角度或单品照片。`
       };
     }
     const display = await createWardrobeDisplay(selected.cutoutKey);
@@ -1431,10 +1962,10 @@ const prepareOcclusionRepair = async (detection) => {
     await Promise.all([detection.cutoutKey, detection.repairMaskKey, selected.cutoutKey].filter(Boolean).map((key) => deleteObject(key).catch(() => {})));
     return {
       cutoutKey: "", repairMaskKey: "", flatLayKey: "", selectedImageKey: display.displayKey,
-      imageOrigin: "source_garment_mask_repaired", fidelityScore: selected.verification.score, fidelityStatus: "accepted",
-      visiblePixelPreservationScore: selected.visiblePixelPreservationScore, occlusionRatio: detection.occlusionRatio,
+      imageOrigin: "generated_wardrobe_display", fidelityScore: selected.verification.score, fidelityStatus: "accepted",
+      visiblePixelPreservationScore: detection.visiblePixelPreservationScore, occlusionRatio: detection.occlusionRatio,
       displayMode: display.displayMode, displayPaddingRatio: display.paddingRatio,
-      segmentationStatus: "accepted", repairMode: "image_edit_small_internal_hole", referenceRequired: false,
+      segmentationStatus: "accepted", repairMode: detection.repairMaskKey ? "generated_product_completion" : "generated_product_display", referenceRequired: false,
       retryable: false, retryAfterMs: 0, failureKind: "",
       processingStatus: "ready", processingError: ""
     };
@@ -1448,8 +1979,8 @@ const prepareOcclusionRepair = async (detection) => {
         visiblePixelPreservationScore: detection.visiblePixelPreservationScore, occlusionRatio: detection.occlusionRatio,
         segmentationStatus: "repair_pending", repairMode: detection.repairMode, referenceRequired: false,
         retryable: true, retryAfterMs: Math.max(65000, Number(error.retryAfterMs || 0)), failureKind: "provider_busy",
-        providerRetryAttempted: true, providerRetryStage: "occlusion_repair",
-        processingStatus: "failed", processingError: "局部补全服务繁忙，已安排一次自动重试。"
+        providerRetryAttempted: true, providerRetryStage: "wardrobe_product",
+        processingStatus: "failed", processingError: "商品展示图服务繁忙，已安排一次自动重试。"
       };
     }
     await Promise.all([detection.cutoutKey, detection.repairMaskKey].filter(Boolean).map((key) => deleteObject(key).catch(() => {})));
@@ -1459,77 +1990,71 @@ const prepareOcclusionRepair = async (detection) => {
       visiblePixelPreservationScore: detection.visiblePixelPreservationScore, occlusionRatio: detection.occlusionRatio,
       segmentationStatus: "failed", repairMode: "rejected", referenceRequired: true,
       retryable: false, retryAfterMs: 0,
-      failureKind: cleanText(error.code, 60) || "repair_processing_failed",
+      failureKind: cleanText(error.code, 60) || "wardrobe_product_processing_failed",
       processingStatus: "failed",
-      processingError: `本件小范围遮挡未能可靠补全：${cleanText(error.message, 120) || "局部补全失败"} 请补充同一件衣服的另一角度或单品照片。`
+      processingError: `本件未能可靠整理成商品展示图：${cleanText(error.message, 120) || "生成或透明分割失败"} 请补充同一件衣服的另一角度或单品照片。`
     };
   }
 };
 
-const requiresOutfitImageEdit = (detection) => detection?.segmentationStatus === "repair_pending";
+const prepareSourceVisibleDisplay = async (detection) => {
+  const partialVisible = detection.completenessStatus === "partial_visible";
+  const sourceVerification = await verifySourceGarmentCutout(detection, partialVisible);
+  if (!sourceVerification.accepted) {
+    await Promise.all([detection.cutoutKey, detection.repairMaskKey].filter(Boolean).map((key) => deleteObject(key).catch(() => {})));
+    return {
+      cutoutKey: "", repairMaskKey: "", flatLayKey: "", selectedImageKey: "",
+      imageOrigin: "", fidelityScore: sourceVerification.score, fidelityStatus: "rejected",
+      segmentationStatus: "rejected", completenessStatus: "needs_single_item_photo",
+      completenessNote: "可见区域仍含人物、相邻衣物或不清晰边缘，请单独补拍。",
+      referenceRequired: true, retryable: false, retryAfterMs: 0,
+      failureKind: "partial_visible_mask_rejected", processingStatus: "failed",
+      processingError: `局部可见区域未通过检查：${sourceVerification.reason || "含人物残留或边缘不清晰"}`
+    };
+  }
+  const display = await createWardrobeDisplay(detection.cutoutKey);
+  await Promise.all([detection.cutoutKey, detection.repairMaskKey].filter(Boolean).map((key) => deleteObject(key).catch(() => {})));
+  return {
+    cutoutKey: "", repairMaskKey: "", flatLayKey: "", selectedImageKey: display.displayKey,
+    imageOrigin: partialVisible ? "source_visible_garment_mask" : "source_garment_mask", fidelityScore: sourceVerification.score,
+    fidelityStatus: partialVisible ? "partial_visible" : "accepted", segmentationStatus: "accepted",
+    completenessStatus: partialVisible ? "partial_visible" : "ready", completenessNote: detection.completenessNote,
+    visiblePixelPreservationScore: detection.visiblePixelPreservationScore,
+    occlusionRatio: detection.occlusionRatio, displayMode: display.displayMode,
+    displayPaddingRatio: display.paddingRatio, referenceRequired: partialVisible,
+    retryable: false, retryAfterMs: 0, failureKind: "",
+    processingStatus: "ready", processingError: ""
+  };
+};
+
+const usesParsedSourceDisplay = (detection) => detection?.segmentationProvider === "aliyun_aitryon_parsing"
+  && ["ready", "repair_pending"].includes(detection?.segmentationStatus)
+  && Boolean(detection?.cutoutKey);
+
+const requiresOutfitImageEdit = (detection) => ["ready", "repair_pending"].includes(detection?.segmentationStatus)
+  && detection?.completenessStatus !== "partial_visible"
+  && !usesParsedSourceDisplay(detection);
 
 const prepareOutfitDetection = async (detection) => {
-  if (detection.segmentationStatus === "repair_pending") return prepareOcclusionRepair(detection);
-  if (detection.segmentationStatus !== "ready" || !detection.cutoutKey) {
-    return {
-      cutoutKey: "", flatLayKey: "", selectedImageKey: "",
-      imageOrigin: "", fidelityScore: null, fidelityStatus: "unavailable",
-      correctionSeedKey: "", correctionReason: "", correctionAttempted: true,
-      retryable: false, retryAfterMs: 0,
-      failureKind: detection.failureKind || "segmentation_unavailable",
-      processingStatus: "failed",
-      processingError: detection.processingError || "本件未能从人物照片中得到可靠衣物蒙版，请补拍单品照片。"
-    };
+  if (usesParsedSourceDisplay(detection)) {
+    return prepareSourceVisibleDisplay(detection);
   }
-  try {
-    const verification = await verifySourceGarmentCutout(detection);
-    if (!verification.accepted) {
-      await deleteObject(detection.cutoutKey).catch(() => {});
-      return {
-        cutoutKey: "", flatLayKey: "", selectedImageKey: "",
-        imageOrigin: "", fidelityScore: verification.score, fidelityStatus: "rejected",
-        correctionSeedKey: "", correctionReason: "", correctionAttempted: true,
-        retryable: false, retryAfterMs: 0, failureKind: "source_mask_rejected",
-        visiblePixelPreservationScore: detection.visiblePixelPreservationScore,
-        occlusionRatio: detection.occlusionRatio,
-        segmentationStatus: "rejected",
-        processingStatus: "failed",
-        processingError: `本件未能可靠拆解：${verification.reason || "衣物蒙版含人物残留或固定结构不完整"}`
-      };
-    }
-    const display = await createWardrobeDisplay(detection.cutoutKey);
-    await deleteObject(detection.cutoutKey).catch(() => {});
-    return {
-      cutoutKey: "",
-      flatLayKey: "",
-      selectedImageKey: display.displayKey,
-      imageOrigin: "source_garment_mask",
-      fidelityScore: verification.score,
-      fidelityStatus: "accepted",
-      visiblePixelPreservationScore: detection.visiblePixelPreservationScore,
-      occlusionRatio: detection.occlusionRatio,
-      displayMode: display.displayMode,
-      displayPaddingRatio: display.paddingRatio,
-      segmentationStatus: "accepted",
-      correctionSeedKey: "", correctionReason: "", correctionAttempted: true,
-      retryable: false, retryAfterMs: 0, failureKind: "",
-      processingStatus: "ready", processingError: ""
-    };
-  } catch (error) {
-    await deleteObject(detection.cutoutKey).catch(() => {});
-    return {
-      cutoutKey: "", flatLayKey: "", selectedImageKey: "",
-      imageOrigin: "", fidelityScore: null, fidelityStatus: "unavailable",
-      visiblePixelPreservationScore: detection.visiblePixelPreservationScore,
-      occlusionRatio: detection.occlusionRatio,
-      segmentationStatus: "failed",
-      correctionSeedKey: "", correctionReason: "", correctionAttempted: true,
-      retryable: false, retryAfterMs: 0,
-      failureKind: cleanText(error.code, 60) || "source_mask_verification_failed",
-      processingStatus: "failed",
-      processingError: `本件未能可靠拆解：${cleanText(error.message, 120) || "衣物蒙版核验失败"}`
-    };
+  if (detection.completenessStatus === "partial_visible" && detection.cutoutKey) {
+    return prepareSourceVisibleDisplay(detection);
   }
+  if (["ready", "repair_pending"].includes(detection.segmentationStatus) && detection.cutoutKey) {
+    return prepareWardrobeProductDisplay(detection);
+  }
+  await Promise.all([detection.cutoutKey, detection.repairMaskKey].filter(Boolean).map((key) => deleteObject(key).catch(() => {})));
+  return {
+    cutoutKey: "", repairMaskKey: "", flatLayKey: "", selectedImageKey: "",
+    imageOrigin: "", fidelityScore: null, fidelityStatus: "unavailable",
+    correctionSeedKey: "", correctionReason: "", correctionAttempted: true,
+    retryable: false, retryAfterMs: 0,
+    failureKind: detection.failureKind || "segmentation_unavailable",
+    processingStatus: "failed",
+    processingError: detection.processingError || "本件未能从人物照片中得到可靠衣物参照，请补拍单品照片。"
+  };
 };
 
 // 千问只给“候选标签”，材质、季节、厚薄等需要由用户在页面上确认后才可正式入库。
@@ -1592,7 +2117,103 @@ const recognizeImage = async (key) => {
   };
 };
 
+const mergeUsage = (...values) => values.reduce((total, usage = {}) => ({
+  prompt_tokens: total.prompt_tokens + Number(usage.prompt_tokens ?? usage.input_tokens ?? 0),
+  completion_tokens: total.completion_tokens + Number(usage.completion_tokens ?? usage.output_tokens ?? 0)
+}), { prompt_tokens: 0, completion_tokens: 0 });
+
+const buildInspirationRequestBody = (imageUrls, model, prompt) => {
+  const requestBody = buildQwenRequestBody(imageUrls[0], model);
+  requestBody.max_completion_tokens = 650;
+  for (let index = 1; index < imageUrls.length; index += 1) {
+    requestBody.messages[0].content.splice(index, 0, {
+      type: "image_url",
+      image_url: { url: imageUrls[index] },
+      max_pixels: 786432
+    });
+  }
+  requestBody.messages[0].content[imageUrls.length].text = prompt;
+  return requestBody;
+};
+
+const inspirationDiagnostic = (error) => ({
+  code: cleanText(error?.code, 60) || "INSPIRATION_OUTPUT_INVALID",
+  ...(error?.safeDiagnostic || {})
+});
+
+const analyzeInspirationWithRequester = async (imageUrls, options, requester) => {
+  const model = options.model;
+  const firstPrompt = "这些图片来自同一条穿搭灵感。只选择封面优先、最清晰的一套主穿搭，不拆分多套，不补全看不清的衣物。只返回严格JSON：{mainImageIndex,summary,slots:[{slot,category,name,color,pattern,styles,scenes,confidence,evidence}]}。mainImageIndex从0开始且不超过图片数量减1；summary不超过50字。slot最多各一个且仅可为top、bottom、dress、outerwear；category仅可为上衣、裤子、半身裙、连衣裙、外套，并必须与slot对应。styles最多3项；scenes只能从休闲、通勤、约会、旅行、聚会、运动选择最多3项。不要输出鞋、包、配饰，不识别人脸、身材、尺码、品牌，也不要推断材质成分。evidence只写画面中可见依据。";
+  const firstResponse = await requester(buildInspirationRequestBody(imageUrls, model, firstPrompt));
+  if (responseStatus(firstResponse) < 200 || responseStatus(firstResponse) >= 300) {
+    const error = Object.assign(new Error("灵感识别暂时不可用，请稍后重试。"), { status: 502, code: "INSPIRATION_AI_FAILED" });
+    error.providerUsage = firstResponse.data?.usage || {};
+    throw error;
+  }
+  const firstUsage = firstResponse.data?.usage || {};
+  try {
+    return {
+      result: inspiration.sanitizeOutfitAnalysis(parseModelJson(firstResponse.data?.choices?.[0]?.message?.content)),
+      usage: mergeUsage(firstUsage),
+      model: firstResponse.data?.model || model,
+      retryCount: 0
+    };
+  } catch (firstError) {
+    const title = cleanText(options.sourceTitle, 120);
+    const retryPrompt = `重新检查同一批图片。上一次输出无法形成有效衣物槽位。公开标题仅作辅助背景：${title || "未提供"}；必须以图片中实际可见衣物为准，不得仅根据标题补全。只返回严格JSON对象，顶层必须为mainImageIndex、summary、slots；slots必须是数组。每项slot只能精确使用top、bottom、dress、outerwear，category只能精确使用上衣、裤子、半身裙、连衣裙、外套，且dress只能对应连衣裙、bottom只能对应裤子或半身裙。即使名称是白色连衣裙或无袖连衣裙，category也只能写连衣裙，具体款式写入name。不要输出鞋、包、配饰、人物、品牌、尺码或材质。`;
+    let retryResponse;
+    try {
+      retryResponse = await requester(buildInspirationRequestBody(imageUrls, model, retryPrompt));
+    } catch (retryError) {
+      retryError.code = retryError.code || "INSPIRATION_AI_FAILED";
+      retryError.status = retryError.status || 502;
+      retryError.providerUsage = mergeUsage(firstUsage, retryError.providerUsage || {});
+      retryError.safeDiagnostic = { retryCount: 1, first: inspirationDiagnostic(firstError), second: { code: "INSPIRATION_AI_NETWORK_FAILED" } };
+      throw retryError;
+    }
+    const combinedUsage = mergeUsage(firstUsage, retryResponse.data?.usage || {});
+    if (responseStatus(retryResponse) < 200 || responseStatus(retryResponse) >= 300) {
+      const error = Object.assign(new Error("灵感识别重试仍未完成。"), { status: 502, code: "INSPIRATION_AI_FAILED" });
+      error.providerUsage = combinedUsage;
+      error.safeDiagnostic = { retryCount: 1, first: inspirationDiagnostic(firstError), second: { code: "INSPIRATION_AI_HTTP_FAILED" } };
+      throw error;
+    }
+    try {
+      return {
+        result: inspiration.sanitizeOutfitAnalysis(parseModelJson(retryResponse.data?.choices?.[0]?.message?.content)),
+        usage: combinedUsage,
+        model: retryResponse.data?.model || firstResponse.data?.model || model,
+        retryCount: 1
+      };
+    } catch (secondError) {
+      secondError.providerUsage = combinedUsage;
+      secondError.safeDiagnostic = { retryCount: 1, first: inspirationDiagnostic(firstError), second: inspirationDiagnostic(secondError) };
+      throw secondError;
+    }
+  }
+};
+
+const analyzeInspirationImages = async (keys, options = {}) => {
+  required([
+    "DASHSCOPE_API_KEY",
+    "QWEN_INPUT_YUAN_PER_MILLION",
+    "QWEN_OUTPUT_YUAN_PER_MILLION"
+  ]);
+  const imageKeys = [...new Set((Array.isArray(keys) ? keys : []).filter(Boolean))].slice(0, 3);
+  if (!imageKeys.length) throw Object.assign(new Error("没有可分析的灵感图片。"), { status: 409, code: "INSPIRATION_IMAGE_MISSING" });
+  const model = process.env.QWEN_VL_MODEL || DEFAULT_VISION_MODEL;
+  const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
+  const analyzed = await analyzeInspirationWithRequester(
+    imageKeys.map((key) => signedUrl(key, "GET", 600)),
+    { model, sourceTitle: options.sourceTitle },
+    (requestBody) => qwenHttpRequest(`${endpoint}/chat/completions`, requestBody, process.env.DASHSCOPE_API_KEY)
+  );
+  return { ...analyzed, provider: "dashscope" };
+};
+
 module.exports = {
+  analyzeInspirationImages,
+  createInspirationUpload,
   createUpload,
   deleteObject,
   extractGarment,
@@ -1602,8 +2223,10 @@ module.exports = {
   prepareOutfitDetection,
   requiresOutfitImageEdit,
   recognizeImage,
+  readObject,
   removeHanger,
   signedUrl,
   sourceHash,
-  _test: { assessMattingQuality, buildCorrectiveFlatLayRequestBody, buildFlatLayRequestBody, buildHangerEditRequestBody, buildOcclusionRepairRequestBody, buildQwenHttpOptions, buildQwenRequestBody, canonicalOutfitLabel, clothingClassesForDetection, correctionAvailable, cropOperation, deterministicSeed, flatLayAccepted, flatLayCandidateCount, flatLayFactRule, flatLaySize, garmentSegmentationConfigured, mattingFailureKind, mattingFailureReason, normalizeOutfitDetections, normalizeSegmentClothClassUrls, normalizeStructureFacts, paddedPixelBox, parseModelJson, responseStatus, retryableFlatLayError, sourceMaskAccepted, structureFactsText, userFacingVerificationReason, usesContrastingUpperBackground, usesFaithfulArrangement, usesFaithfulPresentation, usesFaithfulUpperPresentation, validateCropSize, vectorCosine }
+  storeTemporaryInspirationImages,
+  _test: { analyzeInspirationWithRequester, assessMattingQuality, authorizeViapiFileUpload, buildCorrectiveFlatLayRequestBody, buildFlatLayRequestBody, buildHangerEditRequestBody, buildWardrobeProductRequestBody, buildOutfitParsingRequestBody, buildQwenHttpOptions, buildQwenRequestBody, buildViapiRpcV2Request, canonicalOutfitLabel, clothingClassesForDetection, correctionAvailable, cropOperation, deterministicSeed, flatLayAccepted, flatLayCandidateCount, flatLayFactRule, flatLaySize, flattenViapiQuery, garmentSegmentationConfigured, getGarmentSegmentationDiagnosticClient, inspirationDiagnostic, mattingFailureKind, mattingFailureReason, mergeUsage, normalizeOutfitDetections, normalizeSegmentClothClassUrls, normalizeStructureFacts, outfitCompleteness, outfitParsingType, paddedPixelBox, parseModelJson, postAuthorizedOssObject, responseStatus, retryableFlatLayError, sourceMaskAccepted, structureFactsText, userFacingVerificationReason, usesContrastingUpperBackground, usesFaithfulArrangement, usesFaithfulPresentation, usesFaithfulUpperPresentation, usesParsedSourceDisplay, validateCropSize, viapiCredentialMode: () => viapiCredentials().mode, viapiPercentEncode, viapiRpcV2Request, vectorCosine }
 };

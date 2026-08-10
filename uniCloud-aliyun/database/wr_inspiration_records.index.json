@@ -1,0 +1,24 @@
+[
+  {
+    "IndexName": "user_idempotency_unique",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        { "Name": "user_id", "Direction": "1" },
+        { "Name": "idempotency_key", "Direction": "1" }
+      ],
+      "MgoIsUnique": true,
+      "MgoIsSparse": false
+    }
+  },
+  {
+    "IndexName": "user_updated",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        { "Name": "user_id", "Direction": "1" },
+        { "Name": "updated_at", "Direction": "-1" }
+      ],
+      "MgoIsUnique": false,
+      "MgoIsSparse": false
+    }
+  }
+]

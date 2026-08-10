@@ -1,0 +1,26 @@
+{
+  "bsonType": "object",
+  "description": "用户私密灵感分析记录，仅允许云函数访问",
+  "required": ["user_id", "source_type", "platform", "status", "confirmed_slots", "created_at", "updated_at"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false, "count": false },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "idempotency_key": { "bsonType": "string" },
+    "source_type": { "enum": ["xiaohongshu_link", "user_screenshot"] },
+    "platform": { "enum": ["xiaohongshu"] },
+    "source_url": { "bsonType": "string" },
+    "source_title": { "bsonType": "string" },
+    "source_author": { "bsonType": "string" },
+    "saved_image_key": { "bsonType": "string" },
+    "temporary_image_keys": { "bsonType": "array", "arrayType": "string" },
+    "temporary_deleted_at": { "bsonType": "string" },
+    "status": { "enum": ["resolving", "screenshot_required", "ready_to_analyze", "analyzing", "awaiting_confirmation", "ready", "failed"] },
+    "detected_outfit": { "bsonType": "object" },
+    "confirmed_slots": { "bsonType": "array" },
+    "summary": { "bsonType": "string" },
+    "error_code": { "bsonType": "string" },
+    "created_at": { "bsonType": "string" },
+    "updated_at": { "bsonType": "string" }
+  }
+}

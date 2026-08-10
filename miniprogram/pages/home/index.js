@@ -23,7 +23,7 @@ const entitlementView = (entitlement) => {
 };
 
 Page({
-  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "设置地区后获取实时天气", weatherTip: "按衣橱推荐今天穿什么", hasLocation: false, imageErrors: {}, entitlement: null },
+  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "设置地区后获取实时天气", weatherTip: "按衣橱推荐今天穿什么", hasLocation: false, imageErrors: {}, entitlement: null, inspirationText: "" },
   async onShow() {
     const { user, token } = session.restore();
     if (!user || !token) return wx.redirectTo({ url: "/pages/login/index" });
@@ -48,11 +48,15 @@ Page({
     if (location) {
       this.setData({ weatherTemp: "获取中", weatherCopy: location.cityName, weatherTip: "正在读取实时天气", hasLocation: true });
       try {
-        const weather = weatherService.formatLiveWeather(
+        const weather = weatherService.effectiveWeather(
           await api.getWeather(location.districtCode || location.cityCode || location.provinceCode),
           location
         );
-        this.setData({ weatherTemp: `${weather.temperature}°C`, weatherCopy: `${location.cityName} · ${weather.condition}`, weatherTip: HOME_WEATHER_TIPS[weather.condition] || "查看今日穿搭建议" });
+        this.setData({
+          weatherTemp: `${weather.temperature}°C`,
+          weatherCopy: `${location.cityName} · ${weather.condition}`,
+          weatherTip: weather.isManual ? "手动天气 · 查看今日穿搭" : HOME_WEATHER_TIPS[weather.condition] || "查看今日穿搭建议"
+        });
       } catch {
         this.setData({ weatherTemp: "暂不可用", weatherCopy: location.cityName, weatherTip: "点击查看或稍后重试" });
       }
@@ -73,6 +77,15 @@ Page({
   toWearCalendar() { wx.navigateTo({ url: "/pages/wear-calendar/index" }); },
   toMine() { wx.navigateTo({ url: "/pages/account/index" }); },
   toPlans() { wx.navigateTo({ url: "/pages/plans/index" }); },
+  onInspirationInput(event) { this.setData({ inspirationText: event.detail.value }); },
+  analyzeInspiration() {
+    if (!this.data.inspirationText.trim()) {
+      return wx.showToast({ title: "请先粘贴穿搭分享链接", icon: "none" });
+    }
+    getApp().globalData.pendingInspirationText = this.data.inspirationText.trim();
+    wx.navigateTo({ url: "/pages/inspiration/index?start=1" });
+  },
+  toInspiration() { wx.navigateTo({ url: "/pages/inspiration/index" }); },
   onActionImageError(event) {
     const id = event.currentTarget.dataset.id;
     this.setData({ [`imageErrors.${id}`]: true });

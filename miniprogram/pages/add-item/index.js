@@ -67,12 +67,23 @@ Page({
     batchItems: [],
     batchIndex: -1,
     batchSummary: null,
-    preparingBatch: false
+    preparingBatch: false,
+    entryMode: "closet",
+    entrySource: "single_item_upload",
+    isOutfitSupplement: false,
+    suggestedCategory: ""
   },
 
   onLoad(options) {
     const entryMode = options.mode === "candidate" ? "candidate" : "closet";
-    this.setData({ entryMode });
+    const isOutfitSupplement = entryMode === "closet" && options.source === "outfit_supplement";
+    const suggestedCategory = isOutfitSupplement && CATEGORIES.includes(options.category) ? options.category : "";
+    this.setData({
+      entryMode,
+      entrySource: isOutfitSupplement ? "outfit_supplement" : "single_item_upload",
+      isOutfitSupplement,
+      suggestedCategory
+    });
     this.refreshBudget();
     this.refreshEntitlement();
   },
@@ -600,7 +611,7 @@ Page({
         this.setData({ stage: "saved", stageText: "候选新衣已确认", errorText: "" });
         return wx.redirectTo({ url: `/pages/candidate/index?id=${candidate.id}` });
       }
-      await api.createItem({ draftId: this.data.draftId, ...this.formPayload() });
+      await api.createItem({ draftId: this.data.draftId, sourceType: this.data.entrySource, ...this.formPayload() });
       this.finishSave();
     } catch (error) {
       this.setData({ stage: "confirming", stageText: "请确认后重试", errorText: error.message });
@@ -617,7 +628,7 @@ Page({
       if (!upload || !this.data.manualUploaded) throw new Error("请先完成基础抠图。");
       await api.selectTaskImage(upload.taskId, this.data.selectedImage);
       // 入库响应丢失时保留同一 taskId 重试，云端会返回已保存结果，不会再创建一件。
-      await api.createManualItem({ taskId: upload.taskId, ...this.formPayload() });
+      await api.createManualItem({ taskId: upload.taskId, sourceType: this.data.entrySource, ...this.formPayload() });
       this.finishSave();
     } catch (error) {
       this.setData({ stage: "manual", stageText: "手动录入", errorText: error.message });

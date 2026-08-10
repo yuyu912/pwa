@@ -1,44 +1,28 @@
 <view class="home-page">
+  <view class="top-space"><text class="brand">衣橱关系</text><view class="brand-hanger"></view></view>
   <view class="hero-section">
-    <image wx:if="{{!imageErrors.hero}}" class="hero-image" src="/assets/home-hero-full-v2.jpg" mode="aspectFill" data-id="hero" binderror="onActionImageError" />
-    <view class="hero-wash"></view>
-    <text class="hero-brand">衣橱关系</text>
-    <view class="hero-copy">
-      <text class="eyebrow">今天也和</text>
-      <text class="hero-title">衣橱好好相处</text>
-      <text class="hero-line">～ 先穿已有的，再决定下一件 ～</text>
+    <image wx:if="{{!imageErrors.hero}}" class="hero-image" src="/assets/home-handdrawn-v3.jpg" mode="aspectFill" data-id="hero" binderror="onActionImageError" />
+    <view class="weather-card" bindtap="toWeather">
+      <view class="weather-mark"><view class="weather-sun"></view><view class="weather-cloud"></view></view>
+      <view class="weather-content"><text class="weather-temp">{{weatherTemp}}</text><text class="weather-copy">{{weatherCopy}}</text><text class="weather-tip">{{weatherTip}}</text></view><text class="card-arrow">›</text>
     </view>
-    <view class="weather-card" bindtap="toWeather"><text class="weather-icon">{{hasLocation ? '☁︎' : '⌖'}}</text><view class="weather-content"><text class="weather-temp">{{weatherTemp}}</text><text class="weather-copy">{{weatherCopy}}</text><text class="weather-tip">{{weatherTip}}</text></view><text class="card-arrow">›</text></view>
   </view>
 
-  <view wx:if="{{entitlement}}" class="entitlement-card entitlement-{{entitlement.status}}" bindtap="toPlans">
-    <view><text class="entitlement-title">{{entitlement.title}}</text><text class="entitlement-note">{{entitlement.note}}</text><text wx:if="{{entitlement.quotaText}}" class="entitlement-quota {{entitlement.quotaWarning ? 'quota-warning' : ''}}">{{entitlement.quotaText}}</text></view>
-    <text class="chevron">›</text>
+  <view class="inspiration-card">
+    <text class="section-title">粘贴穿搭分享链接</text>
+    <view class="link-field"><input value="{{inspirationText}}" placeholder="粘贴小红书等平台的分享链接" bindinput="onInspirationInput"/><button bindtap="analyzeInspiration">看看我的衣橱能不能搭</button></view>
   </view>
 
-  <view class="today-card" bindtap="toOutfitCapture">
-    <image wx:if="{{!imageErrors.today}}" class="today-bg" src="/assets/today-card-bg-v2.jpg" mode="aspectFill" data-id="today" binderror="onActionImageError" />
-    <view class="today-copy"><text class="hanger">⌁</text><text class="today-title">拍下今日穿搭</text><text class="today-arrow">⟶</text></view>
+  <view class="entry-grid">
+    <view class="entry-card wardrobe-entry" bindtap="toWardrobe"><image src="/assets/wardrobe-entry-v3.jpg" mode="aspectFill"/><view class="entry-copy"><text class="entry-title">我的衣橱</text><text class="entry-subtitle">已收录 {{itemCount}} 件衣物</text></view><text class="entry-arrow">›</text></view>
+    <view class="entry-card record-entry" bindtap="toWearCalendar"><image src="/assets/outfit-record-v3.jpg" mode="aspectFill"/><view class="entry-copy"><text class="entry-title">搭配记录</text><text class="entry-subtitle">回看真正穿过的搭配</text></view><text class="entry-arrow">›</text></view>
   </view>
 
-  <view class="quick-grid">
-    <view class="quick-card" bindtap="toAdd"><image wx:if="{{!imageErrors.add}}" class="quick-bg" src="/assets/action-add-bg-v2.jpg" mode="aspectFill" data-id="add" binderror="onActionImageError"/><text wx:else class="quick-fallback">＋</text><view class="quick-label"><text>添加衣物</text></view></view>
-    <view class="quick-card" bindtap="toCandidate"><image wx:if="{{!imageErrors.analysis}}" class="quick-bg" src="/assets/action-analysis-bg-v2.jpg" mode="aspectFill" data-id="analysis" binderror="onActionImageError"/><text wx:else class="quick-fallback">⌕</text><view class="quick-label"><text>新衣分析</text></view></view>
-    <view class="quick-card" bindtap="toFriends"><image wx:if="{{!imageErrors.friends}}" class="quick-bg" src="/assets/action-friends-bg-v2.jpg" mode="aspectFill" data-id="friends" binderror="onActionImageError"/><text wx:else class="quick-fallback">♡</text><view class="quick-label"><text>好友帮搭</text></view></view>
-  </view>
-
-  <view class="calendar-entry" bindtap="toWearCalendar"><view class="calendar-entry-icon"><text class="calendar-entry-month">月</text><text class="calendar-entry-day">日</text></view><view class="calendar-entry-copy"><text class="calendar-entry-title">穿着日历</text><text class="calendar-entry-subtitle">按月回看真实穿着记录</text></view><text class="chevron">›</text></view>
-  <view class="calendar-entry" bindtap="toStyleProfile"><view class="calendar-entry-icon"><text>风</text></view><view class="calendar-entry-copy"><text class="calendar-entry-title">我的穿搭风格</text><text class="calendar-entry-subtitle">只根据你确认过的穿搭形成事实画像</text></view><text class="chevron">›</text></view>
-  <view class="calendar-entry" bindtap="toCityTrends"><view class="calendar-entry-icon"><text>城</text></view><view class="calendar-entry-copy"><text class="calendar-entry-title">城市穿搭雷达</text><text class="calendar-entry-subtitle">查看城市热门颜色、品类和风格</text></view><text class="chevron">›</text></view>
-  <view class="calendar-entry" bindtap="toCandidateWaitlist"><view class="calendar-entry-icon waitlist-icon"><text>候</text></view><view class="calendar-entry-copy"><text class="calendar-entry-title">新衣观望清单</text><text class="calendar-entry-subtitle">冷静 7 天后，按当前衣橱重新复盘</text></view><text class="chevron">›</text></view>
-  <view class="calendar-entry" bindtap="toCommunity"><view class="calendar-entry-icon community-icon"><text>灵</text></view><view class="calendar-entry-copy"><text class="calendar-entry-title">穿搭灵感广场</text><text class="calendar-entry-subtitle">发布真实衣橱搭配，收集灵感值</text></view><text class="chevron">›</text></view>
-
-  <view class="progress-card" bindtap="toWardrobe"><image wx:if="{{!imageErrors.progress}}" class="progress-art" src="/assets/progress-wardrobe-v2.jpg" mode="aspectFit" data-id="progress" binderror="onActionImageError"/><view wx:else class="mini-closet">▥</view><text class="progress-copy">已录入 <text class="count">{{itemCount}}</text> 件 · 再添 <text class="count">2</text> 件解锁完整分析</text><text class="chevron">›</text></view>
+  <view class="add-row"><button bindtap="toAdd">＋ 录入单件衣物</button><button bindtap="toOutfitCapture">拍摄整套穿搭</button></view>
 
   <view class="bottom-nav">
-    <view class="nav-item active"><text class="nav-icon">⌂</text><text>首页</text></view>
-    <view class="nav-item" bindtap="toWardrobe"><text class="nav-icon">▯</text><text>衣橱</text></view>
-    <view class="nav-item" bindtap="toCandidate"><text class="nav-icon">⌁</text><text>新衣分析</text></view>
-    <view class="nav-item" bindtap="toMine"><text class="nav-icon">♙</text><text>我的</text></view>
+    <view class="nav-item active"><view class="home-icon"><view class="home-roof"></view><view class="home-body"></view></view><text>首页</text></view>
+    <view class="nav-item" bindtap="toInspiration"><view class="bulb-icon"><view class="bulb-ray bulb-top"></view><view class="bulb-ray bulb-left"></view><view class="bulb-ray bulb-right"></view><view class="bulb-core"></view><view class="bulb-base"></view></view><text>灵感</text></view>
+    <view class="nav-item" bindtap="toWardrobe"><view class="closet-icon"><view></view><view></view></view><text>衣橱</text></view>
   </view>
 </view>

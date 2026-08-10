@@ -19,6 +19,7 @@ App({
     token: "",
     currentCandidate: null,
     pendingOutfitToken: "",
+    pendingInspirationText: "",
     entitlementPromptShown: false
   },
   onLaunch(options) { rememberShareToken(this, options); },
