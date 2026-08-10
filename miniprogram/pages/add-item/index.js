@@ -69,20 +69,14 @@ Page({
     batchSummary: null,
     preparingBatch: false,
     entryMode: "closet",
-    entrySource: "single_item_upload",
-    isOutfitSupplement: false,
-    suggestedCategory: ""
+    entrySource: "single_item_upload"
   },
 
   onLoad(options) {
     const entryMode = options.mode === "candidate" ? "candidate" : "closet";
-    const isOutfitSupplement = entryMode === "closet" && options.source === "outfit_supplement";
-    const suggestedCategory = isOutfitSupplement && CATEGORIES.includes(options.category) ? options.category : "";
     this.setData({
       entryMode,
-      entrySource: isOutfitSupplement ? "outfit_supplement" : "single_item_upload",
-      isOutfitSupplement,
-      suggestedCategory
+      entrySource: "single_item_upload"
     });
     this.refreshBudget();
     this.refreshEntitlement();

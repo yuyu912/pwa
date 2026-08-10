@@ -18,7 +18,7 @@
     <view class="entry-card record-entry" bindtap="toWearCalendar"><image src="/assets/outfit-record-v3.jpg" mode="aspectFill"/><view class="entry-copy"><text class="entry-title">搭配记录</text><text class="entry-subtitle">回看真正穿过的搭配</text></view><text class="entry-arrow">›</text></view>
   </view>
 
-  <view class="add-row"><button bindtap="toAdd">＋ 录入单件衣物</button><button bindtap="toOutfitCapture">拍摄整套穿搭</button></view>
+  <view class="add-row"><button bindtap="toAdd">＋ 录入单件衣物</button></view>
 
   <view class="bottom-nav">
     <view class="nav-item active"><view class="home-icon"><view class="home-roof"></view><view class="home-body"></view></view><text>首页</text></view>

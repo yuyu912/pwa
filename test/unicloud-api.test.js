@@ -1125,15 +1125,9 @@ test("组合上装第一轮失败后只允许一次双图纠错", () => {
   assert.match(body.input.messages[0].content[2].text, /长袖被缩短，内层领口过低/);
 });
 
-test("核验原因转为中文且客户端显示平整商品图阶段", () => {
+test("整套兼容服务仍将核验原因转为中文并保留分割字段", () => {
   assert.equal(cloudTest.userFacingVerificationReason("necklineHeightMatch 与 layerCoverageMatch 不通过"), "领口高度一致性 与 层次覆盖一致性 不通过");
-  const clientSource = require("node:fs").readFileSync(new URL("../miniprogram/pages/outfit-capture/index.js", import.meta.url), "utf8");
-  const markup = require("node:fs").readFileSync(new URL("../miniprogram/pages/outfit-capture/index.wxml", import.meta.url), "utf8");
   const apiSource = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
-  assert.doesNotMatch(clientSource, /Promise\.all\(Array\.from\(\{ length: Math\.min\(2/);
-  assert.match(clientSource, /prepared\.processingStatus === "queued"/);
-  assert.match(markup, /正在依据原图整理平整商品展示图/);
-  assert.match(markup, /平整商品展示图已通过原图真实性核验/);
   assert.match(apiSource, /segmentationStatus:/);
   assert.match(apiSource, /visiblePixelPreservationScore:/);
 });

@@ -1,0 +1,42 @@
+<view class="page canvas-page">
+  <view class="page-head"><view><text class="eyebrow">OUTFIT CANVAS</text><text class="headline">自主搭配画布</text></view><button class="clear-button" bindtap="clearCanvas">清空</button></view>
+  <text class="intro">从衣橱添加衣物，自由拖动、双指缩放；选中后可旋转或调整前后层级。</text>
+
+  <view wx:if="{{loading}}" class="state-card">正在读取你的衣橱…</view>
+  <view wx:elif="{{error}}" class="state-card error"><text>{{error}}</text><button bindtap="retry">重新加载</button></view>
+  <block wx:else>
+    <movable-area id="outfitCanvas" class="outfit-canvas">
+      <view wx:if="{{layers.length === 0}}" class="canvas-empty"><text class="empty-plus">＋</text><text>从下方衣橱添加衣物</text><text class="empty-note">这里不会生成虚拟上身图，只做真实衣物拼贴预览</text></view>
+      <movable-view wx:for="{{layers}}" wx:key="key" class="canvas-layer {{selectedKey === item.key ? 'selected' : ''}}" direction="all" x="{{item.x}}" y="{{item.y}}" scale="true" scale-value="{{item.scale}}" scale-min="0.45" scale-max="2.2" out-of-bounds="false" data-key="{{item.key}}" bindchange="onLayerMove" bindscale="onLayerScale" catchtap="selectLayer" style="z-index:{{item.z}}">
+        <image wx:if="{{item.imageUrl && !item.imageFailed}}" class="layer-image" src="{{item.imageUrl}}" mode="aspectFit" data-key="{{item.key}}" binderror="onLayerImageError" style="transform:rotate({{item.rotation}}deg)"/>
+        <view wx:else class="layer-placeholder" style="transform:rotate({{item.rotation}}deg)"><text>{{item.category || '衣物'}}</text></view>
+        <text wx:if="{{selectedKey === item.key}}" class="selected-name">{{item.name}}</text>
+      </movable-view>
+    </movable-area>
+
+    <view class="tool-card {{selectedKey ? '' : 'disabled'}}">
+      <button bindtap="shrinkSelected" disabled="{{!selectedKey}}">缩小</button>
+      <button bindtap="growSelected" disabled="{{!selectedKey}}">放大</button>
+      <button bindtap="rotateLeft" disabled="{{!selectedKey}}">↶ 15°</button>
+      <button bindtap="rotateRight" disabled="{{!selectedKey}}">↷ 15°</button>
+      <button bindtap="bringFront" disabled="{{!selectedKey}}">移到最前</button>
+      <button bindtap="sendBack" disabled="{{!selectedKey}}">移到最后</button>
+      <button class="delete-tool" bindtap="deleteSelected" disabled="{{!selectedKey}}">删除</button>
+    </view>
+    <text class="save-state">{{savedText || (layers.length ? '调整后会自动保存本机草稿' : '')}}</text>
+
+    <view class="picker-section">
+      <view class="picker-title-row"><text class="picker-title">从衣橱添加</text><text class="picker-count">已放 {{layers.length}} / 12 件</text></view>
+      <scroll-view class="category-scroll" scroll-x><text wx:for="{{categories}}" wx:key="*this" class="category {{activeCategory === item ? 'active' : ''}}" data-category="{{item}}" bindtap="selectCategory">{{item}}</text></scroll-view>
+      <scroll-view class="item-scroll" scroll-x enhanced>
+        <view class="picker-list">
+          <view wx:for="{{visibleItems}}" wx:key="id" class="picker-item" data-id="{{item.id}}" bindtap="addItem">
+            <view class="picker-visual"><image wx:if="{{item.imageUrl && !pickerImageFailures[item.id]}}" src="{{item.imageUrl}}" mode="aspectFit" data-id="{{item.id}}" binderror="onPickerImageError"/><text wx:else>{{item.category || '衣'}}</text></view>
+            <text class="picker-name">{{item.name}}</text><text class="picker-meta">{{item.category}}{{item.color ? ' · ' + item.color : ''}}</text>
+          </view>
+          <view wx:if="{{visibleItems.length === 0}}" class="picker-empty">该分类暂无衣物</view>
+        </view>
+      </scroll-view>
+    </view>
+  </block>
+</view>

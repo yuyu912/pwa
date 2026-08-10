@@ -23,6 +23,7 @@
   </view>
 
   <view class="idle-entry card" bindtap="openIdleItems"><view><text class="idle-entry-title">私人闲置清单</text><text class="idle-entry-note">仅你可见，不会公开、交换或出租</text></view><text class="idle-entry-arrow">›</text></view>
+  <view class="canvas-entry card" bindtap="openOutfitCanvas"><view><text class="canvas-entry-title">自主搭配画布</text><text class="canvas-entry-note">选择真实衣物，自由拖动、缩放和叠放</text></view><text class="canvas-entry-arrow">›</text></view>
 
   <view wx:if="{{!loading && !error}}" class="filter-summary"><view><text class="summary-number">{{matchedCount}}</text><text class="summary-label">件符合条件</text></view><view><text class="summary-number">{{monthlyWearTotal}}</text><text class="summary-label">次本月穿着</text></view></view>
 

@@ -69,7 +69,6 @@ Page({
   toCommunity() { wx.navigateTo({ url: "/pages/community/index" }); },
   toWeather() { wx.navigateTo({ url: "/pages/weather/index" }); },
   toTodayOutfit() { wx.navigateTo({ url: "/pages/today-outfit/index" }); },
-  toOutfitCapture() { wx.navigateTo({ url: "/pages/outfit-capture/index" }); },
   toStyleProfile() { wx.navigateTo({ url: "/pages/style-profile/index" }); },
   toCityTrends() { wx.navigateTo({ url: "/pages/city-trends/index" }); },
   toAdd() { wx.navigateTo({ url: "/pages/add-item/index" }); },

@@ -1,10 +1,9 @@
 <view class="page">
-  <text class="heading">{{entryMode === 'candidate' ? '分析一件候选新衣' : isOutfitSupplement ? '单独补拍这件衣物' : '拍衣服，快速录入'}}</text>
-  <text class="sub">{{entryMode === 'candidate' ? 'AI 识别后由你确认标签，再与真实衣橱和穿着记录进行比较。' : isOutfitSupplement ? '整套穿搭中的这件衣物未能可靠拆解。无需重新上传全身照，只拍这件衣物即可。' : '无需上传全身照。每张照片只放一件衣物，AI 抠图并生成候选标签，确认后才会正式入库。'}}</text>
+  <text class="heading">{{entryMode === 'candidate' ? '分析一件候选新衣' : '拍衣服，快速录入'}}</text>
+  <text class="sub">{{entryMode === 'candidate' ? 'AI 识别后由你确认标签，再与真实衣橱和穿着记录进行比较。' : '每张照片只放一件衣物，AI 抠图并生成候选标签，确认后才会正式入库。'}}</text>
   <view wx:if="{{entryMode !== 'candidate'}}" class="notice">
     <text class="notice-title">单件衣物拍摄要求</text>
     <text>支持平铺、挂拍或清晰商品图；请让整件衣物进入画面，避免手、身体、其他衣物和杂乱背景遮挡。</text>
-    <text wx:if="{{suggestedCategory}}">本次建议补拍：{{suggestedCategory}}。AI 仍会重新识别，最终由你确认。</text>
   </view>
 
   <view wx:if="{{entitlement}}" class="entitlement entitlement-{{entitlement.status}}" bindtap="openPlans">
@@ -22,7 +21,7 @@
     <image wx:if="{{imagePath}}" class="preview" src="{{resultImage || imagePath}}" mode="aspectFit"/>
     <block wx:else>
       <text class="plus">＋</text>
-      <text>{{entryMode === 'candidate' ? '选择候选新衣图片' : isOutfitSupplement ? '拍摄或选择这件衣物' : '选择 1–9 张单件衣物图片'}}</text>
+      <text>{{entryMode === 'candidate' ? '选择候选新衣图片' : '选择 1–9 张单件衣物图片'}}</text>
       <text class="hint">支持拍照或相册；每张只放一件衣物，压缩后不超过 2MB</text>
     </block>
   </view>
