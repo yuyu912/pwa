@@ -1,6 +1,6 @@
 <view class="page">
-  <text class="heading">{{entryMode === 'candidate' ? '分析一件候选新衣' : '拍衣服，快速录入'}}</text>
-  <text class="sub">{{entryMode === 'candidate' ? 'AI 识别后由你确认标签，再与真实衣橱和穿着记录进行比较。' : '每张照片只放一件衣物，AI 抠图并生成候选标签，确认后才会正式入库。'}}</text>
+  <text class="heading">{{entryMode === 'candidate' ? '购买前衣物查重' : '拍衣服，快速录入'}}</text>
+  <text class="sub">{{entryMode === 'candidate' ? '拍下或选择准备购买的衣服，确认标签后与真实衣橱比较相似度。' : '每张照片只放一件衣物，AI 抠图并生成候选标签，确认后才会正式入库。'}}</text>
   <view wx:if="{{entryMode !== 'candidate'}}" class="notice">
     <text class="notice-title">单件衣物拍摄要求</text>
     <text>支持平铺、挂拍或清晰商品图；请让整件衣物进入画面，避免手、身体、其他衣物和杂乱背景遮挡。</text>
@@ -21,7 +21,7 @@
     <image wx:if="{{imagePath}}" class="preview" src="{{resultImage || imagePath}}" mode="aspectFit"/>
     <block wx:else>
       <text class="plus">＋</text>
-      <text>{{entryMode === 'candidate' ? '选择候选新衣图片' : '选择 1–9 张单件衣物图片'}}</text>
+      <text>{{entryMode === 'candidate' ? '拍照或选择候选衣物图片' : '选择 1–9 张单件衣物图片'}}</text>
       <text class="hint">支持拍照或相册；每张只放一件衣物，压缩后不超过 2MB</text>
     </block>
   </view>
@@ -130,7 +130,7 @@
       <text>{{manualMode ? '本次已完成基础抠图，不调用通义千问 VL；衣物属性由你填写。' : '季节、厚薄和材质均为视觉候选，不代表真实成分或合身保证。'}}</text>
     </view>
     <button wx:if="{{manualMode}}" class="primary save" bindtap="saveManual">确认基础录入</button>
-    <button wx:else class="primary save" bindtap="saveConfirmed">{{entryMode === 'candidate' ? '确认标签并生成分析' : '确认标签并入库'}}</button>
+    <button wx:else class="primary save" bindtap="saveConfirmed">{{entryMode === 'candidate' ? '确认标签并查看查重结果' : '确认标签并入库'}}</button>
   </view>
 
   <button class="back" bindtap="goBack">回到首页</button>

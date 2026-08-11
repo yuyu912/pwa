@@ -1,6 +1,6 @@
 const api = require("../../services/api");
 const session = require("../../services/session");
-const { filterWardrobe } = require("../../utils/wardrobe-filter");
+const { filterWardrobe, countAdvancedFilters } = require("../../utils/wardrobe-filter");
 
 function normalizeItem(item) {
   // 云端沿用数据库字段 wear_count，模拟数据使用 wearCount；页面统一后不再出现“已穿 次”。
@@ -26,6 +26,8 @@ Page({
     activeThickness: "全部",
     activeWearStatus: "全部",
     activeIdleStatus: "全部",
+    filtersOpen: false,
+    advancedFilterCount: 0,
     categories: ["全部", "上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"],
     seasons: ["全部", "春夏", "春秋", "秋冬", "多季"],
     thicknesses: ["全部", "薄", "适中", "厚"],
@@ -57,15 +59,20 @@ Page({
     } finally { this.setData({ loading: false }); }
   },
   applyFilter() {
-    this.setData(filterWardrobe(this.data.items, {
+    const filters = {
       keyword: this.data.keyword,
       category: this.data.activeCategory,
       season: this.data.activeSeason,
       thickness: this.data.activeThickness,
       wearStatus: this.data.activeWearStatus,
       idleStatus: this.data.activeIdleStatus
-    }));
+    };
+    this.setData({
+      ...filterWardrobe(this.data.items, filters),
+      advancedFilterCount: countAdvancedFilters(filters)
+    });
   },
+  toggleFilters() { this.setData({ filtersOpen: !this.data.filtersOpen }); },
   onKeyword(event) { this.setData({ keyword: event.detail.value }); this.applyFilter(); },
   selectCategory(event) { this.setData({ activeCategory: event.currentTarget.dataset.category }); this.applyFilter(); },
   selectSeason(event) { this.setData({ activeSeason: event.currentTarget.dataset.value }); this.applyFilter(); },
@@ -81,7 +88,7 @@ Page({
   },
   openItem(event) { wx.navigateTo({ url: `/pages/item-detail/index?id=${event.currentTarget.dataset.id}` }); },
   openOutfitGallery() { wx.navigateTo({ url: "/pages/outfit-gallery/index" }); },
-  openOutfitCanvas() { wx.navigateTo({ url: "/pages/outfit-canvas/index" }); },
+  openOutfitCanvas() { wx.navigateTo({ url: "/pages/outfit-canvas/index?mode=new" }); },
   openCandidate() { wx.navigateTo({ url: "/pages/add-item/index?mode=candidate" }); },
   openIdleItems() { wx.navigateTo({ url: "/pages/idle-items/index" }); }
 });

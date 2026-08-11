@@ -6,7 +6,7 @@ import vm from "node:vm";
 const source = fs.readFileSync(new URL("../miniprogram/utils/wardrobe-filter.js", import.meta.url), "utf8");
 const commonJsModule = { exports: {} };
 vm.runInNewContext(source, { module: commonJsModule, exports: commonJsModule.exports, Number, String, Array });
-const { filterWardrobe } = commonJsModule.exports;
+const { filterWardrobe, countAdvancedFilters } = commonJsModule.exports;
 const weatherSource = fs.readFileSync(new URL("../miniprogram/services/weather.js", import.meta.url), "utf8");
 const weatherModule = { exports: {} };
 vm.runInNewContext(weatherSource, {
@@ -24,6 +24,20 @@ const canvasModule = { exports: {} };
 vm.runInNewContext(canvasSource, { module: canvasModule, exports: canvasModule.exports, Number, String, Array, Map, Math });
 const canvas = canvasModule.exports;
 const canvasMarkup = fs.readFileSync(new URL("../miniprogram/pages/outfit-canvas/index.wxml", import.meta.url), "utf8");
+const wardrobeSource = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.js", import.meta.url), "utf8");
+const wardrobeMarkup = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.wxml", import.meta.url), "utf8");
+const addItemMarkup = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.wxml", import.meta.url), "utf8");
+const candidateMarkup = fs.readFileSync(new URL("../miniprogram/pages/candidate/index.wxml", import.meta.url), "utf8");
+let wardrobePage;
+vm.runInNewContext(wardrobeSource, {
+  require: (specifier) => specifier.includes("wardrobe-filter") ? { filterWardrobe, countAdvancedFilters } : {},
+  Page: (config) => { wardrobePage = config; },
+  Date,
+  Number,
+  String,
+  Array,
+  Promise
+});
 const calendarSource = fs.readFileSync(new URL("../miniprogram/pages/wear-calendar/index.js", import.meta.url), "utf8");
 const calendarMarkup = fs.readFileSync(new URL("../miniprogram/pages/wear-calendar/index.wxml", import.meta.url), "utf8");
 const outfitDetailSource = fs.readFileSync(new URL("../miniprogram/pages/outfit-detail/index.js", import.meta.url), "utf8");
@@ -66,6 +80,49 @@ test("私人闲置筛选只区分本人标记的状态", () => {
   const active = structuredClone(filterWardrobe(items, { idleStatus: "正常使用" }));
   assert.deepEqual(idle.filteredItems.map((item) => item.id), ["2"]);
   assert.deepEqual(active.filteredItems.map((item) => item.id), ["1", "3"]);
+});
+
+test("衣橱高级筛选默认收起并准确统计启用项", () => {
+  assert.equal(wardrobePage.data.filtersOpen, false);
+  assert.equal(countAdvancedFilters({ season: "春秋", thickness: "全部", wearStatus: "本月穿过", idleStatus: "全部" }), 2);
+  assert.match(wardrobeMarkup, /bindtap="toggleFilters"/);
+  assert.match(wardrobeMarkup, /wx:if="\{\{filtersOpen\}\}" class="advanced-filters"/);
+});
+
+test("收起或展开高级筛选不会清空已经选择的条件", () => {
+  const context = {
+    data: { ...wardrobePage.data, filtersOpen: false, activeSeason: "春秋", activeWearStatus: "本月穿过" },
+    setData(patch) { Object.assign(this.data, patch); }
+  };
+  wardrobePage.toggleFilters.call(context);
+  assert.equal(context.data.filtersOpen, true);
+  assert.equal(context.data.activeSeason, "春秋");
+  assert.equal(context.data.activeWearStatus, "本月穿过");
+  wardrobePage.toggleFilters.call(context);
+  assert.equal(context.data.filtersOpen, false);
+  assert.equal(context.data.activeSeason, "春秋");
+});
+
+test("衣橱入口保留原跳转且移除错误模拟标签和大箭头", () => {
+  assert.doesNotMatch(wardrobeMarkup, /模拟模式/);
+  assert.match(wardrobeMarkup, /bindtap="openOutfitGallery"/);
+  assert.match(wardrobeMarkup, /bindtap="openOutfitCanvas"/);
+  assert.match(wardrobeSource, /pages\/outfit-canvas\/index\?mode=new/);
+  assert.match(wardrobeMarkup, /bindtap="openIdleItems"/);
+  assert.doesNotMatch(wardrobeMarkup, /(idle|canvas)-entry-arrow/);
+});
+
+test("购买前查重入口位于私人闲置清单下方并复用候选分析", () => {
+  const idleIndex = wardrobeMarkup.indexOf('bindtap="openIdleItems"');
+  const candidateIndex = wardrobeMarkup.indexOf('bindtap="openCandidate"');
+  assert.ok(idleIndex >= 0 && candidateIndex > idleIndex);
+  assert.match(wardrobeMarkup, /购买前拍照查重/);
+  assert.match(wardrobeMarkup, /看看衣橱里有没有相似款/);
+  assert.doesNotMatch(wardrobeMarkup, /演示候选新衣分析/);
+  assert.match(wardrobeSource, /pages\/add-item\/index\?mode=candidate/);
+  assert.match(addItemMarkup, /购买前衣物查重/);
+  assert.match(addItemMarkup, /确认标签并查看查重结果/);
+  assert.match(candidateMarkup, /购买前查重 · 标签已确认/);
 });
 
 const outfitWeather = { high: 24, needsOuterwear: false };
@@ -174,4 +231,11 @@ test("穿搭日历整卡打开穿着快照，单件点击仍进入衣物详情",
   assert.match(outfitDetailSource, /api\.getOutfitRecord\(this\.recordId\)/);
   assert.match(outfitDetailSource, /getStorageSync\(WEAR_RECORD_PREVIEW_KEY\)/);
   assert.match(outfitDetailSource, /createLayer\(item, index, canvas/);
+});
+
+test("穿搭日历保留报表和成长入口并移除入口大箭头", () => {
+  assert.match(calendarMarkup, /bindtap="openReport"/);
+  assert.match(calendarMarkup, /bindtap="openRewards"/);
+  assert.match(calendarMarkup, /class="calendar-shortcuts"/);
+  assert.doesNotMatch(calendarMarkup, /class="row-arrow"/);
 });

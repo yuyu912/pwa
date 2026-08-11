@@ -34,4 +34,9 @@ function filterWardrobe(items, filters = {}) {
   };
 }
 
-module.exports = { filterWardrobe };
+function countAdvancedFilters(filters = {}) {
+  return [filters.season, filters.thickness, filters.wearStatus, filters.idleStatus]
+    .filter((value) => value && value !== "全部").length;
+}
+
+module.exports = { filterWardrobe, countAdvancedFilters };

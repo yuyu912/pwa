@@ -114,6 +114,7 @@ test("首页按天气文字稳定切换手绘图标", () => {
 
 test("首页使用 Wardrobloom 品牌、人物主插画和动态天气图标", () => {
   const markup = fs.readFileSync(new URL("../miniprogram/pages/home/index.wxml", import.meta.url), "utf8");
+  const styles = fs.readFileSync(new URL("../miniprogram/pages/home/index.wxss", import.meta.url), "utf8");
   const weatherMarkup = fs.readFileSync(new URL("../miniprogram/pages/weather/index.wxml", import.meta.url), "utf8");
   const todayMarkup = fs.readFileSync(new URL("../miniprogram/pages/today-outfit/index.wxml", import.meta.url), "utf8");
   const wardrobeMarkup = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.wxml", import.meta.url), "utf8");
@@ -134,6 +135,13 @@ test("首页使用 Wardrobloom 品牌、人物主插画和动态天气图标", (
   }
   assert.match(markup, /class="paper-shape"/);
   assert.match(markup, /class="entry-art"/);
+  assert.match(markup, /wardrobe-entry-purple-v4\.jpg/);
+  assert.match(markup, /outfit-record-purple-v4\.jpg/);
+  assert.match(markup, />看看我的衣橱能不能搭</);
+  assert.match(styles, /\.link-field button \{[\s\S]*?width: 100%;[\s\S]*?white-space: nowrap;/);
+  assert.match(styles, /\.entry-subtitle \{[\s\S]*?font-size: 18rpx;[\s\S]*?white-space: nowrap;/);
+  assert.equal(fs.existsSync(new URL("../miniprogram/assets/wardrobe-entry-purple-v4.jpg", import.meta.url)), true);
+  assert.equal(fs.existsSync(new URL("../miniprogram/assets/outfit-record-purple-v4.jpg", import.meta.url)), true);
   assert.doesNotMatch(markup, /entry-arrow/);
   assert.equal(appConfig.window.navigationBarTitleText, "Wardrobloom");
   assert.equal(loginConfig.navigationBarTitleText, "登录 Wardrobloom");

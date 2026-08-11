@@ -14,8 +14,8 @@
   </view>
 
   <view class="entry-grid">
-    <view class="entry-card wardrobe-entry" bindtap="toWardrobe"><image class="paper-shape" src="/assets/home-paper-wardrobe.png" mode="scaleToFill"/><view class="entry-art"><image src="/assets/wardrobe-entry-v3.jpg" mode="aspectFill"/></view><view class="entry-copy"><text class="entry-title">我的衣橱</text><text class="entry-subtitle">已收录 {{itemCount}} 件衣物</text></view></view>
-    <view class="entry-card record-entry" bindtap="toWearCalendar"><image class="paper-shape" src="/assets/home-paper-record.png" mode="scaleToFill"/><view class="entry-art"><image src="/assets/outfit-record-v3.jpg" mode="aspectFill"/></view><view class="entry-copy"><text class="entry-title">搭配记录</text><text class="entry-subtitle">回看真正穿过的搭配</text></view></view>
+    <view class="entry-card wardrobe-entry" bindtap="toWardrobe"><image class="paper-shape" src="/assets/home-paper-wardrobe.png" mode="scaleToFill"/><view class="entry-art"><image src="/assets/wardrobe-entry-purple-v4.jpg" mode="aspectFill"/></view><view class="entry-copy"><text class="entry-title">我的衣橱</text><text class="entry-subtitle">已收录 {{itemCount}} 件衣物</text></view></view>
+    <view class="entry-card record-entry" bindtap="toWearCalendar"><image class="paper-shape" src="/assets/home-paper-record.png" mode="scaleToFill"/><view class="entry-art"><image src="/assets/outfit-record-purple-v4.jpg" mode="aspectFill"/></view><view class="entry-copy"><text class="entry-title">搭配记录</text><text class="entry-subtitle">回看真正穿过的搭配</text></view></view>
   </view>
 
   <view class="add-row"><button bindtap="toAdd">＋ 录入单件衣物</button></view>

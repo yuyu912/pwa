@@ -1,11 +1,14 @@
 <view class="page calendar-page">
-  <text class="eyebrow">WEAR HISTORY</text>
-  <text class="page-title">穿着日历</text>
-  <text class="muted">只展示你真实保存的穿着记录。</text>
+  <view class="calendar-hero">
+    <text class="eyebrow">WEAR HISTORY</text>
+    <text class="page-title">穿着日历</text>
+    <text class="muted">只展示你真实保存的穿着记录。</text>
+    <view class="hero-thread"></view>
+  </view>
 
   <view class="month-switcher card">
     <button class="month-button" bindtap="previousMonth">‹</button>
-    <text class="month-title">{{monthText}}</text>
+    <view class="month-copy"><text class="month-caption">THIS MONTH</text><text class="month-title">{{monthText}}</text></view>
     <button class="month-button" bindtap="nextMonth">›</button>
   </view>
 
@@ -13,13 +16,23 @@
   <view wx:elif="{{error}}" class="card state-card"><text class="error-text">{{error}}</text><button class="secondary retry-button" bindtap="retry">重新加载</button></view>
   <block wx:else>
     <view class="summary-grid">
-      <view class="summary-card"><text class="summary-number">{{totalCount}}</text><text class="summary-label">本月穿着次数</text></view>
-      <view class="summary-card"><text class="summary-number">{{distinctItemCount}}</text><text class="summary-label">不同衣物</text></view>
+      <view class="summary-card summary-primary"><text class="summary-number">{{totalCount}}</text><text class="summary-label">本月穿着次数</text></view>
+      <view class="summary-card summary-secondary"><text class="summary-number">{{distinctItemCount}}</text><text class="summary-label">不同衣物</text></view>
     </view>
-    <view class="report-entry card" bindtap="openReport"><view><text class="report-entry-title">查看本月衣橱报表</text><text class="report-entry-copy">高低频衣物与品类使用分布</text></view><text class="row-arrow">›</text></view>
-    <view class="report-entry card" bindtap="openRewards"><view><text class="report-entry-title">星星与成长</text><text class="report-entry-copy">查看打卡、连续天数和奖励观察计划</text></view><text class="row-arrow">›</text></view>
+
+    <view class="calendar-shortcuts">
+      <view class="calendar-shortcut report-shortcut" bindtap="openReport">
+        <image class="paper-shape" src="/assets/home-paper-wardrobe.png" mode="scaleToFill" />
+        <view class="shortcut-copy"><text class="shortcut-kicker">REPORT</text><text class="report-entry-title">本月衣橱报表</text><text class="report-entry-copy">看看衣物与品类使用分布</text></view>
+      </view>
+      <view class="calendar-shortcut reward-shortcut" bindtap="openRewards">
+        <image class="paper-shape" src="/assets/home-paper-record.png" mode="scaleToFill" />
+        <view class="shortcut-copy"><text class="shortcut-kicker">GROWTH</text><text class="report-entry-title">星星与成长</text><text class="report-entry-copy">回看打卡和连续天数</text></view>
+      </view>
+    </view>
 
     <view class="card calendar-card">
+      <view class="calendar-tape"></view>
       <view class="weekday-row"><text wx:for="{{weekdays}}" wx:key="*this" class="weekday">{{item}}</text></view>
       <view class="days-grid">
         <view wx:for="{{days}}" wx:key="key" class="{{item.empty ? 'calendar-day empty-day' : item.className}}" data-key="{{item.empty ? '' : item.key}}" bindtap="selectDay">
@@ -30,14 +43,15 @@
     </view>
 
     <view class="day-section">
+      <text class="section-kicker">DAILY OUTFITS</text>
       <text class="section-title">{{selectedKey || '本月'}}穿着</text>
       <view wx:if="{{selectedGroups.length === 0}}" class="card empty-day-copy"><text class="muted">这一天还没有穿着记录。</text></view>
       <view wx:for="{{selectedGroups}}" wx:key="id" class="card outfit-card {{item.outfitRecordId ? 'outfit-card-openable' : ''}}" data-record-id="{{item.outfitRecordId}}" bindtap="openOutfit">
-        <view class="outfit-head"><view><text class="outfit-title">{{item.title}}</text><text class="item-meta">{{item.timeText}}{{item.scene ? ' · ' + item.scene : ''}}</text></view><view><text class="outfit-count">{{item.items.length}} 件</text><text wx:if="{{item.outfitRecordId}}" class="outfit-open-note">查看整套</text></view></view>
+        <view class="outfit-head"><view class="outfit-heading"><text class="outfit-title">{{item.title}}</text><text class="item-meta">{{item.timeText}}{{item.scene ? ' · ' + item.scene : ''}}</text></view><view class="outfit-status"><text class="outfit-count">{{item.items.length}} 件</text><text wx:if="{{item.outfitRecordId}}" class="outfit-open-note">查看整套</text></view></view>
         <text wx:if="{{item.note}}" class="outfit-note">{{item.note}}</text>
         <view class="outfit-items">
           <view wx:for="{{item.items}}" wx:for-item="garment" wx:key="id" class="outfit-item" data-id="{{garment.id}}" data-active="{{garment.active}}" catchtap="openItem">
-            <image wx:if="{{garment.imageUrl && !imageFailures[garment.logId]}}" class="item-image" src="{{garment.imageUrl}}" mode="aspectFill" data-id="{{garment.logId}}" binderror="onImageError" />
+            <image wx:if="{{garment.imageUrl && !imageFailures[garment.logId]}}" class="item-image" src="{{garment.imageUrl}}" mode="aspectFit" data-id="{{garment.logId}}" binderror="onImageError" />
             <view wx:else class="item-placeholder">衣</view>
             <text class="item-name">{{garment.name}}</text><text class="item-meta">{{garment.category}}{{garment.color ? ' · ' + garment.color : ''}}</text>
             <text wx:if="{{!garment.active}}" class="inactive-label">已移出衣橱</text>

@@ -4,7 +4,7 @@
   <block wx:else>
     <view class="card candidate-card">
       <image wx:if="{{candidate.imageUrl && !imageLoadFailed}}" class="candidate-image" src="{{candidate.imageUrl}}" mode="aspectFit" binderror="onImageError"></image>
-      <text class="eyebrow">{{reviewingWait ? '7 天冷静期复盘' : '候选新衣 · 标签已确认'}}</text>
+      <text class="eyebrow">{{reviewingWait ? '7 天冷静期复盘' : '购买前查重 · 标签已确认'}}</text>
       <text class="candidate-name">{{candidate.name}}</text>
       <text class="muted">{{candidate.category}} · {{candidate.color}} · {{candidate.season || '季节未填写'}} · {{candidate.material || '材质未填写'}}</text>
       <text class="muted">{{candidate.price === null || candidate.price === undefined || candidate.price === '' ? '价格未填写' : '¥' + candidate.price}}</text>
