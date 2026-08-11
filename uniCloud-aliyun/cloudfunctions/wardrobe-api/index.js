@@ -12,7 +12,7 @@ const { buildCityTrend, buildOutfitCandidates, buildStyleProfile } = require("./
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-11-private-outfit-plans-v39";
+const BUILD_ID = "2026-08-11-outfit-plan-copy-rename-v40";
 const OUTFIT_VISION_MODEL = process.env.QWEN_VL_MODEL || "qwen3-vl-flash-2026-01-22";
 const OUTFIT_IMAGE_EDIT_MODEL = "qwen-image-2.0-pro-2026-06-22";
 const GARMENT_SEGMENTATION_MODEL = "SegmentCloth";
@@ -390,6 +390,12 @@ const requireOwnedOutfitPlan = async (id, userId) => {
   const plan = await repository.getById("outfitPlans", id);
   if (!plan || String(plan.user_id) !== String(userId)) throw Object.assign(new Error("搭配方案不存在。"), { status: 404 });
   return plan;
+};
+const sanitizeOutfitPlanTitle = (value) => {
+  if (String(value || "").trim().length > 30) throw Object.assign(new Error("搭配方案名称不能超过30个字。"), { status: 400 });
+  const title = cleanText(value, 30);
+  if (!title) throw Object.assign(new Error("请输入搭配方案名称。"), { status: 400 });
+  return title;
 };
 const isAvailableOutfitItem = (item, userId) => Boolean(item
   && String(item.user_id) === String(userId)
@@ -1621,6 +1627,38 @@ const route = async (event) => {
   }
 
   const outfitPlanMatch = path.match(/^\/api\/outfit-plans\/([^/]+)$/);
+  const outfitPlanCopyMatch = path.match(/^\/api\/outfit-plans\/([^/]+)\/copy$/);
+  if (method === "POST" && outfitPlanCopyMatch) {
+    const source = await requireOwnedOutfitPlan(decodeURIComponent(outfitPlanCopyMatch[1]), userId);
+    const idempotencyKey = cleanText(body.idempotencyKey, 80);
+    if (!idempotencyKey) throw Object.assign(new Error("缺少复制搭配的幂等标识。"), { status: 400 });
+    const planId = idempotentId("outfit-plan-copy", userId, idempotencyKey);
+    const existing = await repository.getById("outfitPlans", planId);
+    if (existing) return response(event, 200, await outfitPlanView(existing));
+    const timestamp = now();
+    const planDocument = {
+      user_id: userId,
+      idempotency_key: idempotencyKey,
+      title: cleanText(`${source.title || "搭配方案"} 副本`, 30),
+      canvas: source.canvas,
+      layers: source.layers,
+      item_ids: source.item_ids,
+      created_at: timestamp,
+      updated_at: timestamp
+    };
+    try { await repository.add("outfitPlans", planDocument, planId); }
+    catch (error) {
+      const collided = await repository.getById("outfitPlans", planId);
+      if (collided && String(collided.user_id) === userId) return response(event, 200, await outfitPlanView(collided));
+      throw error;
+    }
+    return response(event, 201, await outfitPlanView(await repository.getById("outfitPlans", planId)));
+  }
+  if (method === "PATCH" && outfitPlanMatch) {
+    const plan = await requireOwnedOutfitPlan(decodeURIComponent(outfitPlanMatch[1]), userId);
+    await repository.update("outfitPlans", plan.id, { title: sanitizeOutfitPlanTitle(body.title), updated_at: now() });
+    return response(event, 200, await outfitPlanView(await repository.getById("outfitPlans", plan.id)));
+  }
   if (method === "PUT" && outfitPlanMatch) {
     const plan = await requireOwnedOutfitPlan(decodeURIComponent(outfitPlanMatch[1]), userId);
     const layout = sanitizeOutfitPlanLayout(body);

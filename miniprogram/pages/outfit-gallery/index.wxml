@@ -1,0 +1,29 @@
+<view class="gallery-page">
+  <view class="gallery-head">
+    <view><text class="eyebrow">MY OUTFITS</text><text class="headline">我的搭配</text></view>
+    <button class="create-button" bindtap="createPlan">＋ 新建</button>
+  </view>
+  <text class="intro">这里保存你在自主搭配画布中确认过的方案，点击卡片查看完整穿搭。</text>
+
+  <view wx:if="{{loading}}" class="state-card"><text>正在读取搭配方案…</text></view>
+  <view wx:elif="{{error}}" class="state-card error-state"><text>{{error}}</text><button bindtap="loadPlans">重新加载</button></view>
+  <view wx:elif="{{plans.length === 0}}" class="state-card empty-state">
+    <text class="empty-title">还没有保存的搭配</text>
+    <text class="empty-copy">从衣橱中选择衣物，自由组合并保存后，就会出现在这里。</text>
+    <button bindtap="createPlan">去创建第一套</button>
+  </view>
+  <view wx:else class="outfit-grid">
+    <view wx:for="{{plans}}" wx:key="id" class="outfit-card" data-id="{{item.id}}" bindtap="openPlan">
+      <view class="preview-canvas">
+        <view wx:for="{{item.layers}}" wx:for-item="layer" wx:key="previewKey" class="preview-layer" style="left:{{layer.left}}%;top:{{layer.top}}%;width:{{layer.width}}%;height:{{layer.height}}%;z-index:{{layer.z}};transform:rotate({{layer.rotation}}deg)">
+          <image wx:if="{{layer.imageUrl && !layer.imageFailed}}" src="{{layer.imageUrl}}" mode="aspectFit" data-key="{{layer.previewKey}}" binderror="onImageError" />
+          <view wx:else class="image-placeholder">{{layer.category || '衣'}}</view>
+        </view>
+      </view>
+      <view class="card-copy">
+        <text class="plan-title">{{item.title}}</text>
+        <text class="plan-meta">{{item.itemCount}} 件衣物 · {{item.dateText}}</text>
+      </view>
+    </view>
+  </view>
+</view>

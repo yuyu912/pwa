@@ -1459,7 +1459,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
   else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-11-private-outfit-plans-v39");
+  assert.equal(health.body.buildId, "2026-08-11-outfit-plan-copy-rename-v40");
   assert.deepEqual(health.body.outfitPlans, { enabled: true, mode: "private" });
   assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
   assert.equal(health.body.models.productSegmentation, "SegmentCommodity");
@@ -1847,6 +1847,22 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   }, authorization)));
   assert.equal(updatedPlan.status, 200);
   assert.equal(updatedPlan.body.layers[0].x, 88);
+  const renamedPlan = readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "PATCH", { title: " 周一通勤 " }, authorization)));
+  assert.equal(renamedPlan.status, 200);
+  assert.equal(renamedPlan.body.title, "周一通勤");
+  assert.equal(readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "PATCH", { title: "   " }, authorization))).status, 400);
+  assert.equal(readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "PATCH", { title: "一".repeat(31) }, authorization))).status, 400);
+  const copyPayload = { idempotencyKey: "outfit-plan-copy-1" };
+  const copiedPlan = readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}/copy`, "POST", copyPayload, authorization)));
+  assert.equal(copiedPlan.status, 201);
+  assert.notEqual(copiedPlan.body.id, createdPlan.body.id);
+  assert.equal(copiedPlan.body.title, "周一通勤 副本");
+  assert.deepEqual(copiedPlan.body.canvas, renamedPlan.body.canvas);
+  assert.deepEqual(copiedPlan.body.layers, renamedPlan.body.layers);
+  const repeatedCopy = readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}/copy`, "POST", copyPayload, authorization)));
+  assert.equal(repeatedCopy.status, 200);
+  assert.equal(repeatedCopy.body.id, copiedPlan.body.id);
+  assert.equal(readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}/copy`, "POST", copyPayload, memberAuthorization))).status, 404);
   const memberPlans = readResponse(await main(makeEvent("/api/outfit-plans", "GET", null, memberAuthorization)));
   assert.deepEqual(memberPlans.body, []);
   assert.equal(readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "DELETE", null, memberAuthorization))).status, 404);
@@ -1867,7 +1883,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   )));
   const savedOutfitLogs = augustCalendar.body.filter((log) => log.outfitRecordId === wornPlan.body.recordId);
   assert.equal(savedOutfitLogs.length, 2);
-  assert.ok(savedOutfitLogs.every((log) => log.outfitTitle === createdPlan.body.title));
+  assert.ok(savedOutfitLogs.every((log) => log.outfitTitle === renamedPlan.body.title));
   assert.equal(readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "DELETE", null, authorization))).status, 204);
   const calendarAfterPlanDelete = readResponse(await main(makeEvent(
     "/api/wear-logs?start=2026-08-01T00%3A00%3A00.000Z&end=2026-09-01T00%3A00%3A00.000Z",
@@ -1943,7 +1959,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-11-private-outfit-plans-v39");
+  assert.equal(failedRecognition.body.buildId, "2026-08-11-outfit-plan-copy-rename-v40");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

@@ -80,6 +80,7 @@ Page({
     this.applyFilter();
   },
   openItem(event) { wx.navigateTo({ url: `/pages/item-detail/index?id=${event.currentTarget.dataset.id}` }); },
+  openOutfitGallery() { wx.navigateTo({ url: "/pages/outfit-gallery/index" }); },
   openOutfitCanvas() { wx.navigateTo({ url: "/pages/outfit-canvas/index" }); },
   openCandidate() { wx.navigateTo({ url: "/pages/add-item/index?mode=candidate" }); },
   openIdleItems() { wx.navigateTo({ url: "/pages/idle-items/index" }); }

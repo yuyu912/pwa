@@ -1,0 +1,30 @@
+<view class="detail-page">
+  <view wx:if="{{loading}}" class="state-card"><text>正在读取搭配详情…</text></view>
+  <view wx:elif="{{error}}" class="state-card error-state">
+    <text>{{error}}</text>
+    <view class="error-actions"><button bindtap="loadPlan">重新加载</button><button class="secondary-button" bindtap="backToGallery">返回我的搭配</button></view>
+  </view>
+  <block wx:elif="{{plan}}">
+    <text class="eyebrow">SAVED OUTFIT</text>
+    <text class="headline">{{plan.title}}</text>
+    <text class="saved-date">最后保存于 {{plan.dateText}}</text>
+
+    <view class="outfit-display">
+      <view wx:for="{{plan.layers}}" wx:for-item="layer" wx:key="previewKey" class="display-layer" style="left:{{layer.left}}%;top:{{layer.top}}%;width:{{layer.width}}%;height:{{layer.height}}%;z-index:{{layer.z}};transform:rotate({{layer.rotation}}deg)">
+        <image wx:if="{{layer.imageUrl && !layer.imageFailed}}" src="{{layer.imageUrl}}" mode="aspectFit" data-key="{{layer.previewKey}}" binderror="onImageError" />
+        <view wx:else class="image-placeholder">{{layer.category || '衣'}}</view>
+      </view>
+    </view>
+
+    <view class="garment-section">
+      <view class="section-head"><text class="section-title">这套搭配包含</text><text class="section-count">{{garments.length}} 件衣物</text></view>
+      <view wx:for="{{garments}}" wx:key="previewKey" class="garment-row">
+        <view class="garment-image-wrap">
+          <image wx:if="{{item.imageUrl && !item.imageFailed}}" class="garment-image" src="{{item.imageUrl}}" mode="aspectFit" data-key="{{item.previewKey}}" binderror="onImageError" />
+          <view wx:else class="garment-placeholder">{{item.category || '衣'}}</view>
+        </view>
+        <view class="garment-copy"><text class="garment-name">{{item.name || '未命名衣物'}}</text><text class="garment-meta">{{item.category || '未填写品类'}}{{item.color ? ' · ' + item.color : ''}}</text></view>
+      </view>
+    </view>
+  </block>
+</view>

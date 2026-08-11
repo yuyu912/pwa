@@ -6,6 +6,8 @@
     "pages/region-picker/index",
     "pages/today-outfit/index",
     "pages/inspiration/index",
+    "pages/outfit-gallery/index",
+    "pages/outfit-detail/index",
     "pages/outfit-canvas/index",
     "pages/style-profile/index",
     "pages/city-trends/index",

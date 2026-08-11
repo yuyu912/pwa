@@ -57,9 +57,16 @@
       <view class="picker-title-row"><text class="picker-title">我的搭配方案</text><button class="new-plan" bindtap="newPlan">＋ 新建</button></view>
       <text wx:if="{{plansError}}" class="plans-error">{{plansError}}</text>
       <text wx:elif="{{plans.length === 0}}" class="plans-empty">还没有保存的搭配方案。</text>
-      <view wx:for="{{plans}}" wx:key="id" class="plan-row {{currentPlanId === item.id ? 'active' : ''}}">
-        <view class="plan-main" data-id="{{item.id}}" bindtap="loadPlan"><text class="plan-title">{{item.title}}</text><text class="plan-meta">{{item.layers.length}} 件衣物</text></view>
-        <button class="plan-delete" data-id="{{item.id}}" catchtap="deletePlan">删除</button>
+      <view wx:for="{{plans}}" wx:key="id" class="plan-row {{currentPlanId === item.id ? 'active' : ''}}" style="display:block">
+        <view class="plan-main" data-id="{{item.id}}" bindtap="loadPlan" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16rpx">
+          <text class="plan-title" style="min-width:0;word-break:break-all">{{item.title}}</text>
+          <text class="plan-meta" style="flex-shrink:0;margin-top:2rpx">{{item.layers.length}} 件衣物</text>
+        </view>
+        <view style="display:flex;gap:12rpx;margin-top:18rpx">
+          <button class="new-plan" style="flex:1;width:auto;padding:0" data-id="{{item.id}}" catchtap="renamePlan">改名</button>
+          <button class="new-plan" style="flex:1;width:auto;padding:0" data-id="{{item.id}}" catchtap="copyPlan">复制</button>
+          <button class="new-plan plan-delete" style="flex:1;width:auto;padding:0" data-id="{{item.id}}" catchtap="deletePlan">删除</button>
+        </view>
       </view>
     </view>
     <canvas type="2d" id="exportCanvas" class="export-canvas"></canvas>

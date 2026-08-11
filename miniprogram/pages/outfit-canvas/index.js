@@ -37,10 +37,14 @@ Page({
     exporting: false
   },
 
-  onLoad() {
+  onLoad(options = {}) {
     const { user, token } = session.restore();
     if (!user || !token) return wx.redirectTo({ url: "/pages/login/index" });
     this.draftKey = `outfit_canvas_draft:${user.id || user._id || user.username}`;
+    this.startBlank = options.mode === "new";
+    if (this.startBlank) {
+      try { wx.setStorageSync(this.draftKey, canvasModel.serializeLayers([])); } catch {}
+    }
     this.loadItems();
   },
 
@@ -64,7 +68,7 @@ Page({
       try { plans = await api.listOutfitPlans(); }
       catch { plansError = "搭配方案需在新 Schema 和云函数部署后使用，当前画布仍可编辑。"; }
       let draft = null;
-      try { draft = wx.getStorageSync(this.draftKey) || null; } catch {}
+      if (!this.startBlank) try { draft = wx.getStorageSync(this.draftKey) || null; } catch {}
       const layers = canvasModel.restoreLayers(draft, items);
       this.setData({ items, visibleItems: items, layers, plans, plansError, selectedKey: layers.length ? layers[layers.length - 1].key : "", loading: false });
     } catch (error) {
@@ -242,6 +246,50 @@ Page({
         this.saveDraft(true);
       }
     });
+  },
+
+  renamePlan(event) {
+    const id = event.currentTarget.dataset.id;
+    const plan = this.data.plans.find((entry) => entry.id === id);
+    if (!plan || this.data.planBusy) return;
+    wx.showModal({
+      title: "重命名搭配方案",
+      editable: true,
+      placeholderText: "输入1～30个字",
+      content: plan.title,
+      success: async ({ confirm, content }) => {
+        if (!confirm) return;
+        const title = String(content || "").trim();
+        if (!title) return wx.showToast({ title: "请输入方案名称", icon: "none" });
+        this.setData({ planBusy: true });
+        try {
+          const renamed = await api.renameOutfitPlan(id, title);
+          this.setData({
+            plans: this.data.plans.map((entry) => entry.id === id ? renamed : entry),
+            currentPlanTitle: this.data.currentPlanId === id ? renamed.title : this.data.currentPlanTitle,
+            planBusy: false
+          });
+          wx.showToast({ title: "已重命名", icon: "success" });
+        } catch (error) {
+          this.setData({ planBusy: false });
+          wx.showToast({ title: error.message || "重命名失败", icon: "none" });
+        }
+      }
+    });
+  },
+
+  async copyPlan(event) {
+    const id = event.currentTarget.dataset.id;
+    if (!this.data.plans.some((entry) => entry.id === id) || this.data.planBusy) return;
+    this.setData({ planBusy: true });
+    try {
+      const copied = await api.copyOutfitPlan(id, { idempotencyKey: idempotencyKey(`outfit-plan-copy-${id}`) });
+      this.setData({ plans: [copied, ...this.data.plans], planBusy: false });
+      wx.showToast({ title: "已复制", icon: "success" });
+    } catch (error) {
+      this.setData({ planBusy: false });
+      wx.showToast({ title: error.message || "复制失败", icon: "none" });
+    }
   },
 
   deletePlan(event) {
