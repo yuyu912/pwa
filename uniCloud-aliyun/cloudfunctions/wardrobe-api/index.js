@@ -12,7 +12,7 @@ const { buildCityTrend, buildOutfitCandidates, buildStyleProfile } = require("./
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-11-outfit-plan-copy-rename-v40";
+const BUILD_ID = "2026-08-11-wear-record-detail-v41";
 const OUTFIT_VISION_MODEL = process.env.QWEN_VL_MODEL || "qwen3-vl-flash-2026-01-22";
 const OUTFIT_IMAGE_EDIT_MODEL = "qwen-image-2.0-pro-2026-06-22";
 const GARMENT_SEGMENTATION_MODEL = "SegmentCloth";
@@ -424,6 +424,50 @@ const outfitPlanView = async (plan) => {
     }).filter(Boolean),
     createdAt: plan.created_at,
     updatedAt: plan.updated_at
+  };
+};
+
+// 穿着历史必须读取当时保存的快照，不能依赖后来可能被改名、重排或删除的搭配方案。
+const outfitRecordView = async (record) => {
+  const snapshots = Array.isArray(record.items) ? record.items : [];
+  const layout = record.layout && typeof record.layout === "object" ? record.layout : {};
+  const savedLayers = Array.isArray(layout.layers) ? layout.layers : [];
+  const itemIds = [...new Set([
+    ...snapshots.map((item) => String(item?.id || "")),
+    ...savedLayers.map((layer) => String(layer?.itemId || ""))
+  ].filter(Boolean))];
+  const currentItems = itemIds.length
+    ? await repository.findMany("clothing", { user_id: String(record.user_id), _id: repository.command().in(itemIds) })
+    : [];
+  const currentById = new Map(currentItems.map((item) => [String(item.id), item]));
+  const snapshotById = new Map(snapshots.filter((item) => item?.id).map((item) => [String(item.id), item]));
+  const itemView = (itemId) => {
+    const snapshot = snapshotById.get(String(itemId)) || {};
+    const current = currentById.get(String(itemId));
+    return {
+      id: String(itemId),
+      name: snapshot.name || current?.name || "未命名衣物",
+      category: snapshot.category || current?.category || "",
+      color: snapshot.color || current?.color || "",
+      active: current?.status === "active",
+      imageUrl: current?.image_key ? cloud.signedUrl(current.image_key, "GET", 3600) : ""
+    };
+  };
+  const orderedIds = snapshots.length ? snapshots.map((item) => String(item.id || "")).filter(Boolean) : itemIds;
+  return {
+    id: String(record.id),
+    planId: String(record.plan_id || ""),
+    title: record.title || "穿着搭配",
+    canvas: layout.canvas || { width: 320, height: 520 },
+    layers: savedLayers.map((layer, index) => {
+      const itemId = String(layer?.itemId || "");
+      return itemId ? { ...layer, ...itemView(itemId), itemId, key: layer.key || `${itemId}-${index}` } : null;
+    }).filter(Boolean),
+    items: orderedIds.map(itemView),
+    scene: record.scene || "",
+    note: record.note || "",
+    wornAt: record.worn_at || record.created_at,
+    createdAt: record.created_at
   };
 };
 
@@ -1628,6 +1672,12 @@ const route = async (event) => {
 
   const outfitPlanMatch = path.match(/^\/api\/outfit-plans\/([^/]+)$/);
   const outfitPlanCopyMatch = path.match(/^\/api\/outfit-plans\/([^/]+)\/copy$/);
+  const outfitRecordMatch = path.match(/^\/api\/outfit-records\/([^/]+)$/);
+  if (method === "GET" && outfitRecordMatch) {
+    const record = await repository.getById("outfitRecords", decodeURIComponent(outfitRecordMatch[1]));
+    if (!record || String(record.user_id) !== userId) throw Object.assign(new Error("穿着记录不存在。"), { status: 404 });
+    return response(event, 200, await outfitRecordView(record));
+  }
   if (method === "POST" && outfitPlanCopyMatch) {
     const source = await requireOwnedOutfitPlan(decodeURIComponent(outfitPlanCopyMatch[1]), userId);
     const idempotencyKey = cleanText(body.idempotencyKey, 80);

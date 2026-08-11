@@ -1,19 +1,246 @@
 page {
   min-height: 100%;
-  background: #f8f4ff;
-  color: #33294a;
+  background: #fbf8f0;
+  color: #554b47;
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
 }
 
-button { border-radius: 20rpx; }
+button { border-radius: 30rpx 22rpx 32rpx 24rpx / 24rpx 31rpx 22rpx 29rpx; }
 button::after { border: 0; }
 
 .page { padding: 32rpx; }
-.card { background: #ffffff; border-radius: 28rpx; padding: 28rpx; box-shadow: 0 10rpx 30rpx rgba(83, 57, 118, 0.08); }
-.eyebrow { color: #8e74ad; font-size: 24rpx; letter-spacing: 2rpx; }
-.muted { color: #8b8298; font-size: 26rpx; line-height: 1.6; }
+.card { background: #fffaf1; border: 2rpx solid rgba(161, 140, 190, 0.16); border-radius: 34rpx 25rpx 37rpx 28rpx / 28rpx 36rpx 25rpx 35rpx; padding: 28rpx; box-shadow: 0 9rpx 25rpx rgba(95, 75, 62, 0.06); }
+.eyebrow { color: #927db6; font-size: 24rpx; letter-spacing: 2rpx; }
+.muted { color: #8d817c; font-size: 26rpx; line-height: 1.6; }
 .status { display: inline-flex; padding: 8rpx 16rpx; border-radius: 999rpx; font-size: 22rpx; }
-.status.mock { background: #f1e9fb; color: #78549b; }
-.primary { background: #8362ab; color: #fff; }
-.secondary { background: #eee6f8; color: #624188; }
-.empty { text-align: center; padding: 90rpx 24rpx; color: #8b8298; }
+.status.mock { background: #eee6f7; color: #80679f; }
+.primary { background: #9b87c1; color: #fff; }
+.secondary { background: #eee7f5; color: #725d91; }
+.empty { text-align: center; padding: 90rpx 24rpx; color: #91847e; }
+
+/* Wardrobloom 主流程视觉主题：提高选择器优先级，覆盖旧版配色但不改变功能布局。 */
+.weather-page,
+.today-outfit-page,
+.inspiration-page,
+.gallery-page,
+.detail-page,
+.canvas-page {
+  background: #fbf8f0;
+  color: #554b47;
+}
+
+.weather-page .region-bar,
+.weather-page .manual-toggle,
+.weather-page .manual-panel,
+.weather-page .card,
+.today-outfit-page .scene-field,
+.today-outfit-page .outfit-card {
+  border-color: #ddd1e6;
+  background: #fffaf2;
+}
+
+.weather-page .region-bar,
+.weather-page .manual-toggle,
+.today-outfit-page .scene-field {
+  border-radius: 34rpx 23rpx 37rpx 27rpx / 25rpx 36rpx 23rpx 34rpx;
+}
+
+.weather-page .hero {
+  border: 2rpx solid rgba(150, 130, 183, 0.2);
+  border-radius: 48rpx 31rpx 53rpx 38rpx / 34rpx 50rpx 32rpx 47rpx;
+  background: #eee8f4;
+  box-shadow: 0 10rpx 27rpx rgba(94, 75, 112, 0.07);
+}
+
+.weather-page .weather-reading {
+  border-radius: 34rpx 24rpx 37rpx 27rpx / 26rpx 36rpx 24rpx 34rpx;
+  background: rgba(255, 250, 242, 0.93);
+}
+
+.weather-page .condition,
+.weather-page .advice,
+.weather-page .label,
+.today-outfit-page .strip-reading,
+.today-outfit-page .scene-picker {
+  color: #806b9d;
+}
+
+.weather-page .manual-panel,
+.weather-page .card,
+.today-outfit-page .outfit-card {
+  border-radius: 40rpx 27rpx 44rpx 31rpx / 30rpx 42rpx 27rpx 39rpx;
+}
+
+.weather-page .condition-option {
+  border-color: #e2d8e9;
+  background: #f8f2fa;
+}
+
+.weather-page .condition-option.selected {
+  border-color: #aa94c8;
+  background: #e9e0f3;
+  color: #705b8b;
+}
+
+.weather-page .temperature-button {
+  border-color: #d9cce5;
+  background: #fffaf5;
+}
+
+.weather-page .item-pill,
+.today-outfit-page .tags text {
+  background: #ece4f3;
+  color: #735f8c;
+}
+
+.weather-page .primary,
+.today-outfit-page .primary,
+.inspiration-page .primary {
+  background: #9b87c1;
+}
+
+.today-outfit-page .weather-strip {
+  border-color: #d9cce6;
+  border-radius: 38rpx 24rpx 41rpx 29rpx / 27rpx 40rpx 25rpx 36rpx;
+  background: #ebe3f4;
+}
+
+.today-outfit-page .outfit-art {
+  border-radius: 34rpx 23rpx 37rpx 26rpx / 25rpx 36rpx 23rpx 34rpx;
+  background: #eee7f4;
+}
+
+.today-outfit-page .item-photo {
+  background: #fffaf2;
+}
+
+.today-outfit-page .secondary,
+.inspiration-page .secondary {
+  background: #eee7f5;
+  color: #725d91;
+}
+
+.inspiration-page .tabs {
+  border-color: #ded2e6;
+  border-radius: 35rpx 24rpx 38rpx 27rpx / 26rpx 37rpx 23rpx 34rpx;
+  background: rgba(255, 250, 242, 0.76);
+}
+
+.inspiration-page .tab.active {
+  color: #715c8d;
+  background: #e9e1f2;
+}
+
+.inspiration-page .card,
+.wardrobe-page .card,
+.calendar-page .card,
+.login-page .card {
+  border: 2rpx solid rgba(155, 135, 192, 0.16);
+  border-radius: 39rpx 27rpx 43rpx 30rpx / 29rpx 41rpx 26rpx 38rpx;
+  background: #fffaf2;
+  box-shadow: 0 9rpx 25rpx rgba(95, 75, 62, 0.06);
+}
+
+.inspiration-page textarea,
+.inspiration-page .field input,
+.wardrobe-page .search-card input,
+.login-page input {
+  background: #f5eff8;
+}
+
+.wardrobe-page .headline,
+.login-page .title,
+.calendar-page .page-title {
+  color: #504744;
+}
+
+.wardrobe-page .category.active,
+.wardrobe-page .filter-chip.active,
+.calendar-page .calendar-day.selected {
+  background: #9b87c1;
+}
+
+.wardrobe-page .filter-summary > view,
+.calendar-page .summary-card {
+  border: 2rpx solid rgba(155, 135, 192, 0.14);
+  border-radius: 31rpx 22rpx 34rpx 24rpx / 23rpx 33rpx 21rpx 31rpx;
+  background: #fffaf2;
+}
+
+.wardrobe-page .canvas-entry {
+  border-radius: 36rpx 24rpx 39rpx 27rpx / 27rpx 38rpx 24rpx 35rpx;
+  background: #f0e9f5;
+}
+
+.wardrobe-page .canvas-entry-title,
+.wardrobe-page .canvas-entry-arrow {
+  color: #725e8d;
+}
+
+.gallery-page .eyebrow,
+.detail-page .eyebrow,
+.canvas-page .eyebrow {
+  color: #927db6;
+}
+
+.gallery-page .create-button,
+.canvas-page .tool-card button,
+.canvas-page .new-plan {
+  background: #eae2f3;
+  color: #715d8c;
+}
+
+.gallery-page .state-card,
+.gallery-page .outfit-card,
+.detail-page .state-card,
+.detail-page .outfit-display,
+.detail-page .garment-section,
+.canvas-page .clear-button,
+.canvas-page .state-card,
+.canvas-page .tool-card,
+.canvas-page .wear-form,
+.canvas-page .picker-section,
+.canvas-page .plans-section {
+  border-color: #ddd1e6;
+  background-color: #fffaf2;
+}
+
+.gallery-page .outfit-card {
+  border-radius: 39rpx 24rpx 44rpx 29rpx / 27rpx 42rpx 25rpx 38rpx;
+}
+
+.gallery-page .outfit-card:nth-child(even) {
+  border-radius: 25rpx 42rpx 29rpx 45rpx / 40rpx 27rpx 43rpx 29rpx;
+}
+
+.gallery-page .preview-canvas,
+.detail-page .outfit-display,
+.canvas-page .outfit-canvas {
+  border-color: #d9cce5;
+  background-color: #fffaf4;
+  background-image: linear-gradient(rgba(157, 136, 188, 0.07) 1rpx, transparent 1rpx), linear-gradient(90deg, rgba(157, 136, 188, 0.07) 1rpx, transparent 1rpx);
+}
+
+.detail-page .outfit-display,
+.canvas-page .outfit-canvas {
+  border-radius: 45rpx 29rpx 49rpx 34rpx / 32rpx 47rpx 30rpx 43rpx;
+}
+
+.detail-page .garment-row,
+.canvas-page .picker-field,
+.canvas-page .wear-form textarea,
+.canvas-page .picker-visual,
+.canvas-page .plan-row {
+  background: #f1eaf5;
+}
+
+.canvas-page .canvas-layer.selected {
+  border-color: #9b87c1;
+  background: rgba(235, 225, 244, 0.22);
+}
+
+.canvas-page .primary-actions .plan-save,
+.canvas-page .form-actions .confirm-wear,
+.canvas-page .category.active {
+  background: #9b87c1;
+}

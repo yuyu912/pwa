@@ -1,6 +1,6 @@
 <view class="page login-page">
   <view class="hero">
-    <text class="eyebrow">WARDROBE RELATIONSHIP</text>
+    <text class="eyebrow">Wardrobloom</text>
     <text class="title">从真实衣橱开始，
 理性地决定下一件衣服。</text>
     <text class="muted">{{sharedToken ? '这是一次私密搭配邀请。登录后才能查看或回复。' : (mode === 'register' ? '使用邀请码创建真实测试账号。' : '使用已创建的测试账号登录。')}}</text>

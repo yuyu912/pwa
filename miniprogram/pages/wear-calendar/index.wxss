@@ -32,9 +32,11 @@
 .inactive-label { color: #a36b73; font-size: 22rpx; }
 .row-arrow { color: #8a6ca3; font-size: 40rpx; }
 .outfit-card { margin-bottom: 16rpx; padding: 22rpx; }
+.outfit-card-openable { border-color: rgba(155,135,192,.26); }
 .outfit-head { display: flex; align-items: flex-start; justify-content: space-between; }
 .outfit-title { display: block; color: #4c3d58; font-size: 29rpx; font-weight: 700; }
 .outfit-count { padding: 7rpx 14rpx; border-radius: 999rpx; background: #f1e9f8; color: #76568f; font-size: 20rpx; }
+.outfit-open-note { display: block; margin-top: 7rpx; color: #8b76a8; font-size: 19rpx; text-align: center; }
 .outfit-note { display: block; margin-top: 12rpx; color: #776c82; font-size: 22rpx; }
 .outfit-items { display: flex; gap: 16rpx; margin-top: 18rpx; overflow-x: auto; }
 .outfit-item { width: 128rpx; flex: 0 0 128rpx; }

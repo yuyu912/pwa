@@ -87,7 +87,7 @@ Page({
     finally { this.setData({ saving: false }); }
   },
   onShareAppMessage() {
-    if (!this.data.activeRequest?.token) return { title: "衣橱关系" };
+    if (!this.data.activeRequest?.token) return { title: "Wardrobloom" };
     return {
       title: "想请你帮我看看这套搭配",
       path: `/pages/friends/index?token=${encodeURIComponent(this.data.activeRequest.token)}`

@@ -6,6 +6,10 @@ import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const { normalizeLive } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/amap-weather.js");
+const homeWeatherSource = fs.readFileSync(new URL("../miniprogram/utils/home-weather.js", import.meta.url), "utf8");
+const homeWeatherModule = { exports: {} };
+vm.runInNewContext(homeWeatherSource, { module: homeWeatherModule, exports: homeWeatherModule.exports });
+const { getWeatherIcon } = homeWeatherModule.exports;
 const weatherSource = fs.readFileSync(new URL("../miniprogram/services/weather.js", import.meta.url), "utf8");
 const weatherModule = { exports: {} };
 vm.runInNewContext(weatherSource, {
@@ -94,4 +98,43 @@ test("大风天气会提示轻外套，雾霾只按温度选择衣物", () => {
   assert.match(windy.tip, /轻外套/);
   assert.equal(hazy.needsOuterwear, false);
   assert.match(hazy.tip, /空气质量/);
+});
+
+test("首页按天气文字稳定切换手绘图标", () => {
+  assert.equal(getWeatherIcon("晴"), "sun");
+  assert.equal(getWeatherIcon("多云"), "cloud");
+  assert.equal(getWeatherIcon("阴"), "cloud");
+  assert.equal(getWeatherIcon("雷阵雨"), "rain");
+  assert.equal(getWeatherIcon("雨夹雪"), "snow");
+  assert.equal(getWeatherIcon("大风"), "wind");
+  assert.equal(getWeatherIcon("雾霾"), "haze");
+  assert.equal(getWeatherIcon("晴转多云"), "cloud");
+  assert.equal(getWeatherIcon("未知天气"), "cloud");
+});
+
+test("首页使用 Wardrobloom 品牌、人物主插画和动态天气图标", () => {
+  const markup = fs.readFileSync(new URL("../miniprogram/pages/home/index.wxml", import.meta.url), "utf8");
+  const weatherMarkup = fs.readFileSync(new URL("../miniprogram/pages/weather/index.wxml", import.meta.url), "utf8");
+  const todayMarkup = fs.readFileSync(new URL("../miniprogram/pages/today-outfit/index.wxml", import.meta.url), "utf8");
+  const wardrobeMarkup = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.wxml", import.meta.url), "utf8");
+  const appConfig = JSON.parse(fs.readFileSync(new URL("../miniprogram/app.json", import.meta.url), "utf8"));
+  const loginConfig = JSON.parse(fs.readFileSync(new URL("../miniprogram/pages/login/index.json", import.meta.url), "utf8"));
+  assert.match(markup, />Wardrobloom</);
+  assert.doesNotMatch(markup, /brand-hanger|衣橱关系/);
+  assert.match(markup, /home-wardrobloom-v1\.jpg/);
+  assert.match(markup, /weather-\{\{weatherIcon\}\}\.png/);
+  assert.match(weatherMarkup, /page weather-page/);
+  assert.match(todayMarkup, /page today-outfit-page/);
+  assert.match(wardrobeMarkup, /page wardrobe-page/);
+  for (const icon of ["sun", "cloud", "rain", "snow", "wind", "haze"]) {
+    assert.equal(fs.existsSync(new URL(`../miniprogram/assets/weather-${icon}.png`, import.meta.url)), true);
+  }
+  for (const paper of ["link", "wardrobe", "record"]) {
+    assert.equal(fs.existsSync(new URL(`../miniprogram/assets/home-paper-${paper}.png`, import.meta.url)), true);
+  }
+  assert.match(markup, /class="paper-shape"/);
+  assert.match(markup, /class="entry-art"/);
+  assert.doesNotMatch(markup, /entry-arrow/);
+  assert.equal(appConfig.window.navigationBarTitleText, "Wardrobloom");
+  assert.equal(loginConfig.navigationBarTitleText, "登录 Wardrobloom");
 });

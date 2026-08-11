@@ -1,6 +1,7 @@
 const api = require("../../services/api");
 const session = require("../../services/session");
 const weatherService = require("../../services/weather");
+const { getWeatherIcon } = require("../../utils/home-weather");
 
 const HOME_WEATHER_TIPS = {
   "晴": "适合轻薄透气穿搭",
@@ -23,7 +24,7 @@ const entitlementView = (entitlement) => {
 };
 
 Page({
-  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "设置地区后获取实时天气", weatherTip: "按衣橱推荐今天穿什么", hasLocation: false, imageErrors: {}, entitlement: null, inspirationText: "" },
+  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "", weatherTip: "设置地区后获取实时天气", weatherIcon: "cloud", hasLocation: false, imageErrors: {}, entitlement: null, inspirationText: "" },
   async onShow() {
     const { user, token } = session.restore();
     if (!user || !token) return wx.redirectTo({ url: "/pages/login/index" });
@@ -46,7 +47,7 @@ Page({
     } catch {}
     const location = weatherService.loadLocation();
     if (location) {
-      this.setData({ weatherTemp: "获取中", weatherCopy: location.cityName, weatherTip: "正在读取实时天气", hasLocation: true });
+      this.setData({ weatherTemp: "获取中", weatherCopy: location.cityName, weatherTip: "正在读取实时天气", weatherIcon: "cloud", hasLocation: true });
       try {
         const weather = weatherService.effectiveWeather(
           await api.getWeather(location.districtCode || location.cityCode || location.provinceCode),
@@ -54,11 +55,12 @@ Page({
         );
         this.setData({
           weatherTemp: `${weather.temperature}°C`,
-          weatherCopy: `${location.cityName} · ${weather.condition}`,
-          weatherTip: weather.isManual ? "手动天气 · 查看今日穿搭" : HOME_WEATHER_TIPS[weather.condition] || "查看今日穿搭建议"
+          weatherCopy: weather.condition,
+          weatherTip: weather.isManual ? "手动天气 · 查看今日穿搭" : HOME_WEATHER_TIPS[weather.condition] || "查看今日穿搭建议",
+          weatherIcon: getWeatherIcon(weather.condition)
         });
       } catch {
-        this.setData({ weatherTemp: "暂不可用", weatherCopy: location.cityName, weatherTip: "点击查看或稍后重试" });
+        this.setData({ weatherTemp: "暂不可用", weatherCopy: location.cityName, weatherTip: "点击查看或稍后重试", weatherIcon: "cloud" });
       }
     }
   },

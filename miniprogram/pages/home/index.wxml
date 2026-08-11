@@ -1,21 +1,21 @@
 <view class="home-page">
-  <view class="top-space"><text class="brand">衣橱关系</text><view class="brand-hanger"></view></view>
+  <view class="top-space"><text class="brand">Wardrobloom</text></view>
   <view class="hero-section">
-    <image wx:if="{{!imageErrors.hero}}" class="hero-image" src="/assets/home-handdrawn-v3.jpg" mode="aspectFill" data-id="hero" binderror="onActionImageError" />
+    <image wx:if="{{!imageErrors.hero}}" class="hero-image" src="/assets/home-wardrobloom-v1.jpg" mode="aspectFill" data-id="hero" binderror="onActionImageError" />
     <view class="weather-card" bindtap="toWeather">
-      <view class="weather-mark"><view class="weather-sun"></view><view class="weather-cloud"></view></view>
-      <view class="weather-content"><text class="weather-temp">{{weatherTemp}}</text><text class="weather-copy">{{weatherCopy}}</text><text class="weather-tip">{{weatherTip}}</text></view><text class="card-arrow">›</text>
+      <image class="weather-icon-image" src="/assets/weather-{{weatherIcon}}.png" mode="aspectFit" />
+      <view class="weather-content"><view class="weather-primary"><text class="weather-temp">{{weatherTemp}}</text><text class="weather-copy">{{weatherCopy}}</text></view><text class="weather-tip">{{weatherTip}}</text></view><text class="card-arrow">›</text>
     </view>
   </view>
 
   <view class="inspiration-card">
-    <text class="section-title">粘贴穿搭分享链接</text>
-    <view class="link-field"><input value="{{inspirationText}}" placeholder="粘贴小红书等平台的分享链接" bindinput="onInspirationInput"/><button bindtap="analyzeInspiration">看看我的衣橱能不能搭</button></view>
+    <image class="paper-shape" src="/assets/home-paper-link.png" mode="scaleToFill" />
+    <view class="inspiration-content"><text class="section-title">粘贴穿搭分享链接</text><view class="link-field"><input value="{{inspirationText}}" placeholder="粘贴小红书等平台的分享链接" bindinput="onInspirationInput"/><button bindtap="analyzeInspiration">看看我的衣橱能不能搭</button></view></view>
   </view>
 
   <view class="entry-grid">
-    <view class="entry-card wardrobe-entry" bindtap="toWardrobe"><image src="/assets/wardrobe-entry-v3.jpg" mode="aspectFill"/><view class="entry-copy"><text class="entry-title">我的衣橱</text><text class="entry-subtitle">已收录 {{itemCount}} 件衣物</text></view><text class="entry-arrow">›</text></view>
-    <view class="entry-card record-entry" bindtap="toWearCalendar"><image src="/assets/outfit-record-v3.jpg" mode="aspectFill"/><view class="entry-copy"><text class="entry-title">搭配记录</text><text class="entry-subtitle">回看真正穿过的搭配</text></view><text class="entry-arrow">›</text></view>
+    <view class="entry-card wardrobe-entry" bindtap="toWardrobe"><image class="paper-shape" src="/assets/home-paper-wardrobe.png" mode="scaleToFill"/><view class="entry-art"><image src="/assets/wardrobe-entry-v3.jpg" mode="aspectFill"/></view><view class="entry-copy"><text class="entry-title">我的衣橱</text><text class="entry-subtitle">已收录 {{itemCount}} 件衣物</text></view></view>
+    <view class="entry-card record-entry" bindtap="toWearCalendar"><image class="paper-shape" src="/assets/home-paper-record.png" mode="scaleToFill"/><view class="entry-art"><image src="/assets/outfit-record-v3.jpg" mode="aspectFill"/></view><view class="entry-copy"><text class="entry-title">搭配记录</text><text class="entry-subtitle">回看真正穿过的搭配</text></view></view>
   </view>
 
   <view class="add-row"><button bindtap="toAdd">＋ 录入单件衣物</button></view>

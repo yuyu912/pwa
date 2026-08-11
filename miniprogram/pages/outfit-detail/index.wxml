@@ -2,12 +2,13 @@
   <view wx:if="{{loading}}" class="state-card"><text>正在读取搭配详情…</text></view>
   <view wx:elif="{{error}}" class="state-card error-state">
     <text>{{error}}</text>
-    <view class="error-actions"><button bindtap="loadPlan">重新加载</button><button class="secondary-button" bindtap="backToGallery">返回我的搭配</button></view>
+    <view class="error-actions"><button bindtap="loadPlan">重新加载</button><button class="secondary-button" bindtap="backToGallery">{{isWearRecord ? '返回穿着日历' : '返回我的搭配'}}</button></view>
   </view>
   <block wx:elif="{{plan}}">
-    <text class="eyebrow">SAVED OUTFIT</text>
+    <text class="eyebrow">{{isWearRecord ? 'WORN OUTFIT' : 'SAVED OUTFIT'}}</text>
     <text class="headline">{{plan.title}}</text>
-    <text class="saved-date">最后保存于 {{plan.dateText}}</text>
+    <text class="saved-date">{{isWearRecord ? '穿着于 ' : '最后保存于 '}}{{plan.dateText}}</text>
+    <view wx:if="{{isWearRecord && (plan.scene || plan.note)}}" class="wear-record-meta"><text wx:if="{{plan.scene}}">场景：{{plan.scene}}</text><text wx:if="{{plan.note}}">记录：{{plan.note}}</text></view>
 
     <view class="outfit-display">
       <view wx:for="{{plan.layers}}" wx:for-item="layer" wx:key="previewKey" class="display-layer" style="left:{{layer.left}}%;top:{{layer.top}}%;width:{{layer.width}}%;height:{{layer.height}}%;z-index:{{layer.z}};transform:rotate({{layer.rotation}}deg)">

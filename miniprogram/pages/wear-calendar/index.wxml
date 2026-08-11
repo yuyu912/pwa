@@ -32,8 +32,8 @@
     <view class="day-section">
       <text class="section-title">{{selectedKey || '本月'}}穿着</text>
       <view wx:if="{{selectedGroups.length === 0}}" class="card empty-day-copy"><text class="muted">这一天还没有穿着记录。</text></view>
-      <view wx:for="{{selectedGroups}}" wx:key="id" class="card outfit-card">
-        <view class="outfit-head"><view><text class="outfit-title">{{item.title}}</text><text class="item-meta">{{item.timeText}}{{item.scene ? ' · ' + item.scene : ''}}</text></view><text class="outfit-count">{{item.items.length}} 件</text></view>
+      <view wx:for="{{selectedGroups}}" wx:key="id" class="card outfit-card {{item.outfitRecordId ? 'outfit-card-openable' : ''}}" data-record-id="{{item.outfitRecordId}}" bindtap="openOutfit">
+        <view class="outfit-head"><view><text class="outfit-title">{{item.title}}</text><text class="item-meta">{{item.timeText}}{{item.scene ? ' · ' + item.scene : ''}}</text></view><view><text class="outfit-count">{{item.items.length}} 件</text><text wx:if="{{item.outfitRecordId}}" class="outfit-open-note">查看整套</text></view></view>
         <text wx:if="{{item.note}}" class="outfit-note">{{item.note}}</text>
         <view class="outfit-items">
           <view wx:for="{{item.items}}" wx:for-item="garment" wx:key="id" class="outfit-item" data-id="{{garment.id}}" data-active="{{garment.active}}" catchtap="openItem">

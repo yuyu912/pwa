@@ -1,4 +1,4 @@
-<view class="page">
+<view class="page weather-page">
   <view class="region-bar" bindtap="chooseRegion"><view class="pin"></view><text>{{location ? location.fullName : '请选择省、市、区县'}}</text><text class="region-arrow">›</text></view>
   <view wx:if="{{!location}}" class="empty"><image class="empty-art" src="/assets/weather-handdrawn-v3.jpg" mode="aspectFill"/><text class="empty-title">先设置你的所在地区</text><text class="empty-copy">选择地区后，会按今天的天气从真实衣橱中推荐。</text><button class="primary" bindtap="chooseRegion">选择地区</button></view>
   <block wx:else>

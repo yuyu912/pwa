@@ -25,6 +25,8 @@ vm.runInNewContext(canvasSource, { module: canvasModule, exports: canvasModule.e
 const canvas = canvasModule.exports;
 const canvasMarkup = fs.readFileSync(new URL("../miniprogram/pages/outfit-canvas/index.wxml", import.meta.url), "utf8");
 const calendarSource = fs.readFileSync(new URL("../miniprogram/pages/wear-calendar/index.js", import.meta.url), "utf8");
+const calendarMarkup = fs.readFileSync(new URL("../miniprogram/pages/wear-calendar/index.wxml", import.meta.url), "utf8");
+const outfitDetailSource = fs.readFileSync(new URL("../miniprogram/pages/outfit-detail/index.js", import.meta.url), "utf8");
 const calendarModule = { exports: {} };
 vm.runInNewContext(calendarSource, { module: calendarModule, exports: calendarModule.exports, require: () => ({}), Page: () => {}, Date, Number, String, Array, Map, Set });
 const { groupWearLogs } = calendarModule.exports;
@@ -161,4 +163,15 @@ test("穿搭日历把同一套的多件衣物合并展示，单件记录保持�
   assert.equal(groups[0].title, "通勤搭配");
   assert.deepEqual(groups[0].items.map((item) => item.id), ["1", "2"]);
   assert.deepEqual(groups[1].items.map((item) => item.id), ["3"]);
+});
+
+test("穿搭日历整卡打开穿着快照，单件点击仍进入衣物详情", () => {
+  assert.match(calendarMarkup, /data-record-id="\{\{item\.outfitRecordId\}\}"/);
+  assert.match(calendarMarkup, /bindtap="openOutfit"/);
+  assert.match(calendarMarkup, /catchtap="openItem"/);
+  assert.match(calendarSource, /pages\/outfit-detail\/index\?recordId=/);
+  assert.match(calendarSource, /setStorageSync\(WEAR_RECORD_PREVIEW_KEY/);
+  assert.match(outfitDetailSource, /api\.getOutfitRecord\(this\.recordId\)/);
+  assert.match(outfitDetailSource, /getStorageSync\(WEAR_RECORD_PREVIEW_KEY\)/);
+  assert.match(outfitDetailSource, /createLayer\(item, index, canvas/);
 });

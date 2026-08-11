@@ -1459,7 +1459,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
   else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-11-outfit-plan-copy-rename-v40");
+  assert.equal(health.body.buildId, "2026-08-11-wear-record-detail-v41");
   assert.deepEqual(health.body.outfitPlans, { enabled: true, mode: "private" });
   assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
   assert.equal(health.body.models.productSegmentation, "SegmentCommodity");
@@ -1884,12 +1884,24 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const savedOutfitLogs = augustCalendar.body.filter((log) => log.outfitRecordId === wornPlan.body.recordId);
   assert.equal(savedOutfitLogs.length, 2);
   assert.ok(savedOutfitLogs.every((log) => log.outfitTitle === renamedPlan.body.title));
+  const wornRecord = readResponse(await main(makeEvent(`/api/outfit-records/${wornPlan.body.recordId}`, "GET", null, authorization)));
+  assert.equal(wornRecord.status, 200);
+  assert.equal(wornRecord.body.title, renamedPlan.body.title);
+  assert.equal(wornRecord.body.scene, wornPayload.scene);
+  assert.equal(wornRecord.body.note, wornPayload.note);
+  assert.equal(wornRecord.body.items.length, 2);
+  assert.equal(wornRecord.body.layers.length, 2);
+  assert.match(wornRecord.body.layers[0].imageUrl, /^https:\/\/images\.test\//);
+  assert.equal(readResponse(await main(makeEvent(`/api/outfit-records/${wornPlan.body.recordId}`, "GET", null, memberAuthorization))).status, 404);
   assert.equal(readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "DELETE", null, authorization))).status, 204);
   const calendarAfterPlanDelete = readResponse(await main(makeEvent(
     "/api/wear-logs?start=2026-08-01T00%3A00%3A00.000Z&end=2026-09-01T00%3A00%3A00.000Z",
     "GET", null, authorization
   )));
   assert.equal(calendarAfterPlanDelete.body.filter((log) => log.outfitRecordId === wornPlan.body.recordId).length, 2);
+  const wornRecordAfterPlanDelete = readResponse(await main(makeEvent(`/api/outfit-records/${wornPlan.body.recordId}`, "GET", null, authorization)));
+  assert.equal(wornRecordAfterPlanDelete.status, 200);
+  assert.equal(wornRecordAfterPlanDelete.body.layers.length, 2);
 
   const upload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
     mimeType: "image/jpeg",
@@ -1959,7 +1971,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-11-outfit-plan-copy-rename-v40");
+  assert.equal(failedRecognition.body.buildId, "2026-08-11-wear-record-detail-v41");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

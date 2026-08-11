@@ -33,10 +33,10 @@
     "pages/complaint/index"
   ],
   "window": {
-    "navigationBarTitleText": "衣橱关系",
-    "navigationBarBackgroundColor": "#F8F4FF",
+    "navigationBarTitleText": "Wardrobloom",
+    "navigationBarBackgroundColor": "#FBF8F0",
     "navigationBarTextStyle": "black",
-    "backgroundColor": "#F8F4FF",
+    "backgroundColor": "#FBF8F0",
     "backgroundTextStyle": "light"
   },
   "style": "v2",

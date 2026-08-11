@@ -129,6 +129,7 @@ module.exports = {
   getMonthlyWearLogs: (start, end) => config.USE_MOCK
     ? Promise.resolve(mock.getMonthlyWearLogs(start, end))
     : request(`/api/wear-logs?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  getOutfitRecord: (id) => request(`/api/outfit-records/${encodeURIComponent(id)}`),
   listOutfitPlans: () => request("/api/outfit-plans"),
   createOutfitPlan: (data) => request("/api/outfit-plans", "POST", data),
   updateOutfitPlan: (id, data) => request(`/api/outfit-plans/${encodeURIComponent(id)}`, "PUT", data),

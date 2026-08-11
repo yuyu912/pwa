@@ -1,4 +1,4 @@
-<view class="page">
+<view class="page today-outfit-page">
   <view wx:if="{{!location}}" class="empty"><text class="heading">先告诉我你在哪里</text><text class="desc">选择所在地区后，会按当地天气从真实衣橱中搭配。</text><button class="primary" bindtap="chooseRegion">选择地区</button></view>
   <view wx:elif="{{error}}" class="outfit-card"><text class="title">天气暂不可用</text><text class="desc">{{error}}</text></view>
   <view wx:elif="{{!weather}}" class="outfit-card"><text class="title">正在获取天气</text></view>

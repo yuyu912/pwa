@@ -1,4 +1,5 @@
 const api = require("../../services/api");
+const WEAR_RECORD_PREVIEW_KEY = "wardrobloom_wear_record_preview";
 
 const pad = (value) => String(value).padStart(2, "0");
 const dateKey = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -122,6 +123,20 @@ Page({
     if (!active) return wx.showToast({ title: "该衣物已移出衣橱", icon: "none" });
     wx.navigateTo({ url: `/pages/item-detail/index?id=${encodeURIComponent(id)}` });
   },
+  openOutfit(event) {
+    const recordId = String(event.currentTarget.dataset.recordId || "");
+    if (!recordId) return wx.showToast({ title: "单件记录请点击衣物查看", icon: "none" });
+    const group = this.data.groups.find((entry) => String(entry.outfitRecordId) === recordId);
+    if (group) wx.setStorageSync(WEAR_RECORD_PREVIEW_KEY, {
+      id: recordId,
+      title: group.title,
+      wornAt: group.wornAt,
+      scene: group.scene,
+      note: group.note,
+      items: group.items.map(({ logId, ...item }) => item)
+    });
+    wx.navigateTo({ url: `/pages/outfit-detail/index?recordId=${encodeURIComponent(recordId)}` });
+  },
   openReport() {
     wx.navigateTo({ url: `/pages/wardrobe-report/index?year=${this.data.year}&month=${this.data.month}` });
   },
@@ -130,4 +145,4 @@ Page({
   retry() { this.loadMonth(); }
 });
 
-module.exports = { groupWearLogs };
+module.exports = { groupWearLogs, WEAR_RECORD_PREVIEW_KEY };
