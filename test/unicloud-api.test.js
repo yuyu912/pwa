@@ -1459,7 +1459,8 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
   else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-10-inspiration-initial-state-v38");
+  assert.equal(health.body.buildId, "2026-08-11-private-outfit-plans-v39");
+  assert.deepEqual(health.body.outfitPlans, { enabled: true, mode: "private" });
   assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
   assert.equal(health.body.models.productSegmentation, "SegmentCommodity");
   assert.equal(health.body.garmentSegmentation.provider, "aliyun-bailian");
@@ -1825,6 +1826,55 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(restoredIdle.status, 200);
   assert.equal(restoredIdle.body.idle_status, "active");
 
+  const planPayload = {
+    idempotencyKey: "outfit-plan-create-1",
+    canvas: { width: 360, height: 600 },
+    layers: [
+      { key: "top-layer", itemId: "1", x: 30, y: 40, scale: 1.1, rotation: 0, z: 1, imageUrl: "https://expired.test/one" },
+      { key: "bottom-layer", itemId: "3", x: 50, y: 260, scale: 1, rotation: 0, z: 2 }
+    ]
+  };
+  const createdPlan = readResponse(await main(makeEvent("/api/outfit-plans", "POST", planPayload, authorization)));
+  assert.equal(createdPlan.status, 201);
+  assert.equal(createdPlan.body.layers.length, 2);
+  assert.equal(JSON.stringify(createdPlan.body).includes("expired.test"), false);
+  assert.match(createdPlan.body.layers[0].imageUrl, /^https:\/\/images\.test\//);
+  const repeatedPlan = readResponse(await main(makeEvent("/api/outfit-plans", "POST", planPayload, authorization)));
+  assert.equal(repeatedPlan.status, 200);
+  assert.equal(repeatedPlan.body.id, createdPlan.body.id);
+  const updatedPlan = readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "PUT", {
+    ...planPayload, layers: planPayload.layers.map((layer, index) => index === 0 ? { ...layer, x: 88 } : layer)
+  }, authorization)));
+  assert.equal(updatedPlan.status, 200);
+  assert.equal(updatedPlan.body.layers[0].x, 88);
+  const memberPlans = readResponse(await main(makeEvent("/api/outfit-plans", "GET", null, memberAuthorization)));
+  assert.deepEqual(memberPlans.body, []);
+  assert.equal(readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "DELETE", null, memberAuthorization))).status, 404);
+
+  const wornPayload = { date: "2026-08-11", scene: "通勤", note: "按保存方案实际穿着", idempotencyKey: "outfit-plan-wear-1" };
+  const wearCountBeforePlan = readResponse(await main(makeEvent("/api/items/1", "GET", null, authorization))).body.wear_count;
+  const wornPlan = readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}/wear`, "POST", wornPayload, authorization)));
+  assert.equal(wornPlan.status, 201);
+  assert.equal(wornPlan.body.recordedCount, 2);
+  const repeatedWear = readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}/wear`, "POST", wornPayload, authorization)));
+  assert.equal(repeatedWear.status, 200);
+  assert.equal(repeatedWear.body.recordId, wornPlan.body.recordId);
+  assert.equal(repeatedWear.body.duplicate, true);
+  assert.equal(readResponse(await main(makeEvent("/api/items/1", "GET", null, authorization))).body.wear_count, wearCountBeforePlan + 1);
+  const augustCalendar = readResponse(await main(makeEvent(
+    "/api/wear-logs?start=2026-08-01T00%3A00%3A00.000Z&end=2026-09-01T00%3A00%3A00.000Z",
+    "GET", null, authorization
+  )));
+  const savedOutfitLogs = augustCalendar.body.filter((log) => log.outfitRecordId === wornPlan.body.recordId);
+  assert.equal(savedOutfitLogs.length, 2);
+  assert.ok(savedOutfitLogs.every((log) => log.outfitTitle === createdPlan.body.title));
+  assert.equal(readResponse(await main(makeEvent(`/api/outfit-plans/${createdPlan.body.id}`, "DELETE", null, authorization))).status, 204);
+  const calendarAfterPlanDelete = readResponse(await main(makeEvent(
+    "/api/wear-logs?start=2026-08-01T00%3A00%3A00.000Z&end=2026-09-01T00%3A00%3A00.000Z",
+    "GET", null, authorization
+  )));
+  assert.equal(calendarAfterPlanDelete.body.filter((log) => log.outfitRecordId === wornPlan.body.recordId).length, 2);
+
   const upload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
     mimeType: "image/jpeg",
     size: 500000,
@@ -1893,7 +1943,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-10-inspiration-initial-state-v38");
+  assert.equal(failedRecognition.body.buildId, "2026-08-11-private-outfit-plans-v39");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

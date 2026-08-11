@@ -50,6 +50,31 @@ const serializeLayers = (layers) => ({
   }))
 });
 
+const buildPlanPayload = (layers, canvas = {}) => ({
+  version: 1,
+  canvas: {
+    width: Math.round(clamp(canvas.width, 280, 2000, 320)),
+    height: Math.round(clamp(canvas.height, 420, 3000, 520))
+  },
+  layers: serializeLayers(layers).layers
+});
+
+const exportLayerRect = (layer, sourceCanvas = {}, targetCanvas = {}, layerSize = {}) => {
+  const sourceWidth = Math.max(1, Number(sourceCanvas.width) || 320);
+  const sourceHeight = Math.max(1, Number(sourceCanvas.height) || 520);
+  const targetWidth = Math.max(1, Number(targetCanvas.width) || 1080);
+  const targetHeight = Math.max(1, Number(targetCanvas.height) || 1800);
+  const scaleX = targetWidth / sourceWidth;
+  const scaleY = targetHeight / sourceHeight;
+  const scale = clamp(layer?.scale, MIN_SCALE, MAX_SCALE, 1);
+  return {
+    x: Math.round(clamp(layer?.x, 0, 2000, 0) * scaleX),
+    y: Math.round(clamp(layer?.y, 0, 3000, 0) * scaleY),
+    width: Math.round((Number(layerSize.width) || 190) * scale * scaleX),
+    height: Math.round((Number(layerSize.height) || 230) * scale * scaleY)
+  };
+};
+
 const restoreLayers = (draft, items) => {
   const byId = new Map((Array.isArray(items) ? items : []).map((item) => [String(item.id), item]));
   const saved = Array.isArray(draft?.layers) ? draft.layers.slice(0, MAX_LAYERS) : [];
@@ -85,4 +110,4 @@ const rotateLayer = (layers, key, amount) => (Array.isArray(layers) ? layers : [
   return { ...layer, rotation };
 });
 
-module.exports = { MAX_LAYERS, MAX_SCALE, MIN_SCALE, createLayer, reorderLayer, restoreLayers, rotateLayer, serializeLayers };
+module.exports = { MAX_LAYERS, MAX_SCALE, MIN_SCALE, buildPlanPayload, createLayer, exportLayerRect, reorderLayer, restoreLayers, rotateLayer, serializeLayers };

@@ -31,3 +31,12 @@
 .item-meta { color: #8b8298; font-size: 23rpx; }
 .inactive-label { color: #a36b73; font-size: 22rpx; }
 .row-arrow { color: #8a6ca3; font-size: 40rpx; }
+.outfit-card { margin-bottom: 16rpx; padding: 22rpx; }
+.outfit-head { display: flex; align-items: flex-start; justify-content: space-between; }
+.outfit-title { display: block; color: #4c3d58; font-size: 29rpx; font-weight: 700; }
+.outfit-count { padding: 7rpx 14rpx; border-radius: 999rpx; background: #f1e9f8; color: #76568f; font-size: 20rpx; }
+.outfit-note { display: block; margin-top: 12rpx; color: #776c82; font-size: 22rpx; }
+.outfit-items { display: flex; gap: 16rpx; margin-top: 18rpx; overflow-x: auto; }
+.outfit-item { width: 128rpx; flex: 0 0 128rpx; }
+.outfit-item .item-image, .outfit-item .item-placeholder { width: 116rpx; height: 116rpx; }
+.outfit-item .item-name, .outfit-item .item-meta, .outfit-item .inactive-label { display: block; margin-top: 6rpx; overflow: hidden; font-size: 20rpx; text-overflow: ellipsis; white-space: nowrap; }

@@ -129,6 +129,11 @@ module.exports = {
   getMonthlyWearLogs: (start, end) => config.USE_MOCK
     ? Promise.resolve(mock.getMonthlyWearLogs(start, end))
     : request(`/api/wear-logs?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  listOutfitPlans: () => request("/api/outfit-plans"),
+  createOutfitPlan: (data) => request("/api/outfit-plans", "POST", data),
+  updateOutfitPlan: (id, data) => request(`/api/outfit-plans/${encodeURIComponent(id)}`, "PUT", data),
+  deleteOutfitPlan: (id) => request(`/api/outfit-plans/${encodeURIComponent(id)}`, "DELETE"),
+  recordOutfitPlanWear: (id, data) => request(`/api/outfit-plans/${encodeURIComponent(id)}/wear`, "POST", data),
   getRewards: () => config.USE_MOCK ? Promise.resolve(mock.getRewards()) : request("/api/rewards/me"),
   getWeather: (adcode) => config.USE_MOCK
     ? Promise.reject(new Error("模拟模式不提供实时天气。"))

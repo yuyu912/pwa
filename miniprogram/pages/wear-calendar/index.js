@@ -22,6 +22,26 @@ function calendarDays(year, month, selectedKey, counts) {
   return cells;
 }
 
+function groupWearLogs(logs) {
+  const groups = new Map();
+  logs.forEach((log) => {
+    const key = log.outfitRecordId ? `outfit:${log.outfitRecordId}` : `single:${log.id}`;
+    if (!groups.has(key)) groups.set(key, {
+      id: key,
+      outfitRecordId: log.outfitRecordId || "",
+      title: log.outfitTitle || log.item?.name || "单件穿着",
+      wornAt: log.wornAt,
+      dateKey: log.dateKey,
+      timeText: log.timeText,
+      scene: log.scene || "",
+      note: log.note || "",
+      items: []
+    });
+    if (log.item) groups.get(key).items.push({ ...log.item, logId: log.id });
+  });
+  return [...groups.values()];
+}
+
 Page({
   data: {
     weekdays: ["日", "一", "二", "三", "四", "五", "六"],
@@ -29,9 +49,9 @@ Page({
     month: 0,
     monthText: "",
     days: [],
-    logs: [],
+    groups: [],
     selectedKey: "",
-    selectedLogs: [],
+    selectedGroups: [],
     totalCount: 0,
     distinctItemCount: 0,
     loading: true,
@@ -55,16 +75,17 @@ Page({
         timeText: new Date(log.wornAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
       }));
       const counts = {};
-      normalized.forEach((log) => { counts[log.dateKey] = (counts[log.dateKey] || 0) + 1; });
-      const firstRecordedDay = normalized[0]?.dateKey || "";
+      const groups = groupWearLogs(normalized);
+      groups.forEach((group) => { counts[group.dateKey] = (counts[group.dateKey] || 0) + 1; });
+      const firstRecordedDay = groups[0]?.dateKey || "";
       const effectiveSelectedKey = selectedKey.startsWith(`${year}-${pad(month + 1)}-`) ? selectedKey : firstRecordedDay;
       this.setData({
-        logs: normalized,
+        groups,
         selectedKey: effectiveSelectedKey,
-        selectedLogs: normalized.filter((log) => log.dateKey === effectiveSelectedKey),
+        selectedGroups: groups.filter((group) => group.dateKey === effectiveSelectedKey),
         days: calendarDays(year, month, effectiveSelectedKey, counts),
         monthText: `${year}年${month + 1}月`,
-        totalCount: normalized.length,
+        totalCount: groups.length,
         distinctItemCount: new Set(normalized.map((log) => log.item.id)).size,
         loading: false
       });
@@ -72,8 +93,8 @@ Page({
       this.setData({
         loading: false,
         error: error.message || "穿着记录加载失败，请重试。",
-        logs: [],
-        selectedLogs: [],
+        groups: [],
+        selectedGroups: [],
         days: calendarDays(year, month, selectedKey, {})
       });
     }
@@ -89,10 +110,10 @@ Page({
     const key = event.currentTarget.dataset.key;
     if (!key) return;
     const counts = {};
-    this.data.logs.forEach((log) => { counts[log.dateKey] = (counts[log.dateKey] || 0) + 1; });
+    this.data.groups.forEach((group) => { counts[group.dateKey] = (counts[group.dateKey] || 0) + 1; });
     this.setData({
       selectedKey: key,
-      selectedLogs: this.data.logs.filter((log) => log.dateKey === key),
+      selectedGroups: this.data.groups.filter((group) => group.dateKey === key),
       days: calendarDays(this.data.year, this.data.month, key, counts)
     });
   },
@@ -108,3 +129,5 @@ Page({
   onImageError(event) { this.setData({ [`imageFailures.${event.currentTarget.dataset.id}`]: true }); },
   retry() { this.loadMonth(); }
 });
+
+module.exports = { groupWearLogs };

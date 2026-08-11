@@ -1,0 +1,17 @@
+{
+  "bsonType": "object",
+  "description": "用户私人保存的搭配方案，不代表已经实际穿着",
+  "required": ["user_id", "idempotency_key", "title", "canvas", "layers", "item_ids", "created_at", "updated_at"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false, "count": false },
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "user_id": { "bsonType": "string" },
+    "idempotency_key": { "bsonType": "string" },
+    "title": { "bsonType": "string" },
+    "canvas": { "bsonType": "object" },
+    "layers": { "bsonType": "array" },
+    "item_ids": { "bsonType": "array" },
+    "created_at": { "bsonType": "string" },
+    "updated_at": { "bsonType": "string" }
+  }
+}

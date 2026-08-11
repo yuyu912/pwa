@@ -19,6 +19,15 @@ const capsuleSource = fs.readFileSync(new URL("../miniprogram/utils/capsule-plan
 const capsuleModule = { exports: {} };
 vm.runInNewContext(capsuleSource, { module: capsuleModule, exports: capsuleModule.exports, Number, Array });
 const { buildCapsulePlan } = capsuleModule.exports;
+const canvasSource = fs.readFileSync(new URL("../miniprogram/utils/outfit-canvas.js", import.meta.url), "utf8");
+const canvasModule = { exports: {} };
+vm.runInNewContext(canvasSource, { module: canvasModule, exports: canvasModule.exports, Number, String, Array, Map, Math });
+const canvas = canvasModule.exports;
+const canvasMarkup = fs.readFileSync(new URL("../miniprogram/pages/outfit-canvas/index.wxml", import.meta.url), "utf8");
+const calendarSource = fs.readFileSync(new URL("../miniprogram/pages/wear-calendar/index.js", import.meta.url), "utf8");
+const calendarModule = { exports: {} };
+vm.runInNewContext(calendarSource, { module: calendarModule, exports: calendarModule.exports, require: () => ({}), Page: () => {}, Date, Number, String, Array, Map, Set });
+const { groupWearLogs } = calendarModule.exports;
 const items = [
   { id: "1", name: "白色针织上衣", category: "上衣", season: "春秋", thickness: "适中", material: "针织", styles: ["温柔"], scenes: ["通勤"], monthlyWearCount: 3, idleStatus: "active" },
   { id: "2", name: "蓝色牛仔裤", category: "裤子", season: "多季", thickness: "适中", material: "牛仔", styles: ["休闲"], scenes: ["旅行"], monthlyWearCount: 0, idleStatus: "considering" },
@@ -117,4 +126,39 @@ test("胶囊衣物不足时不伪造组合并说明结构缺口", () => {
   assert.equal(result.combinationCount, 0);
   assert.equal(result.coversSevenDays, false);
   assert.deepEqual(result.missing, ["下装或连衣裙"]);
+});
+
+test("保存搭配只提交衣物ID和安全布局，不提交签名图片", () => {
+  const layers = [
+    canvas.createLayer({ id: "top", name: "白衬衫", category: "上衣", imageUrl: "https://signed.test/top" }, 0, { width: 360, height: 600 }, "top-layer"),
+    canvas.createLayer({ id: "bottom", name: "黑裤", category: "裤子", imageUrl: "https://signed.test/bottom" }, 1, { width: 360, height: 600 }, "bottom-layer")
+  ];
+  const payload = canvas.buildPlanPayload(layers, { width: 360, height: 600 });
+  assert.deepEqual(structuredClone(payload.canvas), { width: 360, height: 600 });
+  assert.deepEqual(payload.layers.map((layer) => layer.itemId), ["top", "bottom"]);
+  assert.equal(JSON.stringify(payload).includes("signed.test"), false);
+});
+
+test("导出按当前画布比例换算位置、缩放和衣物尺寸", () => {
+  const rect = canvas.exportLayerRect({ x: 36, y: 60, scale: 1.5 }, { width: 360, height: 600 }, { width: 1080, height: 1800 }, { width: 190, height: 230 });
+  assert.deepEqual(structuredClone(rect), { x: 108, y: 180, width: 855, height: 1035 });
+});
+
+test("搭配画布提供保存、记到日历、导出和私人方案入口", () => {
+  assert.match(canvasMarkup, /bindtap="savePlan"/);
+  assert.match(canvasMarkup, /bindtap="openWearForm"/);
+  assert.match(canvasMarkup, /bindtap="exportImage"/);
+  assert.match(canvasMarkup, /我的搭配方案/);
+});
+
+test("穿搭日历把同一套的多件衣物合并展示，单件记录保持独立", () => {
+  const groups = structuredClone(groupWearLogs([
+    { id: "l1", outfitRecordId: "o1", outfitTitle: "通勤搭配", wornAt: "2026-08-11T04:00:00.000Z", dateKey: "2026-08-11", timeText: "12:00", item: { id: "1", name: "上衣" } },
+    { id: "l2", outfitRecordId: "o1", outfitTitle: "通勤搭配", wornAt: "2026-08-11T04:00:00.000Z", dateKey: "2026-08-11", timeText: "12:00", item: { id: "2", name: "裤子" } },
+    { id: "l3", outfitRecordId: "", wornAt: "2026-08-11T05:00:00.000Z", dateKey: "2026-08-11", timeText: "13:00", item: { id: "3", name: "外套" } }
+  ]));
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].title, "通勤搭配");
+  assert.deepEqual(groups[0].items.map((item) => item.id), ["1", "2"]);
+  assert.deepEqual(groups[1].items.map((item) => item.id), ["3"]);
 });

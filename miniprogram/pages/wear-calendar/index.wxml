@@ -31,12 +31,18 @@
 
     <view class="day-section">
       <text class="section-title">{{selectedKey || '本月'}}穿着</text>
-      <view wx:if="{{selectedLogs.length === 0}}" class="card empty-day-copy"><text class="muted">这一天还没有穿着记录。</text></view>
-      <view wx:for="{{selectedLogs}}" wx:key="id" class="card log-card" data-id="{{item.item.id}}" data-active="{{item.item.active}}" bindtap="openItem">
-        <image wx:if="{{item.item.imageUrl && !imageFailures[item.id]}}" class="item-image" src="{{item.item.imageUrl}}" mode="aspectFill" data-id="{{item.id}}" binderror="onImageError" />
-        <view wx:else class="item-placeholder">衣</view>
-        <view class="log-copy"><text class="item-name">{{item.item.name}}</text><text class="item-meta">{{item.item.category}}{{item.item.color ? ' · ' + item.item.color : ''}}</text><text class="item-meta">{{item.timeText}}{{item.scene ? ' · ' + item.scene : ''}}{{item.comfort ? ' · ' + item.comfort : ''}}</text><text wx:if="{{!item.item.active}}" class="inactive-label">已移出衣橱</text></view>
-        <text class="row-arrow">{{item.item.active ? '›' : ''}}</text>
+      <view wx:if="{{selectedGroups.length === 0}}" class="card empty-day-copy"><text class="muted">这一天还没有穿着记录。</text></view>
+      <view wx:for="{{selectedGroups}}" wx:key="id" class="card outfit-card">
+        <view class="outfit-head"><view><text class="outfit-title">{{item.title}}</text><text class="item-meta">{{item.timeText}}{{item.scene ? ' · ' + item.scene : ''}}</text></view><text class="outfit-count">{{item.items.length}} 件</text></view>
+        <text wx:if="{{item.note}}" class="outfit-note">{{item.note}}</text>
+        <view class="outfit-items">
+          <view wx:for="{{item.items}}" wx:for-item="garment" wx:key="id" class="outfit-item" data-id="{{garment.id}}" data-active="{{garment.active}}" catchtap="openItem">
+            <image wx:if="{{garment.imageUrl && !imageFailures[garment.logId]}}" class="item-image" src="{{garment.imageUrl}}" mode="aspectFill" data-id="{{garment.logId}}" binderror="onImageError" />
+            <view wx:else class="item-placeholder">衣</view>
+            <text class="item-name">{{garment.name}}</text><text class="item-meta">{{garment.category}}{{garment.color ? ' · ' + garment.color : ''}}</text>
+            <text wx:if="{{!garment.active}}" class="inactive-label">已移出衣橱</text>
+          </view>
+        </view>
       </view>
     </view>
   </block>

@@ -25,6 +25,20 @@
     </view>
     <text class="save-state">{{savedText || (layers.length ? '调整后会自动保存本机草稿' : '')}}</text>
 
+    <view class="primary-actions">
+      <button class="plan-save" loading="{{planBusy}}" disabled="{{planBusy || layers.length === 0}}" bindtap="savePlan">{{currentPlanId ? '更新搭配' : '保存搭配'}}</button>
+      <button disabled="{{!currentPlanId || planDirty || planBusy}}" bindtap="openWearForm">记到日历</button>
+      <button loading="{{exporting}}" disabled="{{exporting || layers.length === 0}}" bindtap="exportImage">导出图片</button>
+    </view>
+    <text wx:if="{{currentPlanTitle}}" class="current-plan">当前：{{currentPlanTitle}}{{planDirty ? '（有未保存修改）' : ''}}</text>
+
+    <view wx:if="{{wearFormVisible}}" class="wear-form">
+      <view class="form-row"><text>穿着日期</text><picker mode="date" value="{{wearDate}}" end="{{today}}" bindchange="onWearDate"><view class="picker-field">{{wearDate}}</view></picker></view>
+      <view class="form-row"><text>场景（选填）</text><picker mode="selector" range="{{wearScenes}}" value="{{wearSceneIndex}}" bindchange="onWearScene"><view class="picker-field">{{wearScenes[wearSceneIndex]}}</view></picker></view>
+      <textarea value="{{wearNote}}" maxlength="200" bindinput="onWearNote" placeholder="备注（选填）"/>
+      <view class="form-actions"><button bindtap="closeWearForm">取消</button><button class="confirm-wear" loading="{{planBusy}}" bindtap="confirmWear">确认记入</button></view>
+    </view>
+
     <view class="picker-section">
       <view class="picker-title-row"><text class="picker-title">从衣橱添加</text><text class="picker-count">已放 {{layers.length}} / 12 件</text></view>
       <scroll-view class="category-scroll" scroll-x><text wx:for="{{categories}}" wx:key="*this" class="category {{activeCategory === item ? 'active' : ''}}" data-category="{{item}}" bindtap="selectCategory">{{item}}</text></scroll-view>
@@ -38,5 +52,16 @@
         </view>
       </scroll-view>
     </view>
+
+    <view class="plans-section">
+      <view class="picker-title-row"><text class="picker-title">我的搭配方案</text><button class="new-plan" bindtap="newPlan">＋ 新建</button></view>
+      <text wx:if="{{plansError}}" class="plans-error">{{plansError}}</text>
+      <text wx:elif="{{plans.length === 0}}" class="plans-empty">还没有保存的搭配方案。</text>
+      <view wx:for="{{plans}}" wx:key="id" class="plan-row {{currentPlanId === item.id ? 'active' : ''}}">
+        <view class="plan-main" data-id="{{item.id}}" bindtap="loadPlan"><text class="plan-title">{{item.title}}</text><text class="plan-meta">{{item.layers.length}} 件衣物</text></view>
+        <button class="plan-delete" data-id="{{item.id}}" catchtap="deletePlan">删除</button>
+      </view>
+    </view>
+    <canvas type="2d" id="exportCanvas" class="export-canvas"></canvas>
   </block>
 </view>
