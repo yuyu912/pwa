@@ -1,47 +1,6 @@
 const api = require("../../services/api");
+const history = require("../../utils/wear-history");
 const WEAR_RECORD_PREVIEW_KEY = "wardrobloom_wear_record_preview";
-
-const pad = (value) => String(value).padStart(2, "0");
-const dateKey = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-
-function monthRange(year, month) {
-  return {
-    start: new Date(year, month, 1).toISOString(),
-    end: new Date(year, month + 1, 1).toISOString()
-  };
-}
-
-function calendarDays(year, month, selectedKey, counts) {
-  const firstWeekday = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells = Array.from({ length: firstWeekday }, (_, index) => ({ key: `blank-${index}`, empty: true }));
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    const key = dateKey(new Date(year, month, day));
-    cells.push({ key, day, count: counts[key] || 0, className: key === selectedKey ? "calendar-day selected" : "calendar-day" });
-  }
-  while (cells.length % 7) cells.push({ key: `blank-end-${cells.length}`, empty: true });
-  return cells;
-}
-
-function groupWearLogs(logs) {
-  const groups = new Map();
-  logs.forEach((log) => {
-    const key = log.outfitRecordId ? `outfit:${log.outfitRecordId}` : `single:${log.id}`;
-    if (!groups.has(key)) groups.set(key, {
-      id: key,
-      outfitRecordId: log.outfitRecordId || "",
-      title: log.outfitTitle || log.item?.name || "单件穿着",
-      wornAt: log.wornAt,
-      dateKey: log.dateKey,
-      timeText: log.timeText,
-      scene: log.scene || "",
-      note: log.note || "",
-      items: []
-    });
-    if (log.item) groups.get(key).items.push({ ...log.item, logId: log.id });
-  });
-  return [...groups.values()];
-}
 
 Page({
   data: {
@@ -52,16 +11,23 @@ Page({
     days: [],
     groups: [],
     selectedKey: "",
+    selectedTitle: "今天",
+    selectedSubtitle: "",
     selectedGroups: [],
     totalCount: 0,
     distinctItemCount: 0,
+    monthlyItems: [],
+    monthlyFavorite: null,
+    lastTappedKey: "",
     loading: true,
     error: "",
     imageFailures: {}
   },
   onLoad() {
     const today = new Date();
-    this.setData({ year: today.getFullYear(), month: today.getMonth(), selectedKey: dateKey(today) });
+    const selectedKey = history.dateKey(today);
+    const copy = history.selectedDateCopy(selectedKey, today);
+    this.setData({ year: today.getFullYear(), month: today.getMonth(), selectedKey, selectedTitle: copy.title, selectedSubtitle: copy.subtitle });
   },
   onShow() {
     if (this.getTabBar()) this.getTabBar().setData({ selected: 2 });
@@ -71,26 +37,28 @@ Page({
     const { year, month, selectedKey } = this.data;
     this.setData({ loading: true, error: "", imageFailures: {} });
     try {
-      const range = monthRange(year, month);
+      const range = history.monthRange(year, month);
       const logs = await api.getMonthlyWearLogs(range.start, range.end);
-      const normalized = logs.filter((log) => log.item).map((log) => ({
-        ...log,
-        dateKey: dateKey(new Date(log.wornAt)),
-        timeText: new Date(log.wornAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-      }));
-      const counts = {};
-      const groups = groupWearLogs(normalized);
-      groups.forEach((group) => { counts[group.dateKey] = (counts[group.dateKey] || 0) + 1; });
-      const firstRecordedDay = groups[0]?.dateKey || "";
-      const effectiveSelectedKey = selectedKey.startsWith(`${year}-${pad(month + 1)}-`) ? selectedKey : firstRecordedDay;
+      const normalized = history.normalizeWearLogs(logs);
+      const groups = history.groupWearLogs(normalized);
+      const daySummaries = history.buildDaySummaries(groups);
+      const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}-`;
+      const effectiveSelectedKey = selectedKey.startsWith(monthPrefix) ? selectedKey : history.defaultSelectedKey(year, month, groups);
+      const copy = history.selectedDateCopy(effectiveSelectedKey);
+      const summary = history.buildHistorySummary(groups, "month");
       this.setData({
         groups,
         selectedKey: effectiveSelectedKey,
+        selectedTitle: copy.title,
+        selectedSubtitle: copy.subtitle,
         selectedGroups: groups.filter((group) => group.dateKey === effectiveSelectedKey),
-        days: calendarDays(year, month, effectiveSelectedKey, counts),
+        days: history.calendarDays(year, month, effectiveSelectedKey, daySummaries),
         monthText: `${year}年${month + 1}月`,
-        totalCount: groups.length,
-        distinctItemCount: new Set(normalized.map((log) => log.item.id)).size,
+        totalCount: summary.totalCount,
+        distinctItemCount: summary.distinctItemCount,
+        monthlyItems: summary.items,
+        monthlyFavorite: summary.favorite,
+        lastTappedKey: "",
         loading: false
       });
     } catch (error) {
@@ -99,7 +67,11 @@ Page({
         error: error.message || "穿着记录加载失败，请重试。",
         groups: [],
         selectedGroups: [],
-        days: calendarDays(year, month, selectedKey, {})
+        monthlyItems: [],
+        monthlyFavorite: null,
+        totalCount: 0,
+        distinctItemCount: 0,
+        days: history.calendarDays(year, month, selectedKey)
       });
     }
   },
@@ -107,18 +79,25 @@ Page({
   nextMonth() { this.changeMonth(1); },
   changeMonth(offset) {
     const target = new Date(this.data.year, this.data.month + offset, 1);
-    this.setData({ year: target.getFullYear(), month: target.getMonth(), selectedKey: "" });
+    this.setData({ year: target.getFullYear(), month: target.getMonth(), selectedKey: "", lastTappedKey: "" });
     this.loadMonth();
   },
   selectDay(event) {
     const key = event.currentTarget.dataset.key;
     if (!key) return;
-    const counts = {};
-    this.data.groups.forEach((group) => { counts[group.dateKey] = (counts[group.dateKey] || 0) + 1; });
+    const daySummaries = history.buildDaySummaries(this.data.groups);
+    const hasRecords = Boolean(daySummaries[key]?.count);
+    if (this.data.lastTappedKey === key && hasRecords) {
+      return wx.navigateTo({ url: `/pages/wear-week/index?date=${encodeURIComponent(key)}` });
+    }
+    const copy = history.selectedDateCopy(key);
     this.setData({
       selectedKey: key,
+      selectedTitle: copy.title,
+      selectedSubtitle: copy.subtitle,
       selectedGroups: this.data.groups.filter((group) => group.dateKey === key),
-      days: calendarDays(this.data.year, this.data.month, key, counts)
+      days: history.calendarDays(this.data.year, this.data.month, key, daySummaries),
+      lastTappedKey: key
     });
   },
   openItem(event) {
@@ -148,4 +127,4 @@ Page({
   retry() { this.loadMonth(); }
 });
 
-module.exports = { groupWearLogs, WEAR_RECORD_PREVIEW_KEY };
+module.exports = { ...history, WEAR_RECORD_PREVIEW_KEY };

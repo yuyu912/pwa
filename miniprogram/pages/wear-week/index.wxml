@@ -1,0 +1,40 @@
+<view class="page week-page">
+  <view class="week-hero"><text class="week-title">{{rangeTitle}}</text><text wx:if="{{yearText}}" class="week-year">{{yearText}}</text></view>
+
+  <view wx:if="{{loading}}" class="card state-card"><text class="muted">正在加载本周记录…</text></view>
+  <view wx:elif="{{error}}" class="card state-card"><text class="error-text">{{error}}</text><button class="secondary retry-button" bindtap="retry">重新加载</button></view>
+  <block wx:else>
+    <view class="card week-calendar-card">
+      <view wx:for="{{days}}" wx:key="key" class="week-day-column">
+        <text class="week-weekday">{{item.weekday}}</text><text class="week-date">{{item.day}}</text>
+        <view class="week-day-items">
+          <view wx:for="{{item.previewItems}}" wx:for-item="garment" wx:key="previewId" class="week-garment" hover-class="week-garment-pressed" hover-stay-time="80" data-id="{{garment.id}}" data-active="{{garment.active}}" bindtap="openItem">
+            <image wx:if="{{garment.imageUrl && !imageFailures[garment.previewId]}}" class="week-garment-image" src="{{garment.imageUrl}}" mode="aspectFit" lazy-load="{{true}}" data-id="{{garment.previewId}}" binderror="onImageError" />
+            <view wx:else class="week-garment-placeholder">衣</view>
+          </view>
+        </view>
+        <text wx:if="{{item.count > 1}}" class="week-count">{{item.count}} 套</text>
+      </view>
+    </view>
+
+    <view class="card week-summary-card">
+      <view class="week-summary-copy"><text class="week-kicker">THIS WEEK</text><view><text class="week-number">{{totalCount}}</text><text class="week-unit"> 次穿着</text></view><text class="week-meta">{{distinctItemCount}} 件不同衣物</text></view>
+      <scroll-view wx:if="{{weeklyItems.length}}" class="week-item-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+        <view class="week-item-row">
+          <view wx:for="{{weeklyItems}}" wx:key="id" class="week-summary-item" hover-class="week-garment-pressed" hover-stay-time="80" data-id="{{item.id}}" data-active="{{item.active}}" bindtap="openItem">
+            <image wx:if="{{item.imageUrl && !imageFailures[item.previewId]}}" class="week-summary-image" src="{{item.imageUrl}}" mode="aspectFit" data-id="{{item.previewId}}" binderror="onImageError" />
+            <view wx:else class="week-summary-placeholder">衣</view>
+          </view>
+        </view>
+      </scroll-view>
+      <text wx:else class="week-empty">本周还没有穿着记录</text>
+    </view>
+
+    <view wx:if="{{weeklyFavorite}}" class="card week-favorite-card" hover-class="week-favorite-pressed" hover-stay-time="80" data-id="{{weeklyFavorite.id}}" data-active="{{weeklyFavorite.active}}" bindtap="openItem">
+      <view class="week-favorite-copy"><text class="week-kicker">WEEKLY FAVORITE</text><text class="week-favorite-name">{{weeklyFavorite.name}}</text><text class="week-meta">本周穿了 {{weeklyFavorite.wearCount}} 次</text></view>
+      <image wx:if="{{weeklyFavorite.imageUrl && !imageFailures[weeklyFavorite.previewId]}}" class="week-favorite-image" src="{{weeklyFavorite.imageUrl}}" mode="aspectFit" data-id="{{weeklyFavorite.previewId}}" binderror="onImageError" />
+      <view wx:else class="week-favorite-placeholder">衣</view>
+    </view>
+    <view wx:else class="card week-favorite-card week-favorite-empty"><view class="week-favorite-copy"><text class="week-kicker">WEEKLY FAVORITE</text><text class="week-favorite-name">等待本周第一套穿搭</text><text class="week-meta">记录穿着后，这里会出现最常穿的衣物</text></view></view>
+  </block>
+</view>

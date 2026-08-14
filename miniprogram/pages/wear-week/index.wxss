@@ -1,0 +1,41 @@
+.week-page { min-height: 100vh; padding-bottom: 70rpx; background: #f8f3e8; color: #554b47; }
+.week-hero { display: flex; padding: 22rpx 0 30rpx; align-items: center; flex-direction: column; }
+.week-title { color: #443a38; font-size: 46rpx; font-weight: 700; letter-spacing: 2rpx; }
+.week-year { margin-top: 8rpx; color: #877d79; font-size: 23rpx; letter-spacing: 4rpx; }
+.state-card { text-align: center; }
+.error-text { display: block; color: #a05f67; font-size: 25rpx; }
+.retry-button { margin-top: 20rpx; font-size: 25rpx; }
+.week-calendar-card { display: grid; grid-template-columns: repeat(7, 1fr); min-height: 420rpx; padding: 27rpx 13rpx 25rpx; align-items: start; gap: 2rpx; }
+.week-day-column { display: flex; min-width: 0; align-items: center; flex-direction: column; }
+.week-weekday { color: #8d7e7a; font-size: 19rpx; }
+.week-date { margin-top: 10rpx; color: #5d5050; font-size: 21rpx; }
+.week-day-items { display: flex; width: 100%; min-height: 250rpx; margin-top: 23rpx; align-items: center; flex-direction: column; gap: 8rpx; }
+.week-garment { width: 78rpx; height: 78rpx; transition: transform .16s ease, opacity .16s ease; animation: week-item-arrive .32s ease-out both; }
+.week-garment-pressed { opacity: .82; transform: scale(.92); }
+.week-garment-image,
+.week-garment-placeholder { width: 100%; height: 100%; }
+.week-garment-placeholder { display: flex; align-items: center; justify-content: center; border-radius: 19rpx; background: #f3e2e4; color: #8c6270; font-size: 20rpx; }
+.week-count { margin-top: 8rpx; color: #a56f7b; font-size: 16rpx; }
+.week-summary-card { display: flex; min-height: 184rpx; margin-top: 24rpx; padding: 25rpx 22rpx; align-items: center; gap: 18rpx; box-sizing: border-box; }
+.week-summary-copy { display: flex; width: 198rpx; flex: 0 0 198rpx; flex-direction: column; }
+.week-kicker { color: #ad7782; font-size: 18rpx; font-weight: 600; letter-spacing: 2rpx; }
+.week-number { color: #8d5662; font-size: 44rpx; font-weight: 700; }
+.week-unit,
+.week-meta { color: #857a80; font-size: 20rpx; }
+.week-meta { display: block; margin-top: 5rpx; }
+.week-item-scroll { min-width: 0; flex: 1; white-space: nowrap; }
+.week-item-row { display: inline-flex; align-items: flex-end; gap: 5rpx; padding-right: 8rpx; }
+.week-summary-item { width: 91rpx; height: 116rpx; flex: 0 0 91rpx; transition: transform .16s ease, opacity .16s ease; }
+.week-summary-image,
+.week-summary-placeholder { width: 100%; height: 100%; }
+.week-summary-placeholder { display: flex; align-items: center; justify-content: center; color: #9b6b78; font-size: 25rpx; }
+.week-empty { min-width: 0; flex: 1; color: #998d88; font-size: 22rpx; text-align: center; }
+.week-favorite-card { display: flex; min-height: 190rpx; margin-top: 22rpx; padding: 26rpx 29rpx; align-items: center; justify-content: space-between; transition: transform .18s ease, opacity .18s ease; box-sizing: border-box; }
+.week-favorite-pressed { opacity: .88; transform: scale(.98); }
+.week-favorite-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.week-favorite-name { display: block; max-width: 410rpx; margin-top: 12rpx; overflow: hidden; color: #51413f; font-size: 34rpx; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.week-favorite-image,
+.week-favorite-placeholder { width: 170rpx; height: 142rpx; flex: 0 0 170rpx; }
+.week-favorite-placeholder { display: flex; align-items: center; justify-content: center; color: #9b6b78; font-size: 34rpx; }
+.week-favorite-empty { min-height: 156rpx; }
+@keyframes week-item-arrive { from { opacity: 0; transform: translateY(7rpx) scale(.92); } to { opacity: 1; transform: translateY(0) scale(1); } }

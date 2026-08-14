@@ -1,52 +1,57 @@
 <view class="page calendar-page">
-  <view class="calendar-hero">
-    <text class="eyebrow">WEAR HISTORY</text>
-    <text class="page-title">穿着日历</text>
-    <text class="muted">只展示你真实保存的穿着记录。</text>
-    <view class="hero-thread"></view>
-  </view>
-
-  <view class="month-switcher card">
-    <button class="month-button" bindtap="previousMonth">‹</button>
-    <view class="month-copy"><text class="month-caption">THIS MONTH</text><text class="month-title">{{monthText}}</text></view>
-    <button class="month-button" bindtap="nextMonth">›</button>
+  <view class="date-hero">
+    <view class="month-button" hover-class="month-button-pressed" hover-stay-time="80" role="button" aria-label="上个月" bindtap="previousMonth">‹</view>
+    <view class="date-copy"><text class="date-kicker">{{monthText}}</text><text class="date-title">{{selectedTitle}}</text><text class="date-subtitle">{{selectedSubtitle}}</text></view>
+    <view class="month-button" hover-class="month-button-pressed" hover-stay-time="80" role="button" aria-label="下个月" bindtap="nextMonth">›</view>
   </view>
 
   <view wx:if="{{loading}}" class="card state-card"><text class="muted">正在加载本月记录…</text></view>
   <view wx:elif="{{error}}" class="card state-card"><text class="error-text">{{error}}</text><button class="secondary retry-button" bindtap="retry">重新加载</button></view>
   <block wx:else>
-    <view class="summary-grid">
-      <view class="summary-card summary-primary"><text class="summary-number">{{totalCount}}</text><text class="summary-label">本月穿着次数</text></view>
-      <view class="summary-card summary-secondary"><text class="summary-number">{{distinctItemCount}}</text><text class="summary-label">不同衣物</text></view>
-    </view>
-
-    <view class="calendar-shortcuts">
-      <view class="calendar-shortcut report-shortcut" bindtap="openReport">
-        <image class="paper-shape" src="/assets/home-paper-wardrobe.png" mode="scaleToFill" />
-        <view class="shortcut-copy"><text class="shortcut-kicker">REPORT</text><text class="report-entry-title">本月衣橱报表</text><text class="report-entry-copy">看看衣物与品类使用分布</text></view>
-      </view>
-      <view class="calendar-shortcut reward-shortcut" bindtap="openRewards">
-        <image class="paper-shape" src="/assets/home-paper-record.png" mode="scaleToFill" />
-        <view class="shortcut-copy"><text class="shortcut-kicker">GROWTH</text><text class="report-entry-title">星星与成长</text><text class="report-entry-copy">回看打卡和连续天数</text></view>
-      </view>
-    </view>
-
     <view class="card calendar-card">
       <view class="calendar-tape"></view>
       <view class="weekday-row"><text wx:for="{{weekdays}}" wx:key="*this" class="weekday">{{item}}</text></view>
       <view class="days-grid">
-        <view wx:for="{{days}}" wx:key="key" class="{{item.empty ? 'calendar-day empty-day' : item.className}}" data-key="{{item.empty ? '' : item.key}}" bindtap="selectDay">
-          <text wx:if="{{!item.empty}}" class="day-number">{{item.day}}</text>
-          <text wx:if="{{item.count}}" class="record-dot">{{item.count}}</text>
+        <view wx:for="{{days}}" wx:key="key" class="{{item.className}}" hover-class="day-pressed" hover-stay-time="80" data-key="{{item.empty ? '' : item.key}}" bindtap="selectDay">
+          <text wx:if="{{!item.empty && !item.hasOutfit}}" class="day-number">{{item.day}}</text>
+          <view wx:if="{{item.previewItems.length}}" class="day-preview {{item.previewClass}}">
+            <view wx:for="{{item.previewItems}}" wx:for-item="garment" wx:for-index="garmentIndex" wx:key="previewId" class="day-garment-wrap day-garment-{{garmentIndex}}">
+              <image wx:if="{{garment.imageUrl && !imageFailures[garment.previewId]}}" class="day-garment" src="{{garment.imageUrl}}" mode="aspectFit" lazy-load="{{true}}" data-id="{{garment.previewId}}" binderror="onImageError" />
+              <view wx:else class="day-garment-placeholder">衣</view>
+            </view>
+          </view>
+          <text wx:if="{{item.count > 1}}" class="record-dot">{{item.count}}</text>
         </view>
       </view>
+    </view>
+
+    <view class="card history-summary-card">
+      <view class="history-summary-copy"><text class="history-kicker">THIS MONTH</text><view><text class="history-number">{{totalCount}}</text><text class="history-unit"> 次穿着</text></view><text class="history-meta">{{distinctItemCount}} 件不同衣物</text></view>
+      <scroll-view wx:if="{{monthlyItems.length}}" class="history-item-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+        <view class="history-item-row">
+          <view wx:for="{{monthlyItems}}" wx:key="id" class="history-item" hover-class="history-item-pressed" hover-stay-time="80" data-id="{{item.id}}" data-active="{{item.active}}" bindtap="openItem">
+            <image wx:if="{{item.imageUrl && !imageFailures[item.previewId]}}" class="history-item-image" src="{{item.imageUrl}}" mode="aspectFit" lazy-load="{{true}}" data-id="{{item.previewId}}" binderror="onImageError" />
+            <view wx:else class="history-item-placeholder">衣</view>
+          </view>
+        </view>
+      </scroll-view>
+      <text wx:else class="history-empty">本月还没有穿着记录</text>
+    </view>
+
+    <view wx:if="{{monthlyFavorite}}" class="card favorite-card" hover-class="favorite-card-pressed" hover-stay-time="80" data-id="{{monthlyFavorite.id}}" data-active="{{monthlyFavorite.active}}" bindtap="openItem">
+      <view class="favorite-copy"><text class="history-kicker">MONTHLY FAVORITE</text><text class="favorite-name">{{monthlyFavorite.name}}</text><text class="history-meta">本月穿了 {{monthlyFavorite.wearCount}} 次</text></view>
+      <image wx:if="{{monthlyFavorite.imageUrl && !imageFailures[monthlyFavorite.previewId]}}" class="favorite-image" src="{{monthlyFavorite.imageUrl}}" mode="aspectFit" data-id="{{monthlyFavorite.previewId}}" binderror="onImageError" />
+      <view wx:else class="favorite-placeholder">衣</view>
+    </view>
+    <view wx:else class="card favorite-card favorite-empty">
+      <view class="favorite-copy"><text class="history-kicker">MONTHLY FAVORITE</text><text class="favorite-name">等待本月第一套穿搭</text><text class="history-meta">记录穿着后，这里会出现最常穿的衣物</text></view>
     </view>
 
     <view class="day-section">
       <text class="section-kicker">DAILY OUTFITS</text>
       <text class="section-title">{{selectedKey || '本月'}}穿着</text>
       <view wx:if="{{selectedGroups.length === 0}}" class="card empty-day-copy"><text class="muted">这一天还没有穿着记录。</text></view>
-      <view wx:for="{{selectedGroups}}" wx:key="id" class="card outfit-card {{item.outfitRecordId ? 'outfit-card-openable' : ''}}" data-record-id="{{item.outfitRecordId}}" bindtap="openOutfit">
+      <view wx:for="{{selectedGroups}}" wx:key="id" class="card outfit-card {{item.outfitRecordId ? 'outfit-card-openable' : ''}}" hover-class="{{item.outfitRecordId ? 'outfit-card-pressed' : 'none'}}" hover-stay-time="80" data-record-id="{{item.outfitRecordId}}" bindtap="openOutfit">
         <view class="outfit-head"><view class="outfit-heading"><text class="outfit-title">{{item.title}}</text><text class="item-meta">{{item.timeText}}{{item.scene ? ' · ' + item.scene : ''}}</text></view><view class="outfit-status"><text class="outfit-count">{{item.items.length}} 件</text><text wx:if="{{item.outfitRecordId}}" class="outfit-open-note">查看整套</text></view></view>
         <text wx:if="{{item.note}}" class="outfit-note">{{item.note}}</text>
         <view class="outfit-items">
@@ -57,6 +62,17 @@
             <text wx:if="{{!garment.active}}" class="inactive-label">已移出衣橱</text>
           </view>
         </view>
+      </view>
+    </view>
+
+    <view class="calendar-shortcuts">
+      <view class="calendar-shortcut report-shortcut" hover-class="shortcut-pressed" hover-stay-time="80" bindtap="openReport">
+        <image class="paper-shape" src="/assets/home-paper-wardrobe.png" mode="scaleToFill" />
+        <view class="shortcut-copy"><text class="shortcut-kicker">REPORT</text><text class="report-entry-title">本月衣橱报表</text><text class="report-entry-copy">看看衣物与品类使用分布</text></view>
+      </view>
+      <view class="calendar-shortcut reward-shortcut" hover-class="shortcut-pressed" hover-stay-time="80" bindtap="openRewards">
+        <image class="paper-shape" src="/assets/home-paper-record.png" mode="scaleToFill" />
+        <view class="shortcut-copy"><text class="shortcut-kicker">GROWTH</text><text class="report-entry-title">星星与成长</text><text class="report-entry-copy">回看打卡和连续天数</text></view>
       </view>
     </view>
   </block>

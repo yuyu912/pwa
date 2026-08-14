@@ -19,6 +19,7 @@
     "pages/listing-assistant/index",
     "pages/item-detail/index",
     "pages/wear-calendar/index",
+    "pages/wear-week/index",
     "pages/rewards/index",
     "pages/wardrobe-report/index",
     "pages/plans/index",
