@@ -20,6 +20,7 @@
     "thickness": { "bsonType": "string" },
     "pattern": { "bsonType": "string" },
     "material": { "bsonType": "string" },
+    "design_details": { "bsonType": "array", "arrayType": "string", "description": "用户确认的标志性设计细节" },
     "styles": { "bsonType": "array", "arrayType": "string" },
     "scenes": { "bsonType": "array", "arrayType": "string" },
     "price": { "description": "可选价格" },

@@ -1,4 +1,4 @@
-.calendar-page { padding-bottom: 76rpx; }
+.calendar-page { padding-bottom: calc(150rpx + env(safe-area-inset-bottom)); }
 .calendar-hero { padding: 10rpx 10rpx 28rpx; }
 .page-title { display: block; margin: 10rpx 0 8rpx; color: #504744; font-size: 49rpx; font-weight: 700; }
 .hero-thread { width: 126rpx; height: 9rpx; margin-top: 16rpx; border-top: 3rpx solid rgba(155, 135, 193, .44); border-radius: 50%; transform: rotate(-2deg); }
@@ -64,3 +64,28 @@
 .item-name { color: #51484b; font-size: 21rpx; font-weight: 700; }
 .item-meta { color: #8b8186; font-size: 19rpx; }
 .inactive-label { color: #a36b73; font-size: 19rpx; }
+
+/* 首页莓果粉主题：保留日历结构，只替换旧紫色。 */
+.calendar-page { background: #f8f3e8; color: #554b47; }
+.hero-thread { border-color: rgba(193, 126, 140, .45); }
+.month-button { border-color: rgba(193, 126, 140, .2); background: #f4e4e4; color: #8b5f69; }
+.month-caption,
+.shortcut-kicker,
+.section-kicker { color: #ad7782; }
+.summary-card,
+.calendar-page .card { border-color: rgba(193, 126, 140, .18); background: #fffaf2; }
+.summary-secondary { background: #f5e5e5; }
+.summary-number { color: #a96875; }
+.calendar-tape { background: rgba(228, 184, 190, .58); }
+.weekday { color: #947f82; }
+.calendar-day { color: #5d5050; }
+.calendar-page .calendar-day.selected { background: #bd7381; color: #fff; }
+.record-dot { background: #f3dfe2; color: #8b5d68; }
+.selected .record-dot { background: #fffaf2; }
+.outfit-card-openable { border-color: rgba(193, 126, 140, .3); }
+.outfit-count,
+.item-placeholder { background: #f3e2e4; color: #8c6270; }
+.outfit-open-note { color: #9b6b78; }
+.outfit-items { border-color: rgba(193, 126, 140, .2); }
+.item-image,
+.item-placeholder { border-color: rgba(193, 126, 140, .15); }

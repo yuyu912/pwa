@@ -1,9 +1,13 @@
 const api = require("../../services/api");
 const session = require("../../services/session");
 const pendingShareToken = () => getApp().globalData.pendingOutfitToken || wx.getStorageSync("pending_outfit_token") || "";
+const navigateAfterAuth = (sharedToken) => {
+  if (sharedToken) return wx.redirectTo({ url: `/pages/friends/index?token=${encodeURIComponent(sharedToken)}` });
+  return wx.switchTab({ url: "/pages/home/index" });
+};
 
 Page({
-  data: { username: "", password: "", inviteCode: "", sharedToken: "", mode: "login", loading: false, error: "" },
+  data: { username: "", password: "", sharedToken: "", mode: "login", loading: false, error: "" },
   onLoad(options) {
     const sharedToken = options.token || pendingShareToken();
     if (sharedToken) getApp().globalData.pendingOutfitToken = sharedToken;
@@ -11,22 +15,20 @@ Page({
   },
   onShow() {
     const { user, token } = session.restore();
-    if (user && token) wx.redirectTo({ url: this.data.sharedToken ? `/pages/friends/index?token=${encodeURIComponent(this.data.sharedToken)}` : "/pages/home/index" });
+    if (user && token) navigateAfterAuth(this.data.sharedToken);
   },
   onUsername(event) { this.setData({ username: event.detail.value }); },
   onPassword(event) { this.setData({ password: event.detail.value }); },
-  onInviteCode(event) { this.setData({ inviteCode: event.detail.value }); },
   toggleMode() {
     const registering = this.data.mode === "register";
     this.setData({ mode: registering ? "login" : "register", error: "" });
   },
   async submit() {
     const registering = this.data.mode === "register";
-    const { username, password, inviteCode } = this.data;
-    const outfitCodeMatch = String(inviteCode || "").trim().match(/^(?:搭配|OUTFIT)[:：](.+)$/i);
-    const outfitToken = outfitCodeMatch ? outfitCodeMatch[1].trim() : this.data.sharedToken;
-    if (!username || !password || (registering && !inviteCode && !this.data.sharedToken)) {
-      this.setData({ error: registering ? "请填写邀请码、用户名和密码。" : "请填写用户名和密码。" });
+    const { username, password } = this.data;
+    const outfitToken = this.data.sharedToken;
+    if (!username || !password) {
+      this.setData({ error: "请填写用户名和密码。" });
       return;
     }
     if (registering && password.length < 8) {
@@ -38,7 +40,7 @@ Page({
       const result = registering
         ? outfitToken
           ? await api.registerOutfitGuest({ token: outfitToken, username, password })
-          : await api.register({ inviteCode, username, password })
+          : await api.register({ username, password })
         : await api.login({ username, password });
       if (registering) {
         // 恢复码只在注册响应中返回一次；先让用户保存，再进入衣橱，避免账号无法找回。
@@ -47,10 +49,10 @@ Page({
           content: `恢复码：${result.recoveryCode || "未返回"}\n请截图或记录。它用于日后找回账号。`,
           confirmText: "我已保存",
           showCancel: false,
-          success: () => wx.redirectTo({ url: outfitToken ? `/pages/friends/index?token=${encodeURIComponent(outfitToken)}` : "/pages/home/index" })
+          success: () => navigateAfterAuth(outfitToken)
         });
       } else {
-        wx.redirectTo({ url: this.data.sharedToken ? `/pages/friends/index?token=${encodeURIComponent(this.data.sharedToken)}` : "/pages/home/index" });
+        navigateAfterAuth(this.data.sharedToken);
       }
     } catch (error) {
       this.setData({ error: error.message || "登录失败，请重试。" });

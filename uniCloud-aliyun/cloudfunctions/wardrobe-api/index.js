@@ -12,7 +12,7 @@ const { buildCityTrend, buildOutfitCandidates, buildStyleProfile } = require("./
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-11-wear-record-detail-v41";
+const BUILD_ID = "2026-08-14-design-details-v56";
 const OUTFIT_VISION_MODEL = process.env.QWEN_VL_MODEL || "qwen3-vl-flash-2026-01-22";
 const OUTFIT_IMAGE_EDIT_MODEL = "qwen-image-2.0-pro-2026-06-22";
 const GARMENT_SEGMENTATION_MODEL = "SegmentCloth";
@@ -28,11 +28,12 @@ const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const QUOTA_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TRIAL_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "trial" });
 const FREE_QUOTA = Object.freeze({ recognitionLimit: 3, hangerRemovalLimit: 1, windowType: "rolling_30_days" });
-const PAID_QUOTA = Object.freeze({ recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "rolling_30_days" });
+const PAID_QUOTA = Object.freeze({ recognitionLimit: 40, hangerRemovalLimit: 10, windowType: "rolling_30_days" });
+const WEEKLY_QUOTA = Object.freeze({ recognitionLimit: 6, hangerRemovalLimit: 1, windowType: "fixed_7_days" });
 const PLAN_CATALOG = Object.freeze([
-  { id: "weekly", name: "周付体验", durationDays: 7, featured: true, price: 8.9, quota: PAID_QUOTA, purchaseEnabled: false },
-  { id: "monthly", name: "月付会员", durationDays: 30, featured: false, price: 48.9, quota: PAID_QUOTA, purchaseEnabled: false },
-  { id: "yearly", name: "年付会员", durationDays: 365, featured: false, price: 448.9, quota: PAID_QUOTA, purchaseEnabled: false }
+  { id: "weekly", name: "周卡", durationDays: 7, featured: false, price: 6.9, renewalDiscount: 0.9, renewalPrice: 6.21, renewalLabel: "连续包周九折", quota: WEEKLY_QUOTA, purchaseEnabled: false, renewalEnabled: false },
+  { id: "monthly", name: "月卡", durationDays: 30, featured: true, price: 34.9, renewalDiscount: 0.8, renewalPrice: 27.92, renewalLabel: "连续包月八折", quota: PAID_QUOTA, purchaseEnabled: false, renewalEnabled: false },
+  { id: "yearly", name: "年卡", durationDays: 365, featured: false, price: 298, renewalDiscount: 0.7, renewalPrice: 208.6, renewalLabel: "连续包年七折", quota: PAID_QUOTA, purchaseEnabled: false, renewalEnabled: false }
 ]);
 const cleanText = (value, max = 80) => String(value || "").trim().slice(0, max);
 const newId = () => crypto.randomUUID();
@@ -47,7 +48,7 @@ const sanitizeTags = (value, allowed = null, max = 4) => parseArray(value)
   .filter((item) => item && (!allowed || allowed.includes(item)))
   .slice(0, max);
 const allowedCategories = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"];
-const allowedItemSources = ["single_item_upload", "outfit_supplement"];
+const allowedItemSources = ["single_item_upload", "multi_item_upload", "outfit_supplement"];
 const allowedScenes = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
 const allowedSeasons = ["春夏", "春秋", "秋冬", "多季"];
 const allowedThicknesses = ["薄", "适中", "厚"];
@@ -265,7 +266,9 @@ const quotaSummary = (user, tasks, currentTime = Date.now()) => {
     const createdAt = Date.parse(task.created_at || "");
     return Number.isFinite(createdAt) && createdAt >= window.startsAt && createdAt <= window.endsAt;
   });
-  const recognitionUsed = inWindow.filter((task) => task.mode !== "inspiration" && task.status === "completed"
+  const recognitionUsed = inWindow.filter((task) => !["inspiration", "multi_detection"].includes(task.mode)
+    && task.status === "completed"
+    && (task.mode !== "multi_item" || task.stage === "saved")
     && aiBudget.integer(task.prompt_tokens) + aiBudget.integer(task.completion_tokens) > 0).length;
   const hangerRemovalUsed = inWindow.filter((task) => Boolean(task.hanger_edit_key)).length;
   return {
@@ -348,6 +351,7 @@ const requireAdmin = (event) => {
 const mapItem = (item) => ({
   ...item,
   id: String(item.id),
+  designDetails: inspiration.normalizeDesignDetails(item.design_details ?? item.designDetails),
   styles: sanitizeTags(item.styles),
   scenes: sanitizeTags(item.scenes, allowedScenes),
   imageUrl: cloud.signedUrl(item.image_key, "GET", 3600)
@@ -496,6 +500,7 @@ const inspirationView = async (record, includeMatches = false) => {
     candidates: group.candidates.map((candidate) => ({
       score: candidate.score,
       reasons: candidate.reasons,
+      suggestion: candidate.suggestion,
       item: mapItem(candidate.item)
     }))
   }));
@@ -574,6 +579,7 @@ const acquireImageEditSlot = async (currentTime = Date.now()) => {
 const mapCandidate = (candidate) => ({
   ...candidate,
   id: String(candidate.id),
+  designDetails: inspiration.normalizeDesignDetails(candidate.design_details ?? candidate.designDetails),
   styles: sanitizeTags(candidate.styles),
   scenes: sanitizeTags(candidate.scenes, allowedScenes),
   imageUrl: cloud.signedUrl(candidate.image_key, "GET", 3600)
@@ -756,14 +762,11 @@ const settleTaskBudget = async (taskId, userId, options) => {
 };
 
 const handleRegister = async (body) => {
-  const inviteCode = cleanText(body.inviteCode, 40);
   const username = cleanText(body.username, 30);
   const password = String(body.password || "");
-  if (!inviteCode || !/^[\w\u4e00-\u9fa5-]{2,30}$/.test(username) || password.length < 8) {
-    throw Object.assign(new Error("邀请码、用户名或密码格式不符合要求。"), { status: 400 });
+  if (!/^[\w\u4e00-\u9fa5-]{2,30}$/.test(username) || password.length < 8) {
+    throw Object.assign(new Error("用户名或密码格式不符合要求。"), { status: 400 });
   }
-  const invite = await repository.findOne("invites", { code: inviteCode });
-  if (!invite || invite.used_by) throw Object.assign(new Error("邀请码无效或已被使用。"), { status: 400 });
   if (await repository.findOne("users", { username })) throw Object.assign(new Error("该用户名已被使用。"), { status: 409 });
 
   const recoveryCode = crypto.randomBytes(6).toString("hex").toUpperCase();
@@ -776,8 +779,6 @@ const handleRegister = async (body) => {
     ...newTrialFields()
   };
   await repository.withTransaction(async (tx) => {
-    const lockedInvite = await tx.getById("invites", invite.id);
-    if (!lockedInvite || lockedInvite.used_by) throw Object.assign(new Error("邀请码无效或已被使用。"), { status: 400 });
     await tx.add("users", {
       username: user.username,
       password_hash: user.password_hash,
@@ -787,7 +788,6 @@ const handleRegister = async (body) => {
       trial_started_at: user.trial_started_at,
       trial_ends_at: user.trial_ends_at
     }, user.id);
-    await tx.update("invites", lockedInvite.id, { used_by: user.id, used_at: now() });
   });
   return { user: publicUser(user), recoveryCode, token: tokenFor(user) };
 };
@@ -890,6 +890,7 @@ const handleMigration = async (payload) => {
       thickness: row.thickness || "",
       pattern: row.pattern || "",
       material: row.material || "",
+      design_details: inspiration.normalizeDesignDetails(row.design_details ?? row.designDetails),
       styles: sanitizeTags(row.styles),
       scenes: sanitizeTags(row.scenes, allowedScenes),
       price: row.price == null ? null : Number(row.price),
@@ -975,11 +976,13 @@ const processMattingTask = async (taskId, userId) => {
       ...taskProgress(task, {
         status: task.status === "completed" ? "completed" : "matting_completed",
         stage: task.mode === "manual" ? "awaiting_manual_fields" : task.status === "completed" ? "awaiting_confirmation" : "awaiting_recognition",
-        providerName: "腾讯数据万象",
-        modelName: "商品抠图",
+        providerName: task.result?.mattingModelName?.startsWith("百度") ? "百度智能云" : "腾讯数据万象",
+        modelName: task.result?.mattingModelName || "商品抠图",
         actionText: "已完成衣物背景去除"
       }),
       cutoutUrl: cloud.signedUrl(task.selected_image_key || task.cutout_key, "GET", 3600),
+      qualityWarning: task.result?.mattingQualityWarning || "",
+      fallbackReasonCode: task.result?.mattingFallbackReasonCode || "",
       ...taskImageState(task)
     };
   }
@@ -991,7 +994,9 @@ const processMattingTask = async (taskId, userId) => {
   let mattingModelName = "商品抠图";
   let settled = false;
   try {
-    if (!task.source_key?.startsWith(`uploads/${userId}/`)) {
+    const validSource = task.source_key?.startsWith(`uploads/${userId}/`)
+      || (task.mode === "multi_item" && task.source_key?.startsWith(`multi-garment-crops/${userId}/`));
+    if (!validSource) {
       throw Object.assign(new Error("上传凭据无效，请重新选择图片。"), { status: 400 });
     }
     const sourceHash = await cloud.sourceHash(task.source_key);
@@ -1019,6 +1024,11 @@ const processMattingTask = async (taskId, userId) => {
       chargeMicros: aiBudget.limitsFromEnv().mattingCostMicros * mattingProviderCalls,
       status: "matting_completed",
       stage: task.mode === "manual" ? "awaiting_manual_fields" : "awaiting_recognition",
+      result: {
+        mattingQualityWarning: extraction.qualityWarning || "",
+        mattingModelName,
+        mattingFallbackReasonCode: extraction.fallbackReasonCode || ""
+      },
       success: false
     });
     settled = true;
@@ -1026,11 +1036,13 @@ const processMattingTask = async (taskId, userId) => {
       ...taskProgress(task, {
         status: "matting_completed",
         stage: task.mode === "manual" ? "awaiting_manual_fields" : "awaiting_recognition",
-        providerName: "腾讯数据万象",
+        providerName: mattingModelName.startsWith("百度") ? "百度智能云" : "腾讯数据万象",
         modelName: mattingModelName,
         actionText: "已完成衣物背景去除"
       }),
       cutoutUrl: cloud.signedUrl(cutoutKey, "GET", 3600),
+      qualityWarning: extraction.qualityWarning || "",
+      fallbackReasonCode: extraction.fallbackReasonCode || "",
       ...taskImageState({ ...task, cutout_key: cutoutKey })
     };
   } catch (error) {
@@ -1057,6 +1069,116 @@ const processMattingTask = async (taskId, userId) => {
     // 只有已经得到透明图时才删除原图；读取或抠图失败时保留原图供同一 taskId 重试。
     if (cutoutKey && task.source_key) await cloud.deleteObject(task.source_key).catch(() => {});
   }
+};
+
+const processMultiGarmentDetection = async (taskId, userId) => {
+  let task = await ownedAiTask(taskId, userId, { allowManual: true });
+  if (task.mode !== "multi_detection") throw Object.assign(new Error("这不是多件衣物识别任务。"), { status: 409 });
+  if (task.status === "completed" && Array.isArray(task.result?.detections)) {
+    return { taskId: task.id, detections: task.result.detections, model: task.model || "qwen3-vl-plus", budget: await budgetSummary() };
+  }
+  const reservation = await reserveTaskBudget(taskId, userId);
+  if (reservation.completed) return reservation.task.result;
+  task = await ownedAiTask(taskId, userId, { allowManual: true });
+  let settled = false;
+  try {
+    if (!task.source_key?.startsWith(`uploads/${userId}/`)) throw Object.assign(new Error("上传凭据无效，请重新选择图片。"), { status: 400 });
+    const detection = await cloud.detectFlatLayGarments(task.source_key);
+    const result = { taskId: task.id, detections: detection.detections, model: detection.model };
+    const budget = await settleTaskBudget(task.id, userId, {
+      chargeMicros: aiBudget.estimateQwenCostMicros(detection.usage),
+      status: "completed",
+      stage: "multi_review",
+      usage: detection.usage,
+      result,
+      success: true
+    });
+    settled = true;
+    return { ...result, budget };
+  } catch (error) {
+    if (!settled) {
+      const usage = error?.providerUsage || {};
+      await settleTaskBudget(task.id, userId, {
+        chargeMicros: aiBudget.estimateQwenCostMicros(usage),
+        status: "failed_retryable",
+        stage: "multi_detection_failed",
+        errorCode: error.code || "MULTI_GARMENT_DETECTION_FAILED",
+        errorMessage: error.message,
+        usage,
+        success: false
+      });
+    }
+    error.aiTaskStage = "multi_garment_detection";
+    throw error;
+  }
+};
+
+const splitMultiGarmentTask = async (taskId, userId, detectionIds) => {
+  const task = await ownedAiTask(taskId, userId, { allowManual: true });
+  if (task.mode !== "multi_detection" || task.status !== "completed" || !Array.isArray(task.result?.detections)) {
+    throw Object.assign(new Error("请先完成多件衣物定位。"), { status: 409 });
+  }
+  const selectedIds = [...new Set((Array.isArray(detectionIds) ? detectionIds : []).map((value) => cleanText(value, 40)))].slice(0, 3);
+  const selected = task.result.detections.filter((item) => selectedIds.includes(item.detectionId));
+  if (!selected.length) throw Object.assign(new Error("请至少选择一件要录入的衣物。"), { status: 400 });
+  const rows = [];
+  const missing = [];
+  for (const detection of selected) {
+    const idempotencyKey = `multi:${task.id}:${detection.detectionId}`;
+    const existing = await repository.findOne("aiUsage", { user_id: userId, idempotency_key: idempotencyKey });
+    if (existing) rows.push({ detection, task: existing });
+    else missing.push(detection);
+  }
+  const crops = missing.length ? await cloud.createFlatLayGarmentCrops(task.source_key, userId, task.id, missing) : [];
+  for (const crop of crops) {
+    const childId = newId();
+    const idempotencyKey = `multi:${task.id}:${crop.detectionId}`;
+    const document = {
+      user_id: userId,
+      idempotency_key: idempotencyKey,
+      source_key: crop.cropKey,
+      cutout_key: null,
+      selected_image_key: null,
+      hanger_edit_key: null,
+      hanger_edit_status: "not_requested",
+      hanger_edit_calls: 0,
+      hanger_edit_model: "",
+      source_hash: null,
+      mode: "multi_item",
+      provider: "dashscope",
+      model: process.env.QWEN_VL_MODEL || "qwen3-vl-plus",
+      status: "upload_ready",
+      stage: "crop_ready",
+      reserved_micros: 0,
+      cost_micros: 0,
+      matting_calls: 0,
+      recognition_attempts: 0,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      result: null,
+      error_code: "",
+      error_message: "",
+      created_at: now(),
+      updated_at: now()
+    };
+    try {
+      await repository.add("aiUsage", document, childId);
+      rows.push({ detection: crop, task: { ...document, id: childId } });
+    } catch (error) {
+      if (!String(error?.code || "").toLowerCase().includes("duplicate")) throw error;
+      rows.push({ detection: crop, task: await repository.findOne("aiUsage", { user_id: userId, idempotency_key: idempotencyKey }) });
+    }
+  }
+  return {
+    parentTaskId: task.id,
+    items: rows.map(({ detection, task: child }) => ({
+      detectionId: detection.detectionId,
+      category: detection.category,
+      color: detection.color || "",
+      taskId: child.id,
+      cropUrl: cloud.signedUrl(child.source_key, "GET", 3600)
+    }))
+  };
 };
 
 const processHangerEdit = async (taskId, userId) => {
@@ -1487,7 +1609,8 @@ const route = async (event) => {
         outfitVision: OUTFIT_VISION_MODEL,
         outfitImageEdit: OUTFIT_IMAGE_EDIT_MODEL,
         garmentSegmentation: parsingEnabled ? "aitryon-parsing-v1" : GARMENT_SEGMENTATION_MODEL,
-        productSegmentation: PRODUCT_SEGMENTATION_MODEL
+        productSegmentation: "BaiduControlMatting",
+        productSegmentationFallback: PRODUCT_SEGMENTATION_MODEL
       },
       garmentSegmentation: {
         provider: parsingEnabled ? "aliyun-bailian" : "aliyun-viapi",
@@ -1496,6 +1619,7 @@ const route = async (event) => {
       outfitParsing: { enabled: parsingEnabled, region: "cn-beijing" },
       inspiration: { enabled: true, platform: "xiaohongshu", mode: "private_observe_only" },
       outfitPlans: { enabled: true, mode: "private" },
+      multiGarment: { enabled: true, maxItems: 3, personPhotos: false },
       garmentSegmentationDiagnostic: {
         enabled: true,
         transport: "native_rpc_v2",
@@ -2501,7 +2625,7 @@ const route = async (event) => {
     if (!["image/jpeg", "image/png"].includes(mimeType) || size < 1 || size > 2 * 1024 * 1024) {
       throw Object.assign(new Error("请上传压缩后不超过 2MB 的 JPG 或 PNG 衣物图片。"), { status: 400 });
     }
-    const mode = body.mode === "manual" ? "manual" : body.mode === "candidate" ? "candidate" : "closet";
+    const mode = body.mode === "manual" ? "manual" : body.mode === "candidate" ? "candidate" : body.mode === "multi_detection" ? "multi_detection" : "closet";
     const idempotencyKey = cleanText(body.idempotencyKey, 80);
     if (!idempotencyKey) throw Object.assign(new Error("缺少上传幂等标识，请重新选择图片。"), { status: 400 });
     const existing = await repository.findOne("aiUsage", { user_id: userId, idempotency_key: idempotencyKey });
@@ -2554,6 +2678,16 @@ const route = async (event) => {
   const mattingMatch = path.match(/^\/api\/tasks\/([^/]+)\/matting$/);
   if (method === "POST" && mattingMatch) {
     return response(event, 200, await processMattingTask(decodeURIComponent(mattingMatch[1]), userId));
+  }
+
+  const multiDetectionMatch = path.match(/^\/api\/tasks\/([^/]+)\/multi-garments$/);
+  if (method === "POST" && multiDetectionMatch) {
+    return response(event, 200, await processMultiGarmentDetection(decodeURIComponent(multiDetectionMatch[1]), userId));
+  }
+
+  const multiSplitMatch = path.match(/^\/api\/tasks\/([^/]+)\/multi-garments\/selection$/);
+  if (method === "POST" && multiSplitMatch) {
+    return response(event, 200, await splitMultiGarmentTask(decodeURIComponent(multiSplitMatch[1]), userId, body.detectionIds));
   }
 
   const recognitionMatch = path.match(/^\/api\/tasks\/([^/]+)\/recognition$/);
@@ -2664,6 +2798,7 @@ const route = async (event) => {
         thickness: allowedThicknesses.includes(body.thickness) ? body.thickness : "",
         pattern: cleanText(body.pattern, 30),
         material: cleanText(body.material, 30),
+        design_details: inspiration.normalizeDesignDetails(body.designDetails ?? body.design_details),
         styles: sanitizeTags(body.styles),
         scenes: sanitizeTags(body.scenes, allowedScenes),
         price: body.price === "" || body.price == null ? null : Number(body.price),
@@ -2710,6 +2845,7 @@ const route = async (event) => {
       thickness: allowedThicknesses.includes(body.thickness) ? body.thickness : "",
       pattern: cleanText(body.pattern, 30),
       material: cleanText(body.material, 30),
+      design_details: inspiration.normalizeDesignDetails(body.designDetails ?? body.design_details),
       styles: sanitizeTags(body.styles),
       scenes: sanitizeTags(body.scenes, allowedScenes),
       price: body.price === "" || body.price == null ? null : Number(body.price),
@@ -2728,6 +2864,12 @@ const route = async (event) => {
       if (lockedDraft.item_id) return { itemId: lockedDraft.item_id, alreadySaved: true };
       await tx.add("clothing", itemData, itemId);
       await tx.update("drafts", lockedDraft.id, { item_id: itemId });
+      if (lockedDraft.ai_task_id) {
+        const aiTask = await tx.getById("aiUsage", lockedDraft.ai_task_id);
+        if (aiTask?.user_id === userId && aiTask.mode === "multi_item") {
+          await tx.update("aiUsage", aiTask.id, { stage: "saved", updated_at: now() });
+        }
+      }
       return { itemId, alreadySaved: false };
     });
     if (saved.alreadySaved) return response(event, 200, mapItem(await repository.getById("clothing", saved.itemId)));
@@ -2860,6 +3002,7 @@ const route = async (event) => {
       thickness: allowedThicknesses.includes(body.thickness) ? body.thickness : "",
       pattern: cleanText(body.pattern, 30),
       material: cleanText(body.material, 30),
+      design_details: inspiration.normalizeDesignDetails(body.designDetails ?? body.design_details),
       styles: sanitizeTags(body.styles),
       scenes: sanitizeTags(body.scenes, allowedScenes),
       price
@@ -2935,6 +3078,7 @@ const route = async (event) => {
         thickness: allowedThicknesses.includes(body.thickness) ? body.thickness : "",
         pattern: cleanText(body.pattern, 30),
         material: cleanText(body.material, 30),
+        design_details: inspiration.normalizeDesignDetails(body.designDetails ?? body.design_details),
         styles: sanitizeTags(body.styles),
         scenes: sanitizeTags(body.scenes, allowedScenes),
         price: body.price === "" || body.price == null ? null : Number(body.price),
@@ -3044,6 +3188,7 @@ const route = async (event) => {
         thickness: candidate.thickness || "",
         pattern: candidate.pattern || "",
         material: candidate.material || "",
+        design_details: inspiration.normalizeDesignDetails(candidate.design_details ?? candidate.designDetails),
         styles: sanitizeTags(candidate.styles),
         scenes: sanitizeTags(candidate.scenes, allowedScenes),
         price: candidate.price == null ? null : Number(candidate.price),
@@ -3088,6 +3233,7 @@ exports.main = async (event) => {
       providerCode,
       providerStatus,
       providerRequestId: cleanText(error?.providerRequestId, 120) || null,
+      fallbackReasonCode: cleanText(error?.fallbackReasonCode, 80) || null,
       // 错误说明经过长度限制，只用于测试期判断网络、TLS 或供应商错误；不含请求体和密钥。
       providerMessage: cleanText(error?.message, 120) || null,
       buildId: BUILD_ID

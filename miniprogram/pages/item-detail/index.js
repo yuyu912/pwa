@@ -3,7 +3,7 @@ const CATEGORIES = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋
 const SEASONS = ["春夏", "春秋", "秋冬", "多季"];
 const THICKNESSES = ["薄", "适中", "厚"];
 const IDLE_REASONS = ["很少穿", "不合适", "重复", "风格变化", "其他"];
-const listFromText = (value) => String(value || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean).slice(0, 4);
+const listFromText = (value, max = 4) => String(value || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean).slice(0, max);
 
 function editFormFromItem(item) {
   return {
@@ -14,6 +14,7 @@ function editFormFromItem(item) {
     thickness: item?.thickness || "",
     pattern: item?.pattern || "",
     material: item?.material || "",
+    designDetailsText: (item?.designDetails || []).join("、"),
     stylesText: (item?.styles || []).join("、"),
     scenesText: (item?.scenes || []).join("、"),
     price: item?.price ?? ""
@@ -24,6 +25,7 @@ function normalizeItem(item) {
   // 详情页同时兼容云端 snake_case 与模拟数据 camelCase，不改变后端接口或数据库字段。
   return item ? {
     ...item,
+    designDetails: item.designDetails || item.design_details || [],
     wearCount: Number(item.wearCount ?? item.wear_count ?? 0),
     idleStatus: item.idleStatus || item.idle_status || "active",
     idleReason: item.idleReason || item.idle_reason || "",
@@ -129,6 +131,7 @@ Page({
         thickness: form.thickness,
         pattern: form.pattern,
         material: form.material,
+        designDetails: listFromText(form.designDetailsText, 6),
         styles: listFromText(form.stylesText),
         scenes: listFromText(form.scenesText),
         price: form.price

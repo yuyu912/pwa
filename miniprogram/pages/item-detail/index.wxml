@@ -22,6 +22,7 @@
     </view>
     <label class="field"><text>花纹</text><input value="{{editForm.pattern}}" data-field="pattern" bindinput="onEditInput"/></label>
     <label class="field"><text>材质</text><input value="{{editForm.material}}" data-field="material" bindinput="onEditInput"/></label>
+    <label class="field"><text>设计细节</text><input value="{{editForm.designDetailsText}}" data-field="designDetailsText" bindinput="onEditInput" placeholder="荷叶边、泡泡袖、蕾丝等"/></label>
     <label class="field"><text>风格标签</text><input value="{{editForm.stylesText}}" data-field="stylesText" bindinput="onEditInput" placeholder="用逗号分隔"/></label>
     <label class="field"><text>适用场景</text><input value="{{editForm.scenesText}}" data-field="scenesText" bindinput="onEditInput" placeholder="通勤、休闲等"/></label>
     <label class="field"><text>购入价格</text><input type="digit" value="{{editForm.price}}" data-field="price" bindinput="onEditInput" placeholder="可留空"/></label>
@@ -30,6 +31,11 @@
   <view wx:else class="management-actions">
     <button class="secondary" bindtap="startEdit">编辑衣物</button>
     <button class="delete-button" loading="{{deleting}}" disabled="{{deleting}}" bindtap="deleteItem">移出衣橱</button>
+  </view>
+  <view class="card section">
+    <text class="section-title">设计细节</text>
+    <view wx:if="{{item.designDetails && item.designDetails.length}}" class="tags"><text wx:for="{{item.designDetails}}" wx:key="*this" class="tag style-tag">{{item}}</text></view>
+    <text wx:else class="muted">暂未记录，可通过“编辑衣物”补充。</text>
   </view>
   <view class="card section">
     <text class="section-title">衣物属性</text>

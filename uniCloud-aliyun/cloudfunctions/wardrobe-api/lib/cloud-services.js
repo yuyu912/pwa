@@ -6,8 +6,8 @@ const https = require("https");
 const { Readable } = require("stream");
 const COS = require("cos-nodejs-sdk-v5");
 const inspiration = require("./inspiration");
-const { assessMattingQuality } = require("./png-alpha");
-const { assessGarmentContourQuality, buildGarmentCutout, buildOcclusionBoxMask, buildWardrobeDisplayCanvas, imageSizeFromPng, placeMaskOnCanvas } = require("./garment-mask");
+const { assessBasicMattingQuality, assessMattingQuality } = require("./png-alpha");
+const { assessGarmentContourQuality, buildGarmentCutout, buildOcclusionBoxMask, buildWardrobeDisplayCanvas, imageSizeFromBuffer, imageSizeFromPng, placeMaskOnCanvas } = require("./garment-mask");
 
 let cosClient;
 let garmentSegmentationClient;
@@ -480,11 +480,111 @@ const clothingClassesForDetection = (detection) => {
   return ["tops"];
 };
 
+const normalizePrimaryGarmentBox = (raw) => {
+  if (raw?.person_present === true) throw Object.assign(new Error("检测到人物，请改用无人物的单件衣物照片。"), { status: 422, code: "GARMENT_PERSON_PRESENT" });
+  const box = raw?.garment?.bbox_2d;
+  const confidence = Math.max(0, Math.min(1, Number(raw?.garment?.confidence) || 0));
+  if (!Array.isArray(box) || box.length !== 4 || confidence < 0.55) throw Object.assign(new Error("没有定位到边界清楚的主要衣物，请重新拍摄。"), { status: 422, code: "GARMENT_BOX_NOT_FOUND" });
+  const normalized = box.map((value) => Math.max(0, Math.min(999, Math.round(Number(value) || 0))));
+  if (normalized[2] <= normalized[0] || normalized[3] <= normalized[1] || (normalized[2] - normalized[0]) * (normalized[3] - normalized[1]) < 20000) {
+    throw Object.assign(new Error("主要衣物识别框无效，请重新拍摄。"), { status: 422, code: "GARMENT_BOX_INVALID" });
+  }
+  return normalized;
+};
+
+const detectPrimaryGarmentBox = async (sourceKey) => {
+  required(["DASHSCOPE_API_KEY"]);
+  const model = process.env.QWEN_VL_MODEL || DEFAULT_VISION_MODEL;
+  const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
+  const requestBody = buildQwenRequestBody(signedUrl(sourceKey, "GET", 600), model);
+  requestBody.max_completion_tokens = 220;
+  requestBody.messages[0].content[1].text = "定位照片中面积最大的主要衣物，只返回JSON：{person_present,garment:{bbox_2d,confidence}}。bbox_2d按0到999归一化并完整包住衣物，排除床单、被子、地板、衣架、包、饰品和标签。若出现真人，person_present必须为true且garment为null；边界不清时不要猜。";
+  const response = await qwenHttpRequest(`${endpoint}/chat/completions`, requestBody, process.env.DASHSCOPE_API_KEY);
+  const providerStatusCode = responseStatus(response);
+  if (providerStatusCode < 200 || providerStatusCode >= 300) throw Object.assign(new Error("衣物定位暂时不可用，请稍后重试。"), { status: 502, code: "GARMENT_BOX_DETECTION_FAILED", providerStatusCode });
+  try { return normalizePrimaryGarmentBox(parseModelJson(response.data?.choices?.[0]?.message?.content)); }
+  catch (error) {
+    if (error.code) throw error;
+    throw Object.assign(new Error("衣物定位没有返回可解析结果。"), { status: 502, code: "GARMENT_BOX_INVALID_JSON" });
+  }
+};
+
+const baiduJsonRequest = (url, body, timeoutMessage, timeoutMs = 15000) => new Promise((resolve, reject) => {
+  const content = JSON.stringify(body);
+  const request = https.request(url, { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(content) }, timeout: timeoutMs }, (response) => {
+    const chunks = [];
+    response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    response.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+      resolve({ statusCode: Number(response.statusCode || 0), data });
+    });
+  });
+  request.on("timeout", () => request.destroy(Object.assign(new Error(timeoutMessage), { status: 504, code: "BAIDU_MATTING_TIMEOUT" })));
+  request.on("error", reject);
+  request.end(content);
+});
+
+let baiduAccessToken = "";
+let baiduAccessTokenExpiresAt = 0;
+const getBaiduAccessToken = async () => {
+  required(["BAIDU_API_KEY", "BAIDU_SECRET_KEY"]);
+  if (baiduAccessToken && Date.now() < baiduAccessTokenExpiresAt) return baiduAccessToken;
+  const url = new URL("https://aip.baidubce.com/oauth/2.0/token");
+  url.searchParams.set("grant_type", "client_credentials");
+  url.searchParams.set("client_id", process.env.BAIDU_API_KEY);
+  url.searchParams.set("client_secret", process.env.BAIDU_SECRET_KEY);
+  const response = await baiduJsonRequest(url, {}, "百度抠图鉴权超时，请稍后重试。");
+  if (!response.data?.access_token) throw Object.assign(new Error("百度抠图鉴权失败。"), { status: 502, code: "BAIDU_AUTH_FAILED" });
+  baiduAccessToken = response.data.access_token;
+  baiduAccessTokenExpiresAt = Date.now() + Math.max(60, Number(response.data.expires_in) || 2592000) * 1000 - 60000;
+  return baiduAccessToken;
+};
+
+const baiduControlPayload = (image, box, size) => ({
+  image: image.toString("base64"), method: "control",
+  position: [[[Math.round(box[0] * size.width / 999), Math.round(box[1] * size.height / 999)], [Math.round(box[2] * size.width / 999), Math.round(box[3] * size.height / 999)]]],
+  return_form: "rgba", refine_mask: "true"
+});
+
+const requestBaiduGarmentMatting = async (sourceKey) => {
+  const [object, box, accessToken] = await Promise.all([
+    // 手机原图可能超过百度请求限制；只压缩本次供应商输入，COS 原图和最终透明图不被覆盖。
+    withTimeout(cosCall("getObject", {
+      ...objectOptions(sourceKey),
+      QueryString: "imageMogr2/auto-orient/thumbnail/2400x2400>/format/jpg/quality/88"
+    }), "衣物原图预处理超时。", 30000),
+    detectPrimaryGarmentBox(sourceKey), getBaiduAccessToken()
+  ]);
+  const image = Buffer.from(object.Body);
+  if (image.length > 4 * 1024 * 1024) throw Object.assign(new Error("百度抠图输入压缩后仍然过大。"), {
+    status: 422, code: "BAIDU_MATTING_INPUT_TOO_LARGE", providerCallCount: 0
+  });
+  const size = imageSizeFromBuffer(image);
+  const url = new URL("https://aip.baidubce.com/rest/2.0/image-process/v1/segment");
+  url.searchParams.set("access_token", accessToken);
+  const response = await baiduJsonRequest(url, baiduControlPayload(image, box, size), "百度框选抠图响应超时，请稍后重试。", 30000);
+  if (response.statusCode < 200 || response.statusCode >= 300 || response.data?.error_code || !response.data?.image) throw Object.assign(new Error("百度框选抠图暂时不可用。"), {
+    status: 502, code: cleanText(response.data?.error_code, 80) || "BAIDU_MATTING_FAILED", providerStatusCode: response.statusCode
+  });
+  return Buffer.from(response.data.image, "base64");
+};
+
+const recoverBorderTouchingMatting = (output, quality) => {
+  if (quality.accepted
+    || quality.transparentRatio < 0.08
+    || quality.transparentRatio > 0.95
+    || quality.secondaryForegroundRatio > 0.01) return { output, quality, recovered: false };
+  const reframed = buildWardrobeDisplayCanvas(output, 0.12, { useValidatedRgbaDecoder: true });
+  const reframedQuality = assessMattingQuality(reframed.buffer);
+  return reframedQuality.accepted
+    ? { output: reframed.buffer, quality: reframedQuality, recovered: true }
+    : { output, quality, recovered: false };
+};
+
 // 商品抠图生成透明主图。原图仅作为本次任务输入，正式衣橱不会保存它。
 const extractGarment = async (sourceKey) => {
-  if (process.env.COS_CI_ENABLED !== "true") {
-    throw Object.assign(new Error("衣物主体图服务尚未配置。"), { status: 503 });
-  }
   const requestMatting = async (algorithm, timeoutMessage) => {
     const result = await withTimeout(cosRequest({
       ...objectOptions(sourceKey),
@@ -496,7 +596,7 @@ const extractGarment = async (sourceKey) => {
   };
   const checkOutput = (output, providerCallCount) => {
     try {
-      return assessMattingQuality(output);
+      return assessBasicMattingQuality(output);
     } catch (error) {
       throw Object.assign(new Error(`抠图结果无法校验：${error.message}`), {
         status: 502,
@@ -508,23 +608,35 @@ const extractGarment = async (sourceKey) => {
 
   let providerCallCount = 0;
   let modelName = "商品抠图";
+  let fallbackReasonCode = "";
   try {
-    let output = await requestMatting("GoodsMatting", "商品抠图响应超时，请稍后重试。");
-    providerCallCount = 1;
-    let quality = checkOutput(output, providerCallCount);
-    if (!quality.accepted) {
-      // 商品模型留下连边背景时，才追加一次通用抠图；正常图片仍只产生一次调用。
-      modelName = "通用抠图兜底";
-      output = await requestMatting("AIPicMatting", "通用抠图响应超时，请稍后重试。");
-      providerCallCount = 2;
+    let output;
+    let quality;
+    try {
+      output = await requestBaiduGarmentMatting(sourceKey);
+      providerCallCount = 1;
       quality = checkOutput(output, providerCallCount);
+      if (!quality.accepted) throw Object.assign(new Error("百度未返回可供确认的透明衣物图。"), {
+        status: 422, code: "BAIDU_MATTING_INVALID_RESULT", providerCallCount, mattingQuality: quality
+      });
+      modelName = "百度框选抠图";
+    } catch (baiduError) {
+      if (process.env.COS_CI_ENABLED !== "true") throw baiduError;
+      fallbackReasonCode = cleanText(baiduError?.code, 80) || "BAIDU_MATTING_FAILED";
+      output = await requestMatting("GoodsMatting", "商品抠图响应超时，请稍后重试。");
+      providerCallCount = Math.max(1, Number(baiduError.providerCallCount) || 0) + 1;
+      quality = checkOutput(output, providerCallCount);
+      // 腾讯商品抠图若保留明显的第二主体（常见为被子、床单或旁边衣物），不能交给用户保存。
+      if (quality.secondaryForegroundRatio > 0.01) quality = { ...quality, accepted: false };
+      modelName = "腾讯商品抠图（百度无有效结果回退）";
     }
     if (!quality.accepted) {
-      throw Object.assign(new Error("背景去除不完整，请换一张衣物边缘更清楚、四周留有空间的图片。"), {
+      throw Object.assign(new Error("抠图服务没有返回可供人工确认的透明衣物图，请重新选择图片。"), {
         status: 422,
         code: "MATTING_QUALITY_LOW",
         providerCallCount,
-        mattingQuality: quality
+        mattingQuality: quality,
+        fallbackReasonCode
       });
     }
     const cutoutKey = `cutouts/${sourceKey.split("/").pop().replace(/\.[^.]+$/, "")}.png`;
@@ -534,10 +646,90 @@ const extractGarment = async (sourceKey) => {
       ContentType: "image/png",
       ACL: "private"
     });
-    return { cutoutKey, modelName, providerCallCount };
+    return { cutoutKey, modelName, providerCallCount, fallbackReasonCode, qualityWarning: "请放大检查衣物边缘、裤腿间和衣架附近；确认无背景残留后再继续。" };
   } catch (error) {
     // 只记录已经拿到响应的调用；例如兜底请求失败时，至少保留第一次商品抠图成本。
     if (providerCallCount && !error.providerCallCount) error.providerCallCount = providerCallCount;
+    if (fallbackReasonCode && !error.fallbackReasonCode) error.fallbackReasonCode = fallbackReasonCode;
+    throw error;
+  }
+};
+
+const normalizeFlatLayGarments = (raw) => {
+  if (raw?.person_present === true) {
+    throw Object.assign(new Error("检测到人物，请改用无人物的平铺或悬挂衣物照片。"), { status: 422, code: "MULTI_GARMENT_PERSON_PRESENT" });
+  }
+  const detections = (Array.isArray(raw?.garments) ? raw.garments : [])
+    .filter((item) => item && allowedCategories.includes(item.category) && Array.isArray(item.bbox_2d) && item.bbox_2d.length === 4)
+    .map((item, index) => {
+      const bbox = item.bbox_2d.map((value) => Math.max(0, Math.min(999, Math.round(Number(value) || 0))));
+      return {
+        detectionId: `garment-${index}`,
+        category: item.category,
+        color: cleanText(item.color, 30),
+        bbox,
+        confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0))
+      };
+    })
+    .filter((item) => item.confidence >= 0.55 && item.bbox[2] > item.bbox[0] && item.bbox[3] > item.bbox[1]
+      && (item.bbox[2] - item.bbox[0]) * (item.bbox[3] - item.bbox[1]) >= 20000)
+    .sort((left, right) => right.confidence - left.confidence)
+    .slice(0, 3)
+    .map((item, index) => ({ ...item, detectionId: `garment-${index}` }));
+  if (detections.length < 2) {
+    throw Object.assign(new Error("没有识别到至少两件边界清楚的衣物，请切换为单件录入或重新拍摄。"), { status: 422, code: "MULTI_GARMENT_NOT_ENOUGH" });
+  }
+  return detections;
+};
+
+const detectFlatLayGarments = async (sourceKey) => {
+  required(["DASHSCOPE_API_KEY", "QWEN_INPUT_YUAN_PER_MILLION", "QWEN_OUTPUT_YUAN_PER_MILLION"]);
+  const model = process.env.QWEN_VL_MODEL || DEFAULT_VISION_MODEL;
+  const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
+  const requestBody = buildQwenRequestBody(signedUrl(sourceKey, "GET", 600), model);
+  requestBody.max_completion_tokens = 500;
+  requestBody.messages[0].content[1].text = "定位无人物照片中彼此明确分开的衣物，只返回JSON：{person_present,garments:[{category,color,bbox_2d,confidence}]}。category仅可为上衣、裤子、半身裙、外套、连衣裙、鞋子；bbox_2d按0到999归一化并完整包住单件衣物。最多返回3件，忽略被子、床单、包、衣架、家具和其他非衣物物体。若出现脸、皮肤、肢体或真人模特，person_present必须为true且garments返回空数组。衣物严重重叠或边界不清时不要猜。";
+  const response = await qwenHttpRequest(`${endpoint}/chat/completions`, requestBody, process.env.DASHSCOPE_API_KEY);
+  const providerStatusCode = responseStatus(response);
+  if (providerStatusCode < 200 || providerStatusCode >= 300) {
+    throw Object.assign(new Error("多件衣物定位暂时不可用，请稍后重试。"), {
+      status: 502,
+      code: cleanText(response.data?.error?.code, 80) || "MULTI_GARMENT_DETECTION_FAILED",
+      providerStatusCode,
+      providerUsage: response.data?.usage || null
+    });
+  }
+  let raw;
+  try {
+    raw = parseModelJson(response.data?.choices?.[0]?.message?.content);
+  } catch {
+    throw Object.assign(new Error("多件衣物定位没有返回可解析结果。"), { status: 502, code: "MULTI_GARMENT_INVALID_JSON", providerUsage: response.data?.usage || null });
+  }
+  try {
+    return { detections: normalizeFlatLayGarments(raw), usage: response.data?.usage || {}, model: response.data?.model || model };
+  } catch (error) {
+    error.providerUsage = response.data?.usage || {};
+    throw error;
+  }
+};
+
+const createFlatLayGarmentCrops = async (sourceKey, userId, parentTaskId, detections) => {
+  const size = await imageSize(sourceKey);
+  const createdKeys = [];
+  try {
+    const crops = [];
+    for (let index = 0; index < detections.length; index += 1) {
+      const detection = detections[index];
+      const cropKey = `multi-garment-crops/${userId}/${parentTaskId}-${detection.detectionId}.jpg`;
+      const pixelBox = paddedPixelBox(detection.bbox, size, 0.08);
+      const cropped = await downloadCrop(sourceKey, pixelBox);
+      await cosCall("putObject", { ...objectOptions(cropKey), Body: cropped.body, ContentType: cropped.contentType, ACL: "private" });
+      createdKeys.push(cropKey);
+      crops.push({ ...detection, cropKey, contentType: cropped.contentType });
+    }
+    return crops;
+  } catch (error) {
+    await Promise.all(createdKeys.map((key) => deleteObject(key).catch(() => {})));
     throw error;
   }
 };
@@ -2067,7 +2259,7 @@ const recognizeImage = async (key) => {
   ]);
   const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
   const model = process.env.QWEN_VL_MODEL || "qwen3-vl-plus";
-  const prompt = "你是衣橱应用的衣物标签助手。检查透明背景图是否主要保留一件完整衣物，再生成待用户确认的候选标签。只返回JSON，不要Markdown。字段：valid布尔值；reason中文；name简短中文名称；category仅可为上衣、裤子、半身裙、外套、连衣裙、鞋子；color主色中文；season仅可为春夏、春秋、秋冬、多季；thickness仅可为薄、适中、厚；pattern花纹中文；material视觉推测材质中文；styles最多3个；scenes从休闲、通勤、约会、旅行、聚会、运动中选最多3个；needsConfirmation最多4项。不能有脸、头发、皮肤、肢体、模特或另一件主要衣物。材质、季节和厚薄只能作为候选，不得保证真实成分、尺码或合身。";
+  const prompt = "你是衣橱应用的衣物标签助手。检查透明背景图是否主要保留一件完整衣物，再生成待用户确认的候选标签。只返回JSON，不要Markdown。字段：valid布尔值；reason中文；name简短中文名称，若清晰可见标志性设计，name必须包含最显著的一项；category仅可为上衣、裤子、半身裙、外套、连衣裙、鞋子；color主色中文；season仅可为春夏、春秋、秋冬、多季；thickness仅可为薄、适中、厚；pattern花纹中文；material视觉推测材质中文；design_details只能从荷叶边、花边、木耳边、泡泡袖、灯笼袖、蕾丝、镂空、蝴蝶结、系带、收腰、束腰、露肩、一字肩、娃娃领中选最多6项，没有则返回空数组；styles只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3个，并把最能定义衣物审美的核心风格放第一项；scenes从休闲、通勤、约会、旅行、聚会、运动中选最多3个；needsConfirmation最多4项。只记录图片中清晰可见的design_details，不确定不要猜；设计细节不得写入styles。不能有脸、头发、皮肤、肢体、模特或另一件主要衣物。材质、季节和厚薄只能作为候选，不得保证真实成分、尺码或合身。";
   const requestBody = buildQwenRequestBody(signedUrl(key), model);
   requestBody.messages[0].content[1].text = prompt;
   const response = await qwenHttpRequest(
@@ -2107,6 +2299,7 @@ const recognizeImage = async (key) => {
       thickness: allowedThicknesses.includes(raw.thickness) ? raw.thickness : "",
       pattern: cleanText(raw.pattern, 30),
       material: cleanText(raw.material, 30),
+      designDetails: inspiration.normalizeDesignDetails(raw.design_details ?? raw.designDetails),
       styles: sanitizeTags(raw.styles),
       scenes: sanitizeTags(raw.scenes, allowedScenes),
       needsConfirmation: sanitizeTags(raw.needsConfirmation, null, 4)
@@ -2143,7 +2336,7 @@ const inspirationDiagnostic = (error) => ({
 
 const analyzeInspirationWithRequester = async (imageUrls, options, requester) => {
   const model = options.model;
-  const firstPrompt = "这些图片来自同一条穿搭灵感。只选择封面优先、最清晰的一套主穿搭，不拆分多套，不补全看不清的衣物。只返回严格JSON：{mainImageIndex,summary,slots:[{slot,category,name,color,pattern,styles,scenes,confidence,evidence}]}。mainImageIndex从0开始且不超过图片数量减1；summary不超过50字。slot最多各一个且仅可为top、bottom、dress、outerwear；category仅可为上衣、裤子、半身裙、连衣裙、外套，并必须与slot对应。styles最多3项；scenes只能从休闲、通勤、约会、旅行、聚会、运动选择最多3项。不要输出鞋、包、配饰，不识别人脸、身材、尺码、品牌，也不要推断材质成分。evidence只写画面中可见依据。";
+  const firstPrompt = "这些图片来自同一条穿搭灵感。只选择封面优先、最清晰的一套主穿搭，不拆分多套，不补全看不清的衣物。只返回严格JSON：{mainImageIndex,summary,slots:[{slot,category,name,color,season,thickness,pattern,design_details,styles,scenes,confidence,evidence}]}。mainImageIndex从0开始且不超过图片数量减1；summary不超过50字。slot最多各一个且仅可为top,bottom,dress,outerwear；category仅可为上衣、裤子、半身裙、连衣裙、外套，并必须与slot对应。season仅可为春夏、春秋、秋冬、多季；thickness仅可为薄、适中、厚；看不清时返回空字符串。design_details只能从荷叶边、花边、木耳边、泡泡袖、灯笼袖、蕾丝、镂空、蝴蝶结、系带、收腰、束腰、露肩、一字肩、娃娃领中选最多6项，没有则返回空数组，只记录清晰可见的细节。styles必须描述这件衣物在整套穿搭中的审美风格，只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3项，并把最能定义审美的核心风格放第一项，不能仅用简约或通勤代替清晰可见的韩系、甜美、酷飒等风格。设计或版型细节绝不能写入styles。scenes只能从休闲、通勤、约会、旅行、聚会、运动选择最多3项。不要输出鞋、包、配饰，不识别人脸、身材、尺码、品牌，也不要推断材质成分。evidence只写画面中可见依据。";
   const firstResponse = await requester(buildInspirationRequestBody(imageUrls, model, firstPrompt));
   if (responseStatus(firstResponse) < 200 || responseStatus(firstResponse) >= 300) {
     const error = Object.assign(new Error("灵感识别暂时不可用，请稍后重试。"), { status: 502, code: "INSPIRATION_AI_FAILED" });
@@ -2160,7 +2353,7 @@ const analyzeInspirationWithRequester = async (imageUrls, options, requester) =>
     };
   } catch (firstError) {
     const title = cleanText(options.sourceTitle, 120);
-    const retryPrompt = `重新检查同一批图片。上一次输出无法形成有效衣物槽位。公开标题仅作辅助背景：${title || "未提供"}；必须以图片中实际可见衣物为准，不得仅根据标题补全。只返回严格JSON对象，顶层必须为mainImageIndex、summary、slots；slots必须是数组。每项slot只能精确使用top、bottom、dress、outerwear，category只能精确使用上衣、裤子、半身裙、连衣裙、外套，且dress只能对应连衣裙、bottom只能对应裤子或半身裙。即使名称是白色连衣裙或无袖连衣裙，category也只能写连衣裙，具体款式写入name。不要输出鞋、包、配饰、人物、品牌、尺码或材质。`;
+    const retryPrompt = `重新检查同一批图片。上一次输出无法形成有效衣物槽位。公开标题仅作辅助背景：${title || "未提供"}；必须以图片中实际可见衣物为准，不得仅根据标题补全。只返回严格JSON对象，顶层必须为mainImageIndex、summary、slots；slots必须是数组。每项slot只能精确使用top、bottom、dress、outerwear，category只能精确使用上衣、裤子、半身裙、连衣裙、外套，且dress只能对应连衣裙、bottom只能对应裤子或半身裙。season只能为春夏、春秋、秋冬、多季，thickness只能为薄、适中、厚，看不清留空；design_details只能从荷叶边、花边、木耳边、泡泡袖、灯笼袖、蕾丝、镂空、蝴蝶结、系带、收腰、束腰、露肩、一字肩、娃娃领中选最多6项，没有则返回空数组；styles只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3项，并且只能写审美风格，设计细节不得写入styles。即使名称是白色连衣裙或无袖连衣裙，category也只能写连衣裙，具体款式写入name或evidence。不要输出鞋、包、配饰、人物、品牌、尺码或材质。`;
     let retryResponse;
     try {
       retryResponse = await requester(buildInspirationRequestBody(imageUrls, model, retryPrompt));
@@ -2217,6 +2410,8 @@ module.exports = {
   createUpload,
   deleteObject,
   extractGarment,
+  detectFlatLayGarments,
+  createFlatLayGarmentCrops,
   generateImageEmbeddings,
   analyzeOutfit,
   segmentOutfitGarments,
@@ -2228,5 +2423,5 @@ module.exports = {
   signedUrl,
   sourceHash,
   storeTemporaryInspirationImages,
-  _test: { analyzeInspirationWithRequester, assessMattingQuality, authorizeViapiFileUpload, buildCorrectiveFlatLayRequestBody, buildFlatLayRequestBody, buildHangerEditRequestBody, buildWardrobeProductRequestBody, buildOutfitParsingRequestBody, buildQwenHttpOptions, buildQwenRequestBody, buildViapiRpcV2Request, canonicalOutfitLabel, clothingClassesForDetection, correctionAvailable, cropOperation, deterministicSeed, flatLayAccepted, flatLayCandidateCount, flatLayFactRule, flatLaySize, flattenViapiQuery, garmentSegmentationConfigured, getGarmentSegmentationDiagnosticClient, inspirationDiagnostic, mattingFailureKind, mattingFailureReason, mergeUsage, normalizeOutfitDetections, normalizeSegmentClothClassUrls, normalizeStructureFacts, outfitCompleteness, outfitParsingType, paddedPixelBox, parseModelJson, postAuthorizedOssObject, responseStatus, retryableFlatLayError, sourceMaskAccepted, structureFactsText, userFacingVerificationReason, usesContrastingUpperBackground, usesFaithfulArrangement, usesFaithfulPresentation, usesFaithfulUpperPresentation, usesParsedSourceDisplay, validateCropSize, viapiCredentialMode: () => viapiCredentials().mode, viapiPercentEncode, viapiRpcV2Request, vectorCosine }
+  _test: { analyzeInspirationWithRequester, assessMattingQuality, authorizeViapiFileUpload, baiduControlPayload, buildCorrectiveFlatLayRequestBody, buildFlatLayRequestBody, buildHangerEditRequestBody, buildWardrobeProductRequestBody, buildOutfitParsingRequestBody, buildQwenHttpOptions, buildQwenRequestBody, buildViapiRpcV2Request, canonicalOutfitLabel, clothingClassesForDetection, correctionAvailable, cropOperation, deterministicSeed, flatLayAccepted, flatLayCandidateCount, flatLayFactRule, flatLaySize, flattenViapiQuery, garmentSegmentationConfigured, getGarmentSegmentationDiagnosticClient, inspirationDiagnostic, mattingFailureKind, mattingFailureReason, mergeUsage, normalizeFlatLayGarments, normalizePrimaryGarmentBox, normalizeOutfitDetections, normalizeSegmentClothClassUrls, normalizeStructureFacts, outfitCompleteness, outfitParsingType, paddedPixelBox, parseModelJson, postAuthorizedOssObject, recoverBorderTouchingMatting, responseStatus, retryableFlatLayError, sourceMaskAccepted, structureFactsText, userFacingVerificationReason, usesContrastingUpperBackground, usesFaithfulArrangement, usesFaithfulPresentation, usesFaithfulUpperPresentation, usesParsedSourceDisplay, validateCropSize, viapiCredentialMode: () => viapiCredentials().mode, viapiPercentEncode, viapiRpcV2Request, vectorCosine }
 };

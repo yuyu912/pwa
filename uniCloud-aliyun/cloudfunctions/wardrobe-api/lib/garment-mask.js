@@ -2,10 +2,12 @@
 
 const { PNG } = require("pngjs");
 const jpeg = require("jpeg-js");
+const { decodeRgbaPng } = require("./png-alpha");
 
-const decodePng = (buffer) => {
+const decodePng = (buffer, options = {}) => {
   try {
-    return PNG.sync.read(buffer);
+    if (options.useValidatedRgbaDecoder === true) return decodeRgbaPng(buffer);
+    return PNG.sync.read(buffer, options);
   } catch {
     throw Object.assign(new Error("服饰分割未返回可处理的 PNG。"), { status: 502, code: "GARMENT_MASK_INVALID" });
   }
@@ -27,6 +29,10 @@ const decodeMaskImage = (buffer) => {
 };
 const imageSizeFromPng = (buffer) => {
   const image = decodePng(buffer);
+  return { width: image.width, height: image.height };
+};
+const imageSizeFromBuffer = (buffer) => {
+  const image = decodeMaskImage(buffer);
   return { width: image.width, height: image.height };
 };
 const pixelOffset = (width, x, y) => (y * width + x) * 4;
@@ -142,8 +148,9 @@ const foregroundBounds = (alpha, width, height, box) => {
 };
 
 // 衣橱展示只重新排版透明画布，不缩放、不拉伸，也不改写任何可见衣物像素。
-const buildWardrobeDisplayCanvas = (buffer, paddingRatio = 0.12) => {
-  const source = decodePng(buffer);
+const buildWardrobeDisplayCanvas = (buffer, paddingRatio = 0.12, options = {}) => {
+  // 腾讯结果已经由同一解码器完成格式和像素解压；补留白复用该结果，避免第二套解析器规则不一致。
+  const source = decodePng(buffer, options.useValidatedRgbaDecoder === true ? { useValidatedRgbaDecoder: true } : {});
   const alpha = Uint8Array.from({ length: source.width * source.height }, (_, index) => source.data[index * 4 + 3]);
   const bounds = foregroundBounds(alpha, source.width, source.height, { x1: 0, y1: 0, x2: source.width, y2: source.height });
   const subjectWidth = bounds.maxX - bounds.minX + 1;
@@ -676,6 +683,7 @@ module.exports = {
   buildGarmentCutout,
   buildWardrobeDisplayCanvas,
   buildOcclusionBoxMask,
+  imageSizeFromBuffer,
   imageSizeFromPng,
   placeMaskOnCanvas,
   _test: { decodePng, encodePng, internalTransparentComponents, maskCoverage, unionMaskCoverage }

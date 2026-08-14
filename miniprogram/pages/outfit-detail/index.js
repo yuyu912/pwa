@@ -66,6 +66,7 @@ Page({
 
   backToGallery() {
     if (getCurrentPages().length > 1) wx.navigateBack();
-    else wx.redirectTo({ url: this.recordId ? "/pages/wear-calendar/index" : "/pages/outfit-gallery/index" });
+    else if (this.recordId) wx.switchTab({ url: "/pages/wear-calendar/index" });
+    else wx.redirectTo({ url: "/pages/outfit-gallery/index" });
   }
 });

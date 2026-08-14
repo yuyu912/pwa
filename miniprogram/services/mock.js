@@ -120,9 +120,9 @@ module.exports = {
   },
   getPlans() {
     return { purchaseEnabled: false, plans: [
-      { id: "weekly", name: "周付体验", durationDays: 7, featured: true, price: 8.9, quota: { recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "rolling_30_days" }, purchaseEnabled: false },
-      { id: "monthly", name: "月付会员", durationDays: 30, featured: false, price: 48.9, quota: { recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "rolling_30_days" }, purchaseEnabled: false },
-      { id: "yearly", name: "年付会员", durationDays: 365, featured: false, price: 448.9, quota: { recognitionLimit: 20, hangerRemovalLimit: 5, windowType: "rolling_30_days" }, purchaseEnabled: false }
+      { id: "weekly", name: "周卡", durationDays: 7, featured: false, price: 6.9, renewalPrice: 6.21, renewalLabel: "连续包周九折", quota: { recognitionLimit: 6, hangerRemovalLimit: 1, windowType: "fixed_7_days" }, purchaseEnabled: false, renewalEnabled: false },
+      { id: "monthly", name: "月卡", durationDays: 30, featured: true, price: 34.9, renewalPrice: 27.92, renewalLabel: "连续包月八折", quota: { recognitionLimit: 40, hangerRemovalLimit: 10, windowType: "rolling_30_days" }, purchaseEnabled: false, renewalEnabled: false },
+      { id: "yearly", name: "年卡", durationDays: 365, featured: false, price: 298, renewalPrice: 208.6, renewalLabel: "连续包年七折", quota: { recognitionLimit: 40, hangerRemovalLimit: 10, windowType: "rolling_30_days" }, purchaseEnabled: false, renewalEnabled: false }
     ] };
   },
   listItems() { return items(); },
@@ -141,6 +141,27 @@ module.exports = {
   mattingItem(taskId) {
     const task = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};
     return { taskId, status: "matting_completed", stage: task.mode === "manual" ? "awaiting_manual_fields" : "awaiting_recognition", providerName: "腾讯数据万象", modelName: "商品抠图", actionText: "已完成衣物背景去除", cutoutUrl: task.filePath, originalCutoutUrl: task.filePath, hangerEditUrl: task.hangerEditUrl || "", selectedImage: task.selectedImage || "original" };
+  },
+  detectMultipleGarments(taskId) {
+    return {
+      taskId,
+      model: "mock-multi-garment",
+      detections: [
+        { detectionId: "garment-0", category: "上衣", color: "浅紫", bbox: [80, 80, 920, 470], confidence: 0.96 },
+        { detectionId: "garment-1", category: "裤子", color: "灰蓝", bbox: [110, 500, 900, 960], confidence: 0.95 }
+      ]
+    };
+  },
+  splitMultipleGarments(taskId, detectionIds) {
+    const parent = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};
+    return {
+      parentTaskId: taskId,
+      items: detectionIds.map((detectionId, index) => {
+        const childTaskId = `${taskId}-${detectionId}`;
+        wx.setStorageSync(`wardrobe_mock_task_${childTaskId}`, { mode: "multi_item", filePath: parent.filePath });
+        return { detectionId, category: index ? "裤子" : "上衣", color: "", taskId: childTaskId, cropUrl: parent.filePath };
+      })
+    };
   },
   removeHanger(taskId) {
     const task = wx.getStorageSync(`wardrobe_mock_task_${taskId}`) || {};

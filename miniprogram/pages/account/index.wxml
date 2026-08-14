@@ -1,1 +1,24 @@
-<view class="page"><view wx:if="{{loading}}" class="state-card"><text class="state-title">正在加载账户…</text></view><view wx:elif="{{error}}" class="state-card"><text class="state-title">账户暂时无法显示</text><text class="state-copy">{{error}}</text><button class="primary" bindtap="loginAgain">重新登录</button></view><block wx:else><text class="eyebrow">ACCOUNT</text><text class="title">{{user.username}} 的账户</text><view wx:if="{{user.role === 'admin'}}" class="card admin-card"><text class="heading">社区管理员</text><text>审核待发布穿搭并处理用户举报。</text><button class="secondary" bindtap="openCommunityAdmin">进入社区审核中心</button></view><view class="card"><text>当前版本只保存实现衣橱服务所需的数据。你可以查看服务规则、图片与 AI 数据处理说明。</text><button class="secondary" bindtap="openAgreement">查看用户协议</button><button class="secondary" bindtap="openPrivacy">查看隐私保护说明</button><button class="secondary" bindtap="openComplaint">投诉与反馈</button></view><view class="card danger"><text class="heading">账号与个人数据删除</text><text>提交后账号和现有登录凭证立即停用，关联数据进入最长 30 天的人工核验与删除处理。提交后不能自行登录或恢复。</text><button class="danger-button" loading="{{deleting}}" disabled="{{deleting}}" bindtap="requestDeletion">停用并申请删除</button><text wx:if="{{message}}" class="error">{{message}}</text></view></block></view>
+<view class="page account-page">
+  <view wx:if="{{loading}}" class="state-card"><text class="state-title">正在加载账户…</text></view>
+  <view wx:elif="{{error}}" class="state-card"><text class="state-title">账户暂时无法显示</text><text class="state-copy">{{error}}</text><button class="primary" bindtap="loginAgain">重新登录</button></view>
+  <block wx:else>
+    <text class="eyebrow">MY WARDROBLOOM</text>
+    <text class="title">我的</text>
+    <view class="card profile-card"><view class="avatar">{{userInitial}}</view><view><text class="username">{{user.username}}</text><text class="profile-note">私人衣橱账号</text></view></view>
+
+    <view class="card entitlement-card">
+      <view class="section-head"><view><text class="heading">AI 使用权益</text><text class="section-note">只显示可理解的使用次数</text></view><text class="plan-link" bindtap="openPlans">查看套餐</text></view>
+      <view wx:if="{{entitlement && entitlement.quota}}" class="quota-grid">
+        <view class="quota-item"><text class="quota-number">{{entitlement.quota.recognition.remaining}}</text><text>属性识别剩余</text></view>
+        <view class="quota-item"><text class="quota-number">{{entitlement.quota.hangerRemoval.remaining}}</text><text>移除衣架剩余</text></view>
+      </view>
+      <text wx:else class="section-note">权益信息暂时无法读取，可进入套餐页重试。</text>
+      <button class="secondary" bindtap="openPlans">查看 AI 权益套餐</button>
+    </view>
+
+    <view wx:if="{{user.role === 'admin'}}" class="card admin-card"><text class="heading">社区管理员</text><text>审核待发布穿搭并处理用户举报。</text><button class="secondary" bindtap="openCommunityAdmin">进入社区审核中心</button></view>
+    <view class="card settings-card"><text class="heading">设置与帮助</text><button class="row-button" bindtap="openAgreement">用户协议</button><button class="row-button" bindtap="openPrivacy">隐私保护说明</button><button class="row-button" bindtap="openComplaint">投诉与反馈</button></view>
+    <button class="logout-button" bindtap="logout">退出登录</button>
+    <view class="card danger"><text class="heading">账号与个人数据删除</text><text>这不是退出登录。提交后账号和现有凭证立即停用，关联数据进入最长 30 天的人工核验与删除处理。</text><button class="danger-button" loading="{{deleting}}" disabled="{{deleting}}" bindtap="requestDeletion">停用并申请删除</button><text wx:if="{{message}}" class="error">{{message}}</text></view>
+  </block>
+</view>

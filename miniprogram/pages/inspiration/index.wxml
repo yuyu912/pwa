@@ -43,12 +43,15 @@
       <view class="card confirm-card" wx:if="{{record.status === 'awaiting_confirmation'}}">
         <view class="section-kicker">帖子识别</view>
         <view class="section-title">确认这一套主穿搭</view>
-        <view class="muted">只修改可见的品类、颜色、图案、风格和场景；不会推断尺码、品牌或材质。</view>
+        <view class="muted">只修改可见的品类、颜色、图案、设计细节、风格和场景；不会推断尺码、品牌或材质。</view>
         <view class="slot" wx:for="{{editSlots}}" wx:key="slot">
           <view class="slot-name">{{item.slot === 'top' ? '上装' : item.slot === 'bottom' ? '下装' : item.slot === 'dress' ? '连衣裙' : '外套'}}</view>
           <view class="field"><text>品类</text><input value="{{item.category}}" data-index="{{index}}" data-field="category" bindinput="onSlotInput"/></view>
-          <view class="field"><text>颜色</text><input value="{{item.color}}" data-index="{{index}}" data-field="color" bindinput="onSlotInput"/></view>
+      <view class="field"><text>颜色</text><input value="{{item.color}}" data-index="{{index}}" data-field="color" bindinput="onSlotInput"/></view>
+      <view class="field"><text>季节</text><input value="{{item.season}}" placeholder="春夏/春秋/秋冬/多季" data-index="{{index}}" data-field="season" bindinput="onSlotInput"/></view>
+      <view class="field"><text>厚薄</text><input value="{{item.thickness}}" placeholder="薄/适中/厚" data-index="{{index}}" data-field="thickness" bindinput="onSlotInput"/></view>
           <view class="field"><text>图案</text><input value="{{item.pattern}}" data-index="{{index}}" data-field="pattern" bindinput="onSlotInput"/></view>
+          <view class="field"><text>设计细节</text><input value="{{item.designDetailsText}}" placeholder="荷叶边、泡泡袖、蕾丝等" data-index="{{index}}" data-field="designDetailsText" bindinput="onSlotInput"/></view>
           <view class="field"><text>风格</text><input value="{{item.stylesText}}" placeholder="用顿号分隔" data-index="{{index}}" data-field="stylesText" bindinput="onSlotInput"/></view>
           <view class="field"><text>场景</text><input value="{{item.scenesText}}" placeholder="休闲、通勤等" data-index="{{index}}" data-field="scenesText" bindinput="onSlotInput"/></view>
         </view>
@@ -59,14 +62,17 @@
         <view class="result-heading">你的衣橱匹配</view>
         <view class="card match-card" wx:for="{{record.matches}}" wx:key="slot">
           <view class="match-title">{{item.inspiration.name || item.inspiration.category}}</view>
-          <view class="recognized">帖子识别：{{item.inspiration.color}} · {{item.inspiration.pattern || '无明确图案'}}</view>
+      <view class="recognized">帖子识别：{{item.inspiration.color}} · {{item.inspiration.pattern || '无明确图案'}}</view>
+      <view class="recognized">{{item.inspiration.season || '季节待确认'}} · {{item.inspiration.thickness || '厚薄待确认'}} · {{item.inspiration.stylesText || '风格待确认'}}</view>
+      <view class="recognized">设计细节：{{item.inspiration.designDetailsText || '无明确细节'}}</view>
+      <view class="match-advice">{{item.advice}}</view>
           <view class="candidate-list" wx:if="{{!item.missing}}">
             <view class="candidate" wx:for="{{item.candidates}}" wx:for-item="candidate" wx:key="key">
               <image src="{{candidate.item.imageUrl}}" mode="aspectFill"/>
-              <view class="candidate-copy"><view>{{candidate.item.name}}</view><text>衣橱已有 · {{candidate.score}} 分</text><text>{{candidate.reasonsText}}</text></view>
+          <view class="candidate-copy"><view>{{candidate.item.name}}</view><text>衣橱已有 · {{candidate.score}} 分</text><text>{{candidate.reasonsText}}</text><text>{{candidate.suggestion}}</text></view>
             </view>
           </view>
-          <view class="gap" wx:else>建议缺口：衣橱中暂无 55 分以上的同品类衣物，不用其他品类硬凑。</view>
+          <view class="gap" wx:else>建议缺口：衣橱中暂无通过季节、薄厚、风格、图案和设计细节门槛的同品类衣物，不用其他品类硬凑。</view>
         </view>
         <button class="secondary new-button" bindtap="resetImport">新建一条灵感</button>
       </view>

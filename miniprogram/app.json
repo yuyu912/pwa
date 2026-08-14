@@ -39,6 +39,18 @@
     "backgroundColor": "#FBF8F0",
     "backgroundTextStyle": "light"
   },
+  "tabBar": {
+    "custom": true,
+    "color": "#625A57",
+    "selectedColor": "#8E79B5",
+    "backgroundColor": "#FFFCF6",
+    "list": [
+      { "pagePath": "pages/home/index", "text": "首页" },
+      { "pagePath": "pages/inspiration/index", "text": "灵感" },
+      { "pagePath": "pages/wear-calendar/index", "text": "日历" },
+      { "pagePath": "pages/account/index", "text": "我的" }
+    ]
+  },
   "style": "v2",
   "lazyCodeLoading": "requiredComponents"
 }

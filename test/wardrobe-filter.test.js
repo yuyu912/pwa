@@ -28,6 +28,9 @@ const wardrobeSource = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/in
 const wardrobeMarkup = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.wxml", import.meta.url), "utf8");
 const addItemMarkup = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.wxml", import.meta.url), "utf8");
 const candidateMarkup = fs.readFileSync(new URL("../miniprogram/pages/candidate/index.wxml", import.meta.url), "utf8");
+const loginSource = fs.readFileSync(new URL("../miniprogram/pages/login/index.js", import.meta.url), "utf8");
+const loginMarkup = fs.readFileSync(new URL("../miniprogram/pages/login/index.wxml", import.meta.url), "utf8");
+const apiSource = fs.readFileSync(new URL("../miniprogram/services/api.js", import.meta.url), "utf8");
 let wardrobePage;
 vm.runInNewContext(wardrobeSource, {
   require: (specifier) => specifier.includes("wardrobe-filter") ? { filterWardrobe, countAdvancedFilters } : {},
@@ -49,6 +52,16 @@ const items = [
   { id: "2", name: "蓝色牛仔裤", category: "裤子", season: "多季", thickness: "适中", material: "牛仔", styles: ["休闲"], scenes: ["旅行"], monthlyWearCount: 0, idleStatus: "considering" },
   { id: "3", name: "黑色风衣", category: "外套", season: "秋冬", thickness: "厚", material: "聚酯纤维", styles: ["通勤"], scenes: ["通勤"], monthlyWearCount: 1, idleStatus: "active" }
 ];
+
+test("登录页支持用户名密码自由注册且不再要求邀请码", () => {
+  assert.doesNotMatch(loginMarkup, /邀请码|inviteCode|用邀请注册/);
+  assert.match(loginMarkup, /还没有账号？创建账号/);
+  assert.match(loginMarkup, /创建你的私人衣橱账号/);
+  assert.doesNotMatch(loginSource, /inviteCode|onInviteCode|请填写邀请码/);
+  assert.match(loginSource, /api\.register\(\{ username, password \}\)/);
+  assert.match(apiSource, /async function register\(\{ username, password \}\)/);
+  assert.match(apiSource, /\/api\/auth\/register", "POST", \{ username, password \}/);
+});
 
 test("衣橱筛选可叠加关键词、品类、季节、厚薄和本月穿着状态", () => {
   const result = structuredClone(filterWardrobe(items, {

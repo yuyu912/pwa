@@ -140,5 +140,5 @@ Page({
     } catch (error) { this.setData({ error: error.message || "举报失败。" }); }
   },
   startNew() { wx.removeStorageSync("owner_outfit_token"); this.setData({ token: "", selectedIds: [], activeRequest: null, guestRequest: null, results: null, message: "", restoreCode: "" }); this.load(); },
-  goHome() { wx.reLaunch({ url: "/pages/home/index" }); }
+  goHome() { wx.switchTab({ url: "/pages/home/index" }); }
 });

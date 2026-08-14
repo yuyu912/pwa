@@ -16,12 +16,14 @@ function request(path, method = "GET", data = {}) {
         const stageNames = {
           read_source: "COS 读取原图",
           goods_matting: "腾讯商品抠图",
+          multi_garment_detection: "多件衣物定位",
           qwen_recognition: "千问识别"
         };
         const message = response.data?.error || `请求失败（${response.statusCode}）`;
         const stage = stageNames[response.data?.aiTaskStage] || response.data?.aiTaskStage;
         const provider = [
           response.data?.providerCode,
+          response.data?.fallbackReasonCode && `百度回退 ${response.data.fallbackReasonCode}`,
           response.data?.providerStatus && `HTTP ${response.data.providerStatus}`,
           response.data?.providerMessage
         ].filter(Boolean).join(" / ");
@@ -69,11 +71,10 @@ async function login({ username, password }) {
   return result;
 }
 
-async function register({ inviteCode, username, password }) {
-  // 邀请码只在云端注册时使用：云函数会原子校验并占用，客户端不能自行视为有效。
+async function register({ username, password }) {
   const result = config.USE_MOCK
     ? mock.login(username)
-    : await request("/api/auth/register", "POST", { inviteCode, username, password });
+    : await request("/api/auth/register", "POST", { username, password });
   // 注册成功后与登录共用同一份会话保存逻辑，后续请求自动携带 JWT。
   session.save(result);
   return result;
@@ -113,6 +114,8 @@ module.exports = {
   uploadBinary: (upload, filePath, mimeType) => config.USE_MOCK ? Promise.resolve(mock.uploadBinary(upload, filePath, mimeType)) : uploadBinary(upload.uploadUrl, filePath, mimeType),
   recognizeItem: (taskId) => config.USE_MOCK ? Promise.resolve(mock.recognizeItem(taskId)) : request("/api/recognize", "POST", { taskId }),
   mattingItem: (taskId) => config.USE_MOCK ? Promise.resolve(mock.mattingItem(taskId)) : request(`/api/tasks/${taskId}/matting`, "POST"),
+  detectMultipleGarments: (taskId) => config.USE_MOCK ? Promise.resolve(mock.detectMultipleGarments(taskId)) : request(`/api/tasks/${taskId}/multi-garments`, "POST"),
+  splitMultipleGarments: (taskId, detectionIds) => config.USE_MOCK ? Promise.resolve(mock.splitMultipleGarments(taskId, detectionIds)) : request(`/api/tasks/${taskId}/multi-garments/selection`, "POST", { detectionIds }),
   removeHanger: (taskId) => config.USE_MOCK ? Promise.resolve(mock.removeHanger(taskId)) : request(`/api/tasks/${taskId}/hanger-removal`, "POST"),
   selectTaskImage: (taskId, choice) => config.USE_MOCK ? Promise.resolve(mock.selectTaskImage(taskId, choice)) : request(`/api/tasks/${taskId}/image-selection`, "POST", { choice }),
   recognizeLabels: (taskId) => config.USE_MOCK ? Promise.resolve(mock.recognizeItem(taskId)) : request(`/api/tasks/${taskId}/recognition`, "POST"),

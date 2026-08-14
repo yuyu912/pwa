@@ -112,7 +112,7 @@ test("首页按天气文字稳定切换手绘图标", () => {
   assert.equal(getWeatherIcon("未知天气"), "cloud");
 });
 
-test("首页使用 Wardrobloom 品牌、人物主插画和动态天气图标", () => {
+test("首页使用 Wardrobloom 手写品牌、衣橱小屋和精简入口", () => {
   const markup = fs.readFileSync(new URL("../miniprogram/pages/home/index.wxml", import.meta.url), "utf8");
   const styles = fs.readFileSync(new URL("../miniprogram/pages/home/index.wxss", import.meta.url), "utf8");
   const weatherMarkup = fs.readFileSync(new URL("../miniprogram/pages/weather/index.wxml", import.meta.url), "utf8");
@@ -120,9 +120,11 @@ test("首页使用 Wardrobloom 品牌、人物主插画和动态天气图标", (
   const wardrobeMarkup = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.wxml", import.meta.url), "utf8");
   const appConfig = JSON.parse(fs.readFileSync(new URL("../miniprogram/app.json", import.meta.url), "utf8"));
   const loginConfig = JSON.parse(fs.readFileSync(new URL("../miniprogram/pages/login/index.json", import.meta.url), "utf8"));
-  assert.match(markup, />Wardrobloom</);
+  assert.match(markup, /home-brand-wardrobloom-v1\.jpg/);
   assert.doesNotMatch(markup, /brand-hanger|衣橱关系/);
-  assert.match(markup, /home-wardrobloom-v1\.jpg/);
+  assert.match(markup, /home-wardrobe-house-v2\.jpg/);
+  assert.equal(fs.existsSync(new URL("../miniprogram/assets/home-wardrobe-house-v2.jpg", import.meta.url)), true);
+  assert.equal(fs.existsSync(new URL("../miniprogram/assets/home-brand-wardrobloom-v1.jpg", import.meta.url)), true);
   assert.match(markup, /weather-\{\{weatherIcon\}\}\.png/);
   assert.match(weatherMarkup, /page weather-page/);
   assert.match(todayMarkup, /page today-outfit-page/);
@@ -130,19 +132,36 @@ test("首页使用 Wardrobloom 品牌、人物主插画和动态天气图标", (
   for (const icon of ["sun", "cloud", "rain", "snow", "wind", "haze"]) {
     assert.equal(fs.existsSync(new URL(`../miniprogram/assets/weather-${icon}.png`, import.meta.url)), true);
   }
-  for (const paper of ["link", "wardrobe", "record"]) {
-    assert.equal(fs.existsSync(new URL(`../miniprogram/assets/home-paper-${paper}.png`, import.meta.url)), true);
-  }
-  assert.match(markup, /class="paper-shape"/);
-  assert.match(markup, /class="entry-art"/);
-  assert.match(markup, /wardrobe-entry-purple-v4\.jpg/);
-  assert.match(markup, /outfit-record-purple-v4\.jpg/);
-  assert.match(markup, />看看我的衣橱能不能搭</);
-  assert.match(styles, /\.link-field button \{[\s\S]*?width: 100%;[\s\S]*?white-space: nowrap;/);
-  assert.match(styles, /\.entry-subtitle \{[\s\S]*?font-size: 18rpx;[\s\S]*?white-space: nowrap;/);
-  assert.equal(fs.existsSync(new URL("../miniprogram/assets/wardrobe-entry-purple-v4.jpg", import.meta.url)), true);
-  assert.equal(fs.existsSync(new URL("../miniprogram/assets/outfit-record-purple-v4.jpg", import.meta.url)), true);
+  assert.doesNotMatch(markup, /粘贴穿搭分享链接|看看我的衣橱能不能搭|class="bottom-nav"/);
+  assert.match(markup, /＋ 录入衣物/);
+  assert.ok(markup.indexOf("＋ 录入衣物") < markup.indexOf('class="entry-grid"'));
+  assert.match(markup, /home-entry-wardrobe-v2\.jpg/);
+  assert.match(markup, /home-entry-outfit-v2\.jpg/);
+  assert.match(markup, /bindtap="toOutfitGallery"[\s\S]*?>我的搭配</);
+  assert.doesNotMatch(markup, /entry-subtitle|已收录|查看保存过的搭配方案/);
+  assert.match(styles, /font-family: "Kaiti SC", "STKaiti", "KaiTi", "FangSong", serif;/);
   assert.doesNotMatch(markup, /entry-arrow/);
   assert.equal(appConfig.window.navigationBarTitleText, "Wardrobloom");
+  assert.equal(appConfig.tabBar.custom, true);
+  assert.deepEqual(appConfig.tabBar.list.map((item) => item.text), ["首页", "灵感", "日历", "我的"]);
   assert.equal(loginConfig.navigationBarTitleText, "登录 Wardrobloom");
+});
+
+test("全局底部导航使用 Tab 兼容路由并同步选中态", () => {
+  const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
+  const app = JSON.parse(read("../miniprogram/app.json"));
+  const component = read("../miniprogram/custom-tab-bar/index.js");
+  const markup = read("../miniprogram/custom-tab-bar/index.wxml");
+  const styles = read("../miniprogram/custom-tab-bar/index.wxss");
+  const pages = ["home", "inspiration", "wear-calendar", "account"].map((name) => read(`../miniprogram/pages/${name}/index.js`));
+  const login = read("../miniprogram/pages/login/index.js");
+  const detail = read("../miniprogram/pages/outfit-detail/index.js");
+  assert.deepEqual(app.tabBar.list.map((item) => item.text), ["首页", "灵感", "日历", "我的"]);
+  assert.match(component, /wx\.switchTab\(\{ url: path \}\)/);
+  assert.match(markup, /item\.icon === 'calendar'/);
+  assert.match(styles, /\.tab-item\.active \{ color: #bd7381;/);
+  assert.doesNotMatch(styles, /#8e79b5/);
+  pages.forEach((source, index) => assert.match(source, new RegExp(`setData\\(\\{ selected: ${index} \\}\\)`)));
+  assert.match(login, /wx\.switchTab\(\{ url: "\/pages\/home\/index" \}\)/);
+  assert.match(detail, /wx\.switchTab\(\{ url: "\/pages\/wear-calendar\/index" \}\)/);
 });

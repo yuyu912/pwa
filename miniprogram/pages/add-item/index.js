@@ -13,13 +13,14 @@ const emptyForm = () => ({
   thickness: "",
   pattern: "",
   material: "",
+  designDetailsText: "",
   stylesText: "",
   scenesText: "",
   price: ""
 });
 
 const idempotencyKey = () => `wx-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-const listFromText = (value) => String(value || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean).slice(0, 4);
+const listFromText = (value, max = 4) => String(value || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean).slice(0, max);
 const entitlementView = (entitlement) => {
   if (!entitlement) return null;
   const remainingMs = Math.max(0, Date.parse(entitlement.trialEndsAt || "") - Date.parse(entitlement.serverTime || ""));
@@ -69,7 +70,11 @@ Page({
     batchSummary: null,
     preparingBatch: false,
     entryMode: "closet",
-    entrySource: "single_item_upload"
+    entrySource: "single_item_upload",
+    photoMode: "single",
+    multiDetections: [],
+    qualityWarning: "",
+    mattingConfirmed: false
   },
 
   onLoad(options) {
@@ -94,12 +99,25 @@ Page({
     } catch (error) {}
   },
 
+  selectPhotoMode(event) {
+    if (!["idle", "selected", "error", "batch-complete"].includes(this.data.stage)) {
+      wx.showToast({ title: "请先完成当前处理", icon: "none" });
+      return;
+    }
+    const photoMode = event.currentTarget.dataset.mode === "multi" ? "multi" : "single";
+    this.setData({ photoMode, entrySource: photoMode === "multi" ? "multi_item_upload" : "single_item_upload", multiDetections: [], errorText: "" });
+  },
+
+  handleUploadTap() {
+    if (this.data.stage !== "multi-review") this.chooseImage();
+  },
+
   chooseImage() {
     if (this.data.batchItems.length && this.data.stage !== "batch-complete") {
       wx.showToast({ title: "请先完成当前批次", icon: "none" });
       return;
     }
-    const count = this.data.entryMode === "candidate" ? 1 : 9;
+    const count = this.data.entryMode === "candidate" || this.data.photoMode === "multi" ? 1 : 9;
     const handleSuccess = (result) => {
       const tempFilePaths = Array.isArray(result.tempFiles)
         ? result.tempFiles.map((file) => file.tempFilePath).filter(Boolean)
@@ -197,6 +215,9 @@ Page({
       errorText: item.errorText || "",
       manualMode: false,
       mattingQualityFailed: false,
+      aiProgress: null,
+      qualityWarning: "",
+      mattingConfirmed: false,
       form: emptyForm(),
       needsConfirmation: []
     });
@@ -245,7 +266,10 @@ Page({
           errorText: "",
           mattingQualityFailed: false,
           form: emptyForm(),
-          needsConfirmation: []
+          needsConfirmation: [],
+          multiDetections: [],
+          qualityWarning: "",
+          mattingConfirmed: false
         });
       },
       fail: () => this.setData({ stage: "error", stageText: "", errorText: "无法读取这张图片，请重新选择。" })
@@ -259,6 +283,7 @@ Page({
       this.setData({ errorText: "AI 自动识别暂时不可用，你仍可选择“仅抠图，手动填写”。" });
       return;
     }
+    if (this.data.photoMode === "multi" && this.data.batchIndex < 0) return this.startMultiDetection();
     try {
       this.setData({
         stage: "uploading",
@@ -271,27 +296,35 @@ Page({
         },
         errorText: ""
       });
-      const upload = await api.createUpload({
-        mimeType: this.data.mimeType,
-        size: this.data.fileSize,
-        // candidate 任务和正式衣橱任务共用识别链路，但确认后的数据写入不同集合。
-        mode: this.data.entryMode === "candidate" ? "candidate" : "closet",
-        idempotencyKey: idempotencyKey()
-      });
-      this.setData({ taskId: upload.taskId });
-      this.updateCurrentBatch({ taskId: upload.taskId, status: "uploading" });
-      await api.uploadBinary(upload, this.data.imagePath, this.data.mimeType);
+      const currentBatch = this.data.batchItems[this.data.batchIndex];
+      let taskId = currentBatch?.serverPrepared ? currentBatch.taskId : "";
+      if (!taskId) {
+        const upload = await api.createUpload({
+          mimeType: this.data.mimeType,
+          size: this.data.fileSize,
+          // candidate 任务和正式衣橱任务共用识别链路，但确认后的数据写入不同集合。
+          mode: this.data.entryMode === "candidate" ? "candidate" : "closet",
+          idempotencyKey: idempotencyKey()
+        });
+        taskId = upload.taskId;
+        this.setData({ taskId });
+        this.updateCurrentBatch({ taskId, status: "uploading" });
+        await api.uploadBinary(upload, this.data.imagePath, this.data.mimeType);
+      } else {
+        this.setData({ taskId });
+        this.updateCurrentBatch({ status: "matting" });
+      }
       this.setData({
         stage: "matting",
-        stageText: "正在调用腾讯数据万象，分离衣物主体与图片背景…",
+        stageText: "正在调用百度智能云，按衣物范围分离主体与背景…",
         aiProgress: {
-          providerName: "腾讯数据万象",
-          modelName: "商品抠图 / 通用抠图兜底",
+          providerName: "百度智能云",
+          modelName: "衣物框定位 / 百度框选抠图",
           actionText: "正在分离衣物主体与图片背景",
-          usageText: "先调用商品抠图；检测到复杂背景残留时自动追加 1 次通用抠图，不消耗大模型 Token。"
+          usageText: "先定位主要衣物范围，再按框抠除床单、被子等背景；定位不计入属性识别次数。"
         }
       });
-      const matting = await api.mattingItem(upload.taskId);
+      const matting = await api.mattingItem(taskId);
       this.showMattingReview(matting);
     } catch (error) {
       this.updateCurrentBatch({ status: "error", errorText: error.message || "AI 处理失败。" });
@@ -302,6 +335,74 @@ Page({
         errorText: error.message || "AI 处理失败，请重试或手动录入。"
       });
       this.refreshBudget();
+    }
+  },
+
+  async startMultiDetection() {
+    try {
+      this.setData({
+        stage: "uploading",
+        stageText: "正在私密上传整张衣物照片…",
+        errorText: "",
+        aiProgress: { providerName: "腾讯云 COS", modelName: "私有对象存储", actionText: "正在加密传输照片", usageText: "上传后只定位无人物照片中的衣物，最多返回 3 件。" }
+      });
+      const upload = await api.createUpload({ mimeType: this.data.mimeType, size: this.data.fileSize, mode: "multi_detection", idempotencyKey: idempotencyKey() });
+      this.setData({ taskId: upload.taskId });
+      await api.uploadBinary(upload, this.data.imagePath, this.data.mimeType);
+      this.setData({
+        stage: "multi-detecting",
+        stageText: "正在定位照片中的多件衣物…",
+        aiProgress: { providerName: "阿里云百炼", modelName: "通义千问 VL", actionText: "正在识别每件衣物的位置和品类", usageText: "定位步骤不计入属性识别次数；最终按实际保存件数统计。" }
+      });
+      const result = await api.detectMultipleGarments(upload.taskId);
+      const multiDetections = (result.detections || []).map((item) => ({
+        ...item,
+        selected: true,
+        confidenceText: `${Math.round(item.confidence * 100)}%`,
+        labelText: `${item.category}${item.color ? ` · ${item.color}` : ""}`,
+        boxStyle: `left:${item.bbox[0] / 10}%;top:${item.bbox[1] / 10}%;width:${(item.bbox[2] - item.bbox[0]) / 10}%;height:${(item.bbox[3] - item.bbox[1]) / 10}%;`
+      }));
+      this.setData({
+        stage: "multi-review",
+        stageText: `识别到 ${multiDetections.length} 件，请确认识别框`,
+        multiDetections,
+        budget: result.budget || this.data.budget,
+        aiProgress: { providerName: "阿里云百炼", modelName: result.model || "通义千问 VL", actionText: "已定位待拆分的衣物", usageText: "取消勾选错误项后，再逐件抠图和确认属性。" }
+      });
+    } catch (error) {
+      this.setData({ stage: "error", stageText: "", errorText: error.message || "多件衣物定位失败，请改用单件录入。" });
+      this.refreshBudget();
+    }
+  },
+
+  toggleMultiGarment(event) {
+    const detectionId = event.currentTarget.dataset.id;
+    this.setData({ multiDetections: this.data.multiDetections.map((item) => item.detectionId === detectionId ? { ...item, selected: !item.selected } : item) });
+  },
+
+  async confirmMultiGarments() {
+    const detectionIds = this.data.multiDetections.filter((item) => item.selected).map((item) => item.detectionId);
+    if (!detectionIds.length) return wx.showToast({ title: "请至少选择一件", icon: "none" });
+    try {
+      this.setData({ stage: "multi-splitting", stageText: "正在按识别框拆分衣物…", errorText: "" });
+      const result = await api.splitMultipleGarments(this.data.taskId, detectionIds);
+      const batchItems = result.items.map((item, index) => ({
+        id: `multi-${this.data.taskId}-${index}`,
+        sourcePath: item.cropUrl,
+        imagePath: item.cropUrl,
+        mimeType: "image/jpeg",
+        fileSize: 0,
+        taskId: item.taskId,
+        draftId: "",
+        serverPrepared: true,
+        status: "ready",
+        errorText: "",
+        detectedCategory: item.category
+      }));
+      this.setData({ batchItems, batchIndex: -1, batchSummary: batchSummary(batchItems), multiDetections: [] });
+      this.loadBatchItem(0);
+    } catch (error) {
+      this.setData({ stage: "multi-review", stageText: "请重新确认衣物框", errorText: error.message || "衣物拆分失败，请重试。" });
     }
   },
 
@@ -318,8 +419,10 @@ Page({
       selectedImage,
       hangerEditBusy: false,
       errorText: "",
+      qualityWarning: matting.qualityWarning || "",
+      mattingConfirmed: false,
       aiProgress: {
-        providerName: "腾讯数据万象",
+        providerName: matting.providerName || "百度智能云",
         modelName: matting.modelName || "商品抠图",
         actionText: "已分离衣物主体与背景，原抠图已安全保留",
         usageText: "如图片含衣架，可主动调用一次 AI 图片编辑；不点击就不会产生这笔消耗。"
@@ -351,6 +454,7 @@ Page({
         originalCutoutUrl: edited.originalCutoutUrl || this.data.originalCutoutUrl,
         hangerEditUrl: edited.hangerEditUrl || edited.cutoutUrl,
         selectedImage: "hanger_edit",
+        mattingConfirmed: false,
         aiProgress: {
           providerName: edited.providerName || "阿里云百炼",
           modelName: edited.modelName || "qwen-image-2.0",
@@ -373,17 +477,22 @@ Page({
   },
 
   previewOriginal() {
-    this.setData({ resultImage: this.data.originalCutoutUrl, selectedImage: "original", errorText: "" });
+    this.setData({ resultImage: this.data.originalCutoutUrl, selectedImage: "original", mattingConfirmed: false, errorText: "" });
   },
 
   previewHangerEdit() {
     if (!this.data.hangerEditUrl) return;
-    this.setData({ resultImage: this.data.hangerEditUrl, selectedImage: "hanger_edit", errorText: "" });
+    this.setData({ resultImage: this.data.hangerEditUrl, selectedImage: "hanger_edit", mattingConfirmed: false, errorText: "" });
+  },
+
+  confirmMattingPreview() {
+    this.setData({ mattingConfirmed: true, errorText: "" });
   },
 
   async continueRecognition() {
     if (!this.data.taskId || this.data.hangerEditBusy || this.data.stage === "recognizing") return;
     try {
+      this.setData({ mattingConfirmed: true });
       await api.selectTaskImage(this.data.taskId, this.data.selectedImage);
       this.setData({
         stage: "recognizing",
@@ -414,12 +523,12 @@ Page({
     try {
       this.setData({
         stage: "matting",
-        stageText: "正在确认腾讯数据万象抠图阶段…",
+        stageText: "正在确认百度框选抠图阶段…",
         aiProgress: {
-          providerName: "腾讯数据万象",
-          modelName: "商品抠图 / 通用抠图兜底",
+          providerName: "百度智能云",
+          modelName: "衣物框定位 / 百度框选抠图",
           actionText: "正在复用已完成的抠图结果，或继续未完成的背景分离",
-          usageText: "已完成的抠图不会重复调用；复杂背景残留时可能追加 1 次通用抠图。"
+          usageText: "已完成的抠图不会重复调用；百度故障或质量不合格时才会使用腾讯回退。"
         },
         errorText: ""
       });
@@ -471,6 +580,7 @@ Page({
         thickness: tags.thickness || "",
         pattern: tags.pattern || "",
         material: tags.material || "",
+        designDetailsText: (tags.designDetails || []).join("、"),
         stylesText: (tags.styles || []).join("、"),
         scenesText: (tags.scenes || []).join("、"),
         price: ""
@@ -534,12 +644,12 @@ Page({
       }
       this.setData({
         stage: "matting",
-        stageText: "正在调用腾讯数据万象，分离衣物主体与图片背景…",
+        stageText: "正在调用百度智能云，按衣物范围分离主体与背景…",
         aiProgress: {
-          providerName: "腾讯数据万象",
-          modelName: "商品抠图 / 通用抠图兜底",
+          providerName: "百度智能云",
+          modelName: "衣物框定位 / 百度框选抠图",
           actionText: "正在分离衣物主体与图片背景",
-          usageText: "先调用商品抠图；复杂背景残留时自动追加 1 次通用抠图，不调用通义千问 VL。"
+          usageText: "通义仅定位主要衣物范围，不生成属性标签，也不计入属性识别次数。"
         }
       });
       const matting = await api.mattingItem(upload.taskId);
@@ -554,12 +664,13 @@ Page({
         originalCutoutUrl,
         hangerEditUrl: matting.hangerEditUrl || "",
         selectedImage,
+        mattingConfirmed: false,
         hangerEditBusy: false,
         aiProgress: {
-          providerName: "腾讯数据万象",
+          providerName: matting.providerName || "百度智能云",
           modelName: matting.modelName || "商品抠图",
           actionText: "已分离衣物主体与图片背景",
-          usageText: "本次基础录入未调用通义千问 VL，不消耗大模型 Token。"
+          usageText: "本次只用通义定位衣物范围，属性由你手动填写，不计入属性识别次数。"
         },
         form: this.data.form.category ? this.data.form : { ...emptyForm(), category: CATEGORIES[0], season: SEASONS[0], thickness: THICKNESSES[0] }
       });
@@ -579,6 +690,7 @@ Page({
       thickness: form.thickness,
       pattern: form.pattern,
       material: form.material,
+      designDetails: listFromText(form.designDetailsText, 6),
       styles: listFromText(form.stylesText),
       scenes: listFromText(form.scenesText),
       price: form.price
@@ -615,6 +727,7 @@ Page({
   // 基础录入保存用户填写的字段和已完成的透明图，不调用通义千问 VL。
   async saveManual() {
     if (this.data.stage === "saving") return;
+    if (!this.data.mattingConfirmed) return wx.showToast({ title: "请先确认抠图完整", icon: "none" });
     if (!this.validateForm() || !this.data.imagePath) return;
     try {
       this.setData({ stage: "saving", stageText: "正在保存手动录入衣物…", errorText: "" });

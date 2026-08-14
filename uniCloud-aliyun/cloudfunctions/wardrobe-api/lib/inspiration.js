@@ -344,6 +344,31 @@ const slotForCategory = (category) => category === "上衣" ? "top"
   : ["裤子", "半身裙"].includes(category) ? "bottom"
     : category === "连衣裙" ? "dress" : category === "外套" ? "outerwear" : "";
 
+const ALLOWED_SEASONS = ["春夏", "春秋", "秋冬", "多季"];
+const ALLOWED_THICKNESSES = ["薄", "适中", "厚"];
+const ALLOWED_STYLES = ["韩系", "清新", "酷飒", "简约", "休闲", "通勤", "复古", "甜美", "运动", "街头", "优雅", "度假"];
+const ALLOWED_DESIGN_DETAILS = ["荷叶边", "花边", "木耳边", "泡泡袖", "灯笼袖", "蕾丝", "镂空", "蝴蝶结", "系带", "收腰", "束腰", "露肩", "一字肩", "娃娃领"];
+const SIGNATURE_STYLES = new Set(["韩系", "清新", "酷飒", "复古", "甜美", "街头", "优雅", "度假"]);
+const STYLE_ALIASES = new Map([
+  ["韩式", "韩系"], ["韩范", "韩系"], ["韩系简约", "韩系"], ["韩式简约", "韩系"],
+  ["清爽", "清新"], ["清新感", "清新"], ["氧气感", "清新"],
+  ["酷感", "酷飒"], ["酷帅", "酷飒"], ["飒爽", "酷飒"],
+  ["极简", "简约"], ["基础款", "简约"], ["干净利落", "简约"]
+]);
+const normalizeStyles = (value) => cleanTags(value, null, 6)
+  .map((style) => STYLE_ALIASES.get(style) || style)
+  .filter((style) => ALLOWED_STYLES.includes(style))
+  .filter((style, index, values) => values.indexOf(style) === index)
+  .slice(0, 3);
+const DESIGN_DETAIL_ALIASES = new Map([
+  ["褶边", "荷叶边"], ["公主袖", "泡泡袖"], ["彼得潘领", "娃娃领"]
+]);
+const normalizeDesignDetails = (value) => cleanTags(value, null, 8)
+  .map((detail) => DESIGN_DETAIL_ALIASES.get(detail) || detail)
+  .filter((detail) => ALLOWED_DESIGN_DETAILS.includes(detail))
+  .filter((detail, index, values) => values.indexOf(detail) === index)
+  .slice(0, 6);
+
 const normalizeSlot = (value) => {
   const slot = cleanText(value, 30).toLowerCase();
   if (["top", "upper", "upper_body", "上装", "上衣"].includes(slot)) return "top";
@@ -399,8 +424,11 @@ const sanitizeOutfitAnalysis = (raw) => {
       category,
       name: cleanText(entry.name, 40) || category,
       color: cleanText(entry.color, 30),
+      season: ALLOWED_SEASONS.includes(entry.season) ? entry.season : "",
+      thickness: ALLOWED_THICKNESSES.includes(entry.thickness) ? entry.thickness : "",
       pattern: cleanText(entry.pattern, 30),
-      styles: cleanTags(entry.styles),
+      styles: normalizeStyles(entry.styles),
+      designDetails: normalizeDesignDetails(entry.design_details ?? entry.designDetails),
       scenes: cleanTags(entry.scenes, ALLOWED_SCENES),
       confidence: Math.max(0, Math.min(100, Number(entry.confidence || 0))),
       evidence: cleanText(entry.evidence, 100)
@@ -421,7 +449,7 @@ const sanitizeOutfitAnalysis = (raw) => {
 const COLOR_FAMILIES = [
   ["黑", "深灰", "炭灰"], ["白", "米白", "奶油", "象牙"], ["灰", "银灰"],
   ["蓝", "藏蓝", "牛仔", "雾蓝"], ["红", "酒红", "粉", "玫红"], ["绿", "军绿", "鼠尾草"],
-  ["黄", "姜黄", "金"], ["棕", "咖", "驼", "卡其"], ["紫", "淡紫"]
+  ["黄", "姜黄", "金"], ["橙", "橘"], ["棕", "咖", "驼", "卡其"], ["紫", "淡紫"]
 ];
 const normalized = (value) => cleanText(value, 40).toLowerCase();
 const colorFamily = (value) => {
@@ -429,25 +457,88 @@ const colorFamily = (value) => {
   const family = COLOR_FAMILIES.find((values) => values.some((entry) => color.includes(entry)));
   return family ? family[0] : color;
 };
+const patternFamily = (value) => {
+  const pattern = normalized(value);
+  if (/(格纹|格子|棋盘)/.test(pattern)) return "格纹";
+  if (/(条纹|条子)/.test(pattern)) return "条纹";
+  if (/(波点|圆点)/.test(pattern)) return "波点";
+  if (/(碎花|花卉|印花)/.test(pattern)) return "花卉";
+  if (/(纯色|无图案)/.test(pattern)) return "纯色";
+  return pattern;
+};
+const DETAIL_GROUPS = [
+  ["荷叶边", "花边", "木耳边", "褶边"],
+  ["泡泡袖", "灯笼袖", "公主袖"],
+  ["蕾丝", "镂空"],
+  ["蝴蝶结", "系带"],
+  ["收腰", "束腰", "修身"],
+  ["露肩", "一字肩"],
+  ["娃娃领", "彼得潘领"]
+];
+const distinctiveDetails = (...values) => {
+  const text = values.flatMap((value) => Array.isArray(value) ? value : [value]).map((value) => normalized(value)).join(" ");
+  return DETAIL_GROUPS.filter((group) => group.some((detail) => text.includes(detail))).map((group) => group[0]);
+};
+const resolvedDetails = (structured, ...fallbackValues) => {
+  const confirmed = distinctiveDetails(structured);
+  return confirmed.length ? confirmed : distinctiveDetails(...fallbackValues);
+};
 const overlap = (left, right) => {
   const a = new Set(cleanTags(left, null, 10));
   const b = cleanTags(right, null, 10);
   return b.length ? b.filter((entry) => a.has(entry)).length / Math.max(a.size, b.length) : 0;
 };
+const styleOverlap = (left, right) => {
+  const a = new Set(normalizeStyles(left));
+  const b = normalizeStyles(right);
+  return b.length ? b.filter((entry) => a.has(entry)).length / Math.max(a.size, b.length) : 0;
+};
+
+const seasonCompatible = (left, right) => !left || !right || left === right || left === "多季" || right === "多季";
+const thicknessDistance = (left, right) => {
+  if (!left || !right) return null;
+  return Math.abs(ALLOWED_THICKNESSES.indexOf(left) - ALLOWED_THICKNESSES.indexOf(right));
+};
 
 const scoreItem = (slot, item) => {
   if (slot.category !== item.category) return null;
-  let score = 40;
+  if (!seasonCompatible(slot.season, item.season)) return null;
+  const thicknessGap = thicknessDistance(slot.thickness, item.thickness);
+  if (thicknessGap != null && thicknessGap > 1) return null;
+  const targetStyles = normalizeStyles(slot.styles);
+  const itemStyles = normalizeStyles(item.styles);
+  const targetSignatureStyles = targetStyles.filter((style) => SIGNATURE_STYLES.has(style));
+  const itemSignatureStyles = itemStyles.filter((style) => SIGNATURE_STYLES.has(style));
+  // 韩系、甜美等核心审美必须相交；只共同命中“简约/通勤”等泛化标签不算同风格。
+  if (targetSignatureStyles.length && !itemSignatureStyles.some((style) => targetSignatureStyles.includes(style))) return null;
+  if (!targetSignatureStyles.length && targetStyles.length && !itemStyles.some((style) => targetStyles.includes(style))) return null;
+  const targetPattern = patternFamily(slot.pattern);
+  const itemPattern = patternFamily(item.pattern);
+  if (targetPattern && targetPattern !== "纯色" && targetPattern !== itemPattern) return null;
+  // 新数据优先使用用户确认的结构化细节；旧衣物仍从名称等文本回退，避免升级后全部失配。
+  const targetDetails = resolvedDetails(slot.designDetails ?? slot.design_details, slot.name, slot.evidence);
+  const itemDetails = resolvedDetails(item.designDetails ?? item.design_details, item.name, item.pattern, item.styles);
+  if (targetDetails.length && !itemDetails.some((detail) => targetDetails.includes(detail))) return null;
+  let score = 0;
   const reasons = ["品类一致"];
+  if (slot.season && item.season) { score += 25; reasons.push(`${item.season}季节适配`); }
+  if (thicknessGap === 0) { score += 20; reasons.push(`${item.thickness}厚度一致`); }
+  else if (thicknessGap === 1) { score += 12; reasons.push("厚薄层次可协调"); }
   const leftColor = colorFamily(slot.color);
   const rightColor = colorFamily(item.color);
-  if (leftColor && rightColor && leftColor === rightColor) { score += 25; reasons.push("色系接近"); }
-  if (normalized(slot.pattern) && normalized(slot.pattern) === normalized(item.pattern)) { score += 10; reasons.push("图案一致"); }
-  const styleOverlap = overlap(slot.styles, item.styles);
-  if (styleOverlap) { score += Math.round(styleOverlap * 15); reasons.push("风格接近"); }
+  // 同槽位替代是在找“像原帖的单品”，这里只奖励同色系；互补色属于整套搭配，不在此处加分。
+  if (leftColor && rightColor && leftColor === rightColor) { score += 20; reasons.push("色系接近"); }
+  const styleScore = styleOverlap(targetStyles, itemStyles);
+  if (styleScore) {
+    score += Math.round(styleScore * 25);
+    const shared = itemStyles.filter((style) => targetStyles.includes(style));
+    reasons.push(`${shared.join("、")}风格一致`);
+  }
+  if (targetPattern && targetPattern === itemPattern) { score += 6; reasons.push("图案一致"); }
   const sceneOverlap = overlap(slot.scenes, item.scenes);
-  if (sceneOverlap) { score += Math.round(sceneOverlap * 10); reasons.push("场景相符"); }
-  return { score: Math.min(100, score), reasons };
+  if (sceneOverlap) { score += Math.round(sceneOverlap * 4); reasons.push("场景相符"); }
+  const suggestion = `推荐理由：${reasons.filter((reason) => reason !== "品类一致").join("；") || "品类与参考穿搭一致"}。`;
+  return { score: Math.min(100, score), reasons, suggestion };
 };
 
 const matchWardrobe = (slots, items) => {
@@ -455,17 +546,24 @@ const matchWardrobe = (slots, items) => {
     const candidates = (Array.isArray(items) ? items : []).map((item) => {
       const verdict = scoreItem(slot, item);
       return verdict ? { item, ...verdict } : null;
-    }).filter((entry) => entry && entry.score >= 55)
+    }).filter((entry) => entry && entry.score >= 40)
       .sort((left, right) => right.score - left.score || String(left.item.id).localeCompare(String(right.item.id)))
       .slice(0, 3);
-    return { slot: slot.slot, inspiration: slot, candidates, missing: candidates.length === 0 };
+    const advice = candidates.length
+      ? `优先选择${candidates[0].item.name || slot.category}：${candidates[0].suggestion.replace(/^推荐理由：/, "")}`
+      : `衣橱暂无符合${[slot.season, slot.thickness, ...normalizeStyles(slot.styles)].filter(Boolean).join("、") || "当前"}条件的${slot.category}。`;
+    return { slot: slot.slot, inspiration: slot, candidates, missing: candidates.length === 0, advice };
   });
   return { matches, missing: matches.filter((entry) => entry.missing).map((entry) => entry.inspiration.name || entry.inspiration.category) };
 };
 
 module.exports = {
   ALLOWED_CATEGORIES,
+  ALLOWED_DESIGN_DETAILS,
   ALLOWED_SCENES,
+  ALLOWED_SEASONS,
+  ALLOWED_STYLES,
+  ALLOWED_THICKNESSES,
   detectImageMime,
   IMAGE_HOSTS,
   NOTE_HOSTS,
@@ -473,10 +571,11 @@ module.exports = {
   hostAllowed,
   isPrivateAddress,
   matchWardrobe,
+  normalizeDesignDetails,
   parsePublicMetadata,
   resolveXiaohongshuPublicContent,
   sanitizeOutfitAnalysis,
   scoreItem,
   slotForCategory,
-  _test: { analysisEntries, cleanTags, colorFamily, initialStateImages, isPlatformUiImage, isPublicErrorPage, metaAttributes, normalizeCategory, normalizePublicImageUrl, normalizeSlot, parseInitialState, pinnedLookup, replaceBareUndefined, retryableAddressError, withAddressFallback }
+  _test: { analysisEntries, cleanTags, colorFamily, distinctiveDetails, initialStateImages, isPlatformUiImage, isPublicErrorPage, metaAttributes, normalizeCategory, normalizeDesignDetails, normalizePublicImageUrl, normalizeSlot, normalizeStyles, parseInitialState, patternFamily, pinnedLookup, replaceBareUndefined, retryableAddressError, seasonCompatible, thicknessDistance, withAddressFallback }
 };

@@ -62,6 +62,9 @@ Page({
   onLoad() {
     const today = new Date();
     this.setData({ year: today.getFullYear(), month: today.getMonth(), selectedKey: dateKey(today) });
+  },
+  onShow() {
+    if (this.getTabBar()) this.getTabBar().setData({ selected: 2 });
     this.loadMonth();
   },
   async loadMonth() {

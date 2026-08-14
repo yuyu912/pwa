@@ -1,6 +1,6 @@
 <view class="page">
   <text class="heading">AI 权益套餐</text>
-  <text class="sub">当前仅用于体验和验证套餐结构，不会发起支付，也不会自动续费。</text>
+  <text class="sub">以下价格和权益已确认。支付与自动续费尚未接入，当前不会扣款。</text>
 
   <view wx:if="{{entitlement}}" class="status status-{{entitlement.status}}">
     <text class="status-title">{{entitlement.status === 'trialing' ? '7 天试用进行中' : (entitlement.status === 'active' ? '会员权益有效' : '7 天试用已结束')}}</text>
@@ -18,12 +18,13 @@
     <view wx:for="{{plans}}" wx:key="id" class="plan-card {{item.featured ? 'featured' : ''}}">
       <view class="plan-head"><text class="plan-name">{{item.name}}</text><text wx:if="{{item.featured}}" class="recommended">主推</text></view>
       <text class="duration">{{item.durationDays}} 天权益周期</text>
-      <text class="price">¥{{item.price}}</text>
-      <text wx:if="{{item.quota}}" class="plan-quota">权益有效期间：近 30 天属性识别 {{item.quota.recognitionLimit}} 次、AI 移除衣架 {{item.quota.hangerRemovalLimit}} 次</text>
-      <button class="purchase" disabled="{{!item.purchaseEnabled}}">购买功能准备中</button>
+      <view class="price-row"><text class="price">¥{{item.price}}</text><text class="price-unit">/ {{item.durationDays}}天</text></view>
+      <view class="renewal-row"><text class="renewal-label">{{item.renewalLabel}}</text><text class="renewal-price">¥{{item.renewalPrice}}</text></view>
+      <text wx:if="{{item.quota}}" class="plan-quota">{{item.id === 'weekly' ? '7 天内' : '每 30 天'}}：属性识别 {{item.quota.recognitionLimit}} 次、AI 移除衣架 {{item.quota.hangerRemovalLimit}} 次</text>
+      <button class="purchase" disabled="{{!item.purchaseEnabled}}">支付功能准备中</button>
     </view>
   </view>
 
-  <view class="rules"><text class="rules-title">本阶段规则</text><text>· 基础抠图、手动录入和衣橱管理长期保留</text><text>· 周、月、年套餐使用相同的近 30 天额度，周付续费不会重置</text><text>· 当前仅统计和提醒，不限制功能</text><text>· 不创建订单、收款链接或自动续费</text></view>
+  <view class="rules"><text class="rules-title">套餐规则</text><text>· 基础抠图、手动录入、衣橱、搭配和日历永久免费</text><text>· 周卡额度 7 天有效；月卡 30 天有效；年卡每 30 天刷新</text><text>· 未使用次数不结转，AI 失败不扣成功次数</text><text>· 当前仅展示套餐，不创建订单、不扣款、不自动续费</text></view>
   <button class="back" bindtap="goBack">返回</button>
 </view>

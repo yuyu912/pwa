@@ -1,8 +1,8 @@
 page {
   min-height: 100%;
-  background: #fbf8f0;
+  background: #fbf6f0;
   color: #554b47;
-  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  font-family: "Kaiti SC", "STKaiti", "KaiTi", "FangSong", serif;
 }
 
 button { border-radius: 30rpx 22rpx 32rpx 24rpx / 24rpx 31rpx 22rpx 29rpx; }
@@ -157,7 +157,7 @@ button::after { border: 0; }
 .wardrobe-page .category.active,
 .wardrobe-page .filter-chip.active,
 .calendar-page .calendar-day.selected {
-  background: #9b87c1;
+  background: #bd7381;
 }
 
 .wardrobe-page .filter-summary > view,
@@ -243,4 +243,9 @@ button::after { border: 0; }
 .canvas-page .form-actions .confirm-wear,
 .canvas-page .category.active {
   background: #9b87c1;
+}
+
+/* 全局 Tab 页面为底部手绘导航预留安全区，避免最后一项被遮挡。 */
+.account-page {
+  padding-bottom: calc(150rpx + env(safe-area-inset-bottom)) !important;
 }

@@ -1,0 +1,17 @@
+.tab-shell { position: fixed; right: 0; bottom: 0; left: 0; z-index: 1000; padding: 0 30rpx calc(24rpx + env(safe-area-inset-bottom)); pointer-events: none; }
+.tab-bar { display: flex; justify-content: space-around; padding: 17rpx 8rpx 13rpx; border: 2rpx solid rgba(193,126,140,.2); border-radius: 52rpx 48rpx 54rpx 46rpx; background: rgba(251,246,240,.98); box-shadow: 0 9rpx 25rpx rgba(94,72,54,.08); pointer-events: auto; }
+.tab-item { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 7rpx; color: #625a57; font-family: "Kaiti SC", "STKaiti", "KaiTi", serif; font-size: 22rpx; }
+.tab-item.active { color: #bd7381; font-weight: 600; }
+.tab-icon { position: relative; width: 50rpx; height: 43rpx; }
+.home-roof { position: absolute; top: 3rpx; left: 10rpx; width: 28rpx; height: 28rpx; border-top: 4rpx solid currentColor; border-left: 4rpx solid currentColor; transform: rotate(45deg); }
+.home-body { position: absolute; bottom: 2rpx; left: 12rpx; width: 26rpx; height: 23rpx; border-right: 4rpx solid currentColor; border-bottom: 4rpx solid currentColor; border-left: 4rpx solid currentColor; }
+.bulb-core { position: absolute; top: 7rpx; left: 13rpx; width: 24rpx; height: 24rpx; border: 3rpx solid currentColor; border-radius: 50%; }
+.bulb-base { position: absolute; bottom: 0; left: 20rpx; width: 12rpx; height: 8rpx; border-top: 3rpx solid currentColor; border-bottom: 3rpx solid currentColor; }
+.bulb-ray { position: absolute; width: 3rpx; height: 8rpx; background: currentColor; }
+.bulb-top { top: -2rpx; left: 24rpx; }.bulb-left { top: 7rpx; left: 4rpx; transform: rotate(-50deg); }.bulb-right { top: 7rpx; right: 4rpx; transform: rotate(50deg); }
+.calendar-icon { width: 46rpx; height: 42rpx; border: 3rpx solid currentColor; border-radius: 7rpx; box-sizing: border-box; }
+.calendar-ring { position: absolute; top: -7rpx; width: 4rpx; height: 13rpx; border-radius: 3rpx; background: currentColor; }.ring-left { left: 9rpx; }.ring-right { right: 9rpx; }
+.calendar-line { position: absolute; top: 10rpx; right: 0; left: 0; border-top: 3rpx solid currentColor; }
+.calendar-dot { position: absolute; top: 22rpx; width: 5rpx; height: 5rpx; border-radius: 50%; background: currentColor; }.dot-one { left: 8rpx; }.dot-two { left: 19rpx; }.dot-three { right: 7rpx; }
+.mine-head { position: absolute; top: 2rpx; left: 16rpx; width: 16rpx; height: 16rpx; border: 3rpx solid currentColor; border-radius: 50%; }
+.mine-body { position: absolute; right: 7rpx; bottom: 2rpx; left: 7rpx; height: 19rpx; border: 3rpx solid currentColor; border-bottom: 0; border-radius: 22rpx 22rpx 0 0; }

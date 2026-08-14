@@ -1,9 +1,13 @@
 <view class="page">
   <text class="heading">{{entryMode === 'candidate' ? '购买前衣物查重' : '拍衣服，快速录入'}}</text>
-  <text class="sub">{{entryMode === 'candidate' ? '拍下或选择准备购买的衣服，确认标签后与真实衣橱比较相似度。' : '每张照片只放一件衣物，AI 抠图并生成候选标签，确认后才会正式入库。'}}</text>
+  <text class="sub">{{entryMode === 'candidate' ? '拍下或选择准备购买的衣服，确认标签后与真实衣橱比较相似度。' : photoMode === 'multi' ? '一张无人物照片最多定位 3 件衣物，确认识别框后逐件抠图和入库。' : '单件照片由 AI 抠图并生成候选标签，确认后才会正式入库。'}}</text>
+  <view wx:if="{{entryMode !== 'candidate'}}" class="photo-mode">
+    <button class="photo-mode-button {{photoMode === 'single' ? 'photo-mode-active' : ''}}" data-mode="single" bindtap="selectPhotoMode">单件衣物</button>
+    <button class="photo-mode-button {{photoMode === 'multi' ? 'photo-mode-active' : ''}}" data-mode="multi" bindtap="selectPhotoMode">一张图多件</button>
+  </view>
   <view wx:if="{{entryMode !== 'candidate'}}" class="notice">
-    <text class="notice-title">单件衣物拍摄要求</text>
-    <text>支持平铺、挂拍或清晰商品图；请让整件衣物进入画面，避免手、身体、其他衣物和杂乱背景遮挡。</text>
+    <text class="notice-title">{{photoMode === 'multi' ? '多件衣物拍摄要求' : '单件衣物拍摄要求'}}</text>
+    <text>{{photoMode === 'multi' ? '只支持无人物的平铺或悬挂照片；衣物之间尽量不要重叠，系统最多定位 3 件，并由你确认识别框。' : '支持平铺、挂拍或清晰商品图；请让整件衣物进入画面，避免手、身体和其他衣物遮挡。'}}</text>
   </view>
 
   <view wx:if="{{entitlement}}" class="entitlement entitlement-{{entitlement.status}}" bindtap="openPlans">
@@ -17,13 +21,27 @@
     <text class="batch-note">图片严格按顺序处理，当前件确认入库后才会进入下一件。</text>
   </view>
 
-  <view wx:if="{{stage !== 'batch-complete'}}" class="upload" role="button" hover-class="upload-active" bindtap="chooseImage">
-    <image wx:if="{{imagePath}}" class="preview" src="{{resultImage || imagePath}}" mode="aspectFit"/>
+  <view wx:if="{{stage !== 'batch-complete'}}" class="upload {{stage === 'multi-review' ? 'upload-multi-review' : ''}}" role="button" hover-class="upload-active" bindtap="handleUploadTap">
+    <block wx:if="{{imagePath}}">
+      <image class="preview" src="{{resultImage || imagePath}}" mode="{{stage === 'multi-review' ? 'widthFix' : 'aspectFit'}}"/>
+      <view wx:for="{{multiDetections}}" wx:key="detectionId" class="garment-box {{item.selected ? '' : 'garment-box-off'}}" style="{{item.boxStyle}}">
+        <text>{{item.category}} {{item.confidenceText}}</text>
+      </view>
+    </block>
     <block wx:else>
       <text class="plus">＋</text>
-      <text>{{entryMode === 'candidate' ? '拍照或选择候选衣物图片' : '选择 1–9 张单件衣物图片'}}</text>
-      <text class="hint">支持拍照或相册；每张只放一件衣物，压缩后不超过 2MB</text>
+      <text>{{entryMode === 'candidate' ? '拍照或选择候选衣物图片' : photoMode === 'multi' ? '选择 1 张包含多件衣物的照片' : '选择 1–9 张单件衣物图片'}}</text>
+      <text class="hint">{{photoMode === 'multi' ? '仅限无人物、衣物边界清楚的照片' : '支持拍照或相册；压缩后不超过 2MB'}}</text>
     </block>
+  </view>
+
+  <view wx:if="{{stage === 'multi-review'}}" class="multi-review">
+    <text class="multi-review-title">确认要录入的衣物</text>
+    <view class="multi-options">
+      <button wx:for="{{multiDetections}}" wx:key="detectionId" class="multi-option {{item.selected ? 'multi-option-active' : ''}}" data-id="{{item.detectionId}}" bindtap="toggleMultiGarment">{{item.selected ? '✓ ' : ''}}{{item.labelText}}</button>
+    </view>
+    <text class="multi-review-note">识别框不正确的项目请取消；衣物严重重叠时请改为单件补拍。</text>
+    <button class="primary multi-confirm" bindtap="confirmMultiGarments">确认并逐件抠图</button>
   </view>
 
   <view wx:if="{{stageText}}" class="stage">
@@ -37,6 +55,7 @@
     <text class="ai-progress-safe">仅展示真实处理阶段，不展示密钥、内部成本或模型思考过程。</text>
   </view>
   <view wx:if="{{errorText}}" class="error">{{errorText}}</view>
+  <view wx:if="{{qualityWarning}}" class="quality-warning">{{qualityWarning}} 请放大预览；如果带入被子或其他物品，请重新选择照片。</view>
 
   <view wx:if="{{taskId && originalCutoutUrl && (stage === 'matting-review' || manualMode)}}" class="hanger-tools">
     <text class="hanger-title">图片处理选择</text>
@@ -47,7 +66,10 @@
       <button class="choice {{selectedImage === 'hanger_edit' ? 'choice-active' : ''}}" bindtap="previewHangerEdit">衣架移除图</button>
     </view>
     <text wx:if="{{hangerEditUrl}}" class="hanger-note">当前将使用：{{selectedImage === 'hanger_edit' ? '衣架移除图' : '原抠图'}}。两张图都会保留到本次任务结束。</text>
-    <button wx:if="{{stage === 'matting-review' && !manualMode}}" class="primary hanger-continue" disabled="{{hangerEditBusy}}" bindtap="continueRecognition">使用当前图片并继续识别</button>
+    <button wx:if="{{stage === 'matting-review' && !manualMode}}" class="primary hanger-continue" disabled="{{hangerEditBusy}}" bindtap="continueRecognition">抠图完整，继续识别</button>
+    <button wx:if="{{manualMode && !mattingConfirmed}}" class="primary hanger-continue" disabled="{{hangerEditBusy}}" bindtap="confirmMattingPreview">抠图完整，使用这张</button>
+    <text wx:if="{{manualMode && mattingConfirmed}}" class="hanger-note">已确认当前抠图完整，可以填写属性并保存。</text>
+    <button class="ghost hanger-action" disabled="{{hangerEditBusy}}" bindtap="chooseImage">有背景残留，重新选图</button>
   </view>
 
   <view wx:if="{{stage === 'batch-complete'}}" class="batch-complete">
@@ -58,10 +80,10 @@
   <button wx:if="{{batchItems.length > 1 && stage === 'batch-item-error'}}" class="ghost" bindtap="skipBatchItem">跳过这张</button>
 
   <view wx:if="{{imagePath && !manualMode && (stage === 'selected' || stage === 'error' || stage === 'batch-item-error')}}" class="actions">
-    <button wx:if="{{stage !== 'error' || !taskId}}" class="primary" bindtap="startRecognition">AI 智能录入</button>
-    <button wx:if="{{stage === 'error' && taskId && !mattingQualityFailed}}" class="primary" bindtap="retryRecognition">重试失败阶段</button>
+    <button wx:if="{{(photoMode === 'multi' && batchIndex < 0) || stage !== 'error' || !taskId}}" class="primary" bindtap="startRecognition">{{photoMode === 'multi' && batchIndex < 0 ? '识别照片中的多件衣物' : 'AI 智能录入'}}</button>
+    <button wx:if="{{stage === 'error' && taskId && !(photoMode === 'multi' && batchIndex < 0) && !mattingQualityFailed}}" class="primary" bindtap="retryRecognition">重试失败阶段</button>
     <button wx:if="{{mattingQualityFailed && batchItems.length <= 1}}" class="primary" bindtap="chooseImage">重新选择图片</button>
-    <button wx:if="{{entryMode !== 'candidate' && !mattingQualityFailed}}" class="ghost" bindtap="useManualMode">仅抠图，手动填写</button>
+    <button wx:if="{{entryMode !== 'candidate' && photoMode !== 'multi' && !mattingQualityFailed}}" class="ghost" bindtap="useManualMode">仅抠图，手动填写</button>
     <button wx:if="{{batchItems.length > 1 && stage === 'error'}}" class="ghost" bindtap="skipBatchItem">跳过这张</button>
   </view>
 
@@ -112,6 +134,10 @@
       </label>
     </view>
 
+    <label class="field">
+      <text>设计细节</text>
+      <input value="{{form.designDetailsText}}" data-field="designDetailsText" bindinput="onFieldInput" placeholder="荷叶边、泡泡袖、蕾丝等，用逗号分隔"/>
+    </label>
     <label class="field">
       <text>风格标签</text>
       <input value="{{form.stylesText}}" data-field="stylesText" bindinput="onFieldInput" placeholder="用逗号分隔"/>

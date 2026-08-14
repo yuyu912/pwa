@@ -24,8 +24,9 @@ const entitlementView = (entitlement) => {
 };
 
 Page({
-  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "", weatherTip: "设置地区后获取实时天气", weatherIcon: "cloud", hasLocation: false, imageErrors: {}, entitlement: null, inspirationText: "" },
+  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "", weatherTip: "设置地区后获取实时天气", weatherIcon: "cloud", hasLocation: false, imageErrors: {}, entitlement: null },
   async onShow() {
+    if (this.getTabBar()) this.getTabBar().setData({ selected: 0 });
     const { user, token } = session.restore();
     if (!user || !token) return wx.redirectTo({ url: "/pages/login/index" });
     try { this.setData({ itemCount: (await api.listItems()).length }); }
@@ -75,18 +76,8 @@ Page({
   toCityTrends() { wx.navigateTo({ url: "/pages/city-trends/index" }); },
   toAdd() { wx.navigateTo({ url: "/pages/add-item/index" }); },
   toFriends() { wx.navigateTo({ url: "/pages/friends/index" }); },
-  toWearCalendar() { wx.navigateTo({ url: "/pages/wear-calendar/index" }); },
-  toMine() { wx.navigateTo({ url: "/pages/account/index" }); },
+  toOutfitGallery() { wx.navigateTo({ url: "/pages/outfit-gallery/index" }); },
   toPlans() { wx.navigateTo({ url: "/pages/plans/index" }); },
-  onInspirationInput(event) { this.setData({ inspirationText: event.detail.value }); },
-  analyzeInspiration() {
-    if (!this.data.inspirationText.trim()) {
-      return wx.showToast({ title: "请先粘贴穿搭分享链接", icon: "none" });
-    }
-    getApp().globalData.pendingInspirationText = this.data.inspirationText.trim();
-    wx.navigateTo({ url: "/pages/inspiration/index?start=1" });
-  },
-  toInspiration() { wx.navigateTo({ url: "/pages/inspiration/index" }); },
   onActionImageError(event) {
     const id = event.currentTarget.dataset.id;
     this.setData({ [`imageErrors.${id}`]: true });

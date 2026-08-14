@@ -15,10 +15,11 @@ const mimeFromPath = (path) => /\.png(?:$|\?)/i.test(path) ? "image/png"
 const idempotencyKey = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const editableSlots = (record) => ((record && record.detectedOutfit && record.detectedOutfit.slots) || []).map((slot) => ({
   ...slot,
+  designDetailsText: (slot.designDetails || []).join("、"),
   stylesText: (slot.styles || []).join("、"),
   scenesText: (slot.scenes || []).join("、")
 }));
-const splitTags = (value) => String(value || "").split(/[、,，/\s]+/).map((entry) => entry.trim()).filter(Boolean).slice(0, 4);
+const splitTags = (value, max = 4) => String(value || "").split(/[、,，/\s]+/).map((entry) => entry.trim()).filter(Boolean).slice(0, max);
 
 Page({
   data: {
@@ -33,15 +34,12 @@ Page({
     errorText: ""
   },
 
-  onLoad(options) {
-    const app = getApp();
-    const pending = app.globalData.pendingInspirationText || "";
-    app.globalData.pendingInspirationText = "";
-    if (pending) {
-      this.setData({ shareText: pending });
-      if (options.start === "1") setTimeout(() => this.startLink(), 80);
-    }
+  onLoad() {
     this.loadHistory();
+  },
+
+  onShow() {
+    if (this.getTabBar()) this.getTabBar().setData({ selected: 1 });
   },
 
   onShareInput(event) { this.setData({ shareText: event.detail.value }); },
@@ -58,6 +56,7 @@ Page({
   setRecord(record) {
     const matches = ((record && record.matches) || []).map((group) => ({
       ...group,
+      inspiration: { ...group.inspiration, designDetailsText: (group.inspiration?.designDetails || []).join("、"), stylesText: (group.inspiration?.styles || []).join("、") },
       candidates: (group.candidates || []).map((candidate) => ({ ...candidate, key: candidate.item.id, reasonsText: (candidate.reasons || []).join(" · ") }))
     }));
     const platformFallback = record && record.status === "screenshot_required" && record.sourceType === "xiaohongshu_link";
@@ -150,7 +149,10 @@ Page({
       category: slot.category,
       name: slot.name,
       color: slot.color,
+      season: slot.season,
+      thickness: slot.thickness,
       pattern: slot.pattern,
+      designDetails: splitTags(slot.designDetailsText, 6),
       styles: splitTags(slot.stylesText),
       scenes: splitTags(slot.scenesText),
       confidence: slot.confidence,

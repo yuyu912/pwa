@@ -4,16 +4,38 @@ import test from "node:test";
 
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("套餐框架展示已确认价格，但不包含支付或自动续费入口", () => {
+test("套餐框架展示已确认价格和连续订阅折扣，但不伪装支付能力", () => {
   const page = read("../miniprogram/pages/plans/index.wxml");
   const api = read("../miniprogram/services/api.js");
+  const cloud = read("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
+  assert.match(cloud, /name: "周卡"[\s\S]*?price: 6\.9[\s\S]*?renewalPrice: 6\.21[\s\S]*?连续包周九折/);
+  assert.match(cloud, /name: "月卡"[\s\S]*?price: 34\.9[\s\S]*?renewalPrice: 27\.92[\s\S]*?连续包月八折/);
+  assert.match(cloud, /name: "年卡"[\s\S]*?price: 298[\s\S]*?renewalPrice: 208\.6[\s\S]*?连续包年七折/);
+  assert.match(cloud, /WEEKLY_QUOTA = Object\.freeze\(\{ recognitionLimit: 6, hangerRemovalLimit: 1/);
+  assert.match(cloud, /PAID_QUOTA = Object\.freeze\(\{ recognitionLimit: 40, hangerRemovalLimit: 10/);
   assert.match(page, /¥\{\{item\.price\}\}/);
+  assert.match(page, /¥\{\{item\.renewalPrice\}\}/);
   assert.doesNotMatch(page, /价格待确认|折算周价|低总价|总付款最高/);
-  assert.match(page, /不会发起支付，也不会自动续费/);
-  assert.match(page, /购买功能准备中/);
+  assert.match(page, /支付与自动续费尚未接入/);
+  assert.match(page, /支付功能准备中/);
   assert.doesNotMatch(api, /requestPayment|prepay_id|payment\/orders/);
-  assert.match(page, /近 30 天属性识别/);
-  assert.match(page, /当前仅统计和提醒，不限制功能/);
+  assert.match(page, /周卡额度 7 天有效；月卡 30 天有效；年卡每 30 天刷新/);
+  assert.match(page, /不创建订单、不扣款、不自动续费/);
+});
+
+test("全局导航和我的页提供账户入口、真实权益与安全退出", () => {
+  const tabBar = read("../miniprogram/custom-tab-bar/index.wxml");
+  const accountScript = read("../miniprogram/pages/account/index.js");
+  const accountPage = read("../miniprogram/pages/account/index.wxml");
+  assert.match(tabBar, /\{\{item\.text\}\}/);
+  assert.match(accountScript, /await api\.getEntitlement\(\)/);
+  assert.match(accountScript, /openPlans\(\).*pages\/plans\/index/);
+  assert.match(accountScript, /logout\(\)[\s\S]*?session\.clear\(\)[\s\S]*?pages\/login\/index/);
+  assert.match(accountPage, /属性识别剩余/);
+  assert.match(accountPage, /移除衣架剩余/);
+  assert.match(accountPage, /查看 AI 权益套餐/);
+  assert.match(accountPage, /退出登录/);
+  assert.match(accountPage, /这不是退出登录/);
 });
 
 test("衣物识别前端按真实供应商分阶段调用", () => {

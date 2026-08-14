@@ -9,6 +9,42 @@ const require = createRequire(import.meta.url);
 const cloudModule = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js");
 const cloudTest = cloudModule._test;
 const inspiration = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/inspiration.js");
+const pngAlpha = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/png-alpha.js");
+
+test("无人物多件衣物定位最多保留三件可靠结果", () => {
+  const detections = structuredClone(cloudTest.normalizeFlatLayGarments({
+    person_present: false,
+    garments: [
+      { category: "上衣", color: "白色", bbox_2d: [50, 40, 480, 450], confidence: 0.97 },
+      { category: "裤子", color: "蓝色", bbox_2d: [500, 60, 950, 940], confidence: 0.95 },
+      { category: "鞋子", color: "黑色", bbox_2d: [80, 700, 400, 960], confidence: 0.9 },
+      { category: "外套", color: "灰色", bbox_2d: [100, 100, 800, 900], confidence: 0.8 }
+    ]
+  }));
+  assert.equal(detections.length, 3);
+  assert.deepEqual(detections.map((item) => item.category), ["上衣", "裤子", "鞋子"]);
+  assert.deepEqual(detections.map((item) => item.detectionId), ["garment-0", "garment-1", "garment-2"]);
+});
+
+test("多件衣物定位拒绝人物照片和不足两件的结果", () => {
+  assert.throws(() => cloudTest.normalizeFlatLayGarments({ person_present: true, garments: [] }), (error) => error.code === "MULTI_GARMENT_PERSON_PRESENT");
+  assert.throws(() => cloudTest.normalizeFlatLayGarments({ person_present: false, garments: [
+    { category: "裤子", bbox_2d: [50, 50, 950, 950], confidence: 0.99 }
+  ] }), (error) => error.code === "MULTI_GARMENT_NOT_ENOUGH");
+});
+
+test("百度框选抠图只接受可靠主衣物框并换算像素坐标", () => {
+  assert.deepEqual(structuredClone(cloudTest.normalizePrimaryGarmentBox({
+    person_present: false, garment: { bbox_2d: [50, 100, 900, 950], confidence: 0.96 }
+  })), [50, 100, 900, 950]);
+  assert.throws(() => cloudTest.normalizePrimaryGarmentBox({ person_present: true, garment: null }), { code: "GARMENT_PERSON_PRESENT" });
+  assert.throws(() => cloudTest.normalizePrimaryGarmentBox({ person_present: false, garment: { bbox_2d: [1, 1, 10, 10], confidence: 0.9 } }), { code: "GARMENT_BOX_INVALID" });
+  const payload = cloudTest.baiduControlPayload(Buffer.from("image"), [100, 200, 900, 800], { width: 1000, height: 2000 });
+  assert.deepEqual(structuredClone(payload.position), [[[100, 400], [901, 1602]]]);
+  assert.equal(payload.method, "control");
+  assert.equal(payload.return_form, "rgba");
+  assert.equal(payload.refine_mask, "true");
+});
 
 test("灵感链接只接受小红书 HTTPS 单条地址", () => {
   assert.equal(inspiration.extractXiaohongshuUrl("复制打开 https://xhslink.com/a1B2C 分享"), "https://xhslink.com/a1B2C");
@@ -121,7 +157,7 @@ test("AI 灵感结果过滤越界槽位和人物品牌材质字段", () => {
     summary: "一套清爽通勤穿搭",
     bodyShape: "禁止保存",
     slots: [
-      { slot: "top", category: "上衣", name: "白衬衫", color: "白色", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"], brand: "禁止保存", material: "禁止保存" },
+      { slot: "top", category: "上衣", name: "白衬衫", color: "白色", season: "春秋", thickness: "适中", pattern: "纯色", design_details: ["木耳边", "短袖", "褶边"], styles: ["韩式简约", "通勤"], scenes: ["通勤"], brand: "禁止保存", material: "禁止保存" },
       { slot: "shoes", category: "鞋子", name: "鞋" },
       { slot: "top", category: "上衣", name: "重复上装" }
     ]
@@ -129,6 +165,10 @@ test("AI 灵感结果过滤越界槽位和人物品牌材质字段", () => {
   assert.equal(result.mainImageIndex, 2);
   assert.equal(result.slots.length, 1);
   assert.equal(result.slots[0].name, "白衬衫");
+  assert.equal(result.slots[0].season, "春秋");
+  assert.equal(result.slots[0].thickness, "适中");
+  assert.deepEqual(result.slots[0].designDetails, ["木耳边", "荷叶边"]);
+  assert.deepEqual(result.slots[0].styles, ["韩系", "通勤"]);
   assert.equal("brand" in result.slots[0], false);
   assert.equal("material" in result.slots[0], false);
 });
@@ -212,20 +252,85 @@ test("灵感 AI 第二次网络失败也只重试一次并保留首次用量", a
   assert.equal(calls, 2);
 });
 
-test("衣橱匹配坚持同品类、55分门槛和每槽位前三件", () => {
-  const slot = { slot: "top", category: "上衣", name: "白色通勤上衣", color: "米白", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] };
+test("衣橱匹配先筛季节薄厚再按风格色彩排序并生成建议", () => {
+  const slot = { slot: "top", category: "上衣", name: "白色韩系上衣", color: "米白", season: "春秋", thickness: "适中", pattern: "纯色", styles: ["韩式简约", "清爽"], scenes: ["通勤"] };
   const items = [
-    { id: "1", category: "上衣", color: "白色", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] },
-    { id: "2", category: "上衣", color: "米白", pattern: "纯色", styles: ["通勤"], scenes: [] },
-    { id: "3", category: "上衣", color: "奶油", pattern: "条纹", styles: [], scenes: [] },
-    { id: "4", category: "上衣", color: "白色", pattern: "波点", styles: [], scenes: [] },
-    { id: "5", category: "裤子", color: "白色", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] },
-    { id: "6", category: "上衣", color: "黑色", pattern: "条纹", styles: [], scenes: [] }
+    { id: "1", category: "上衣", color: "白色", season: "春秋", thickness: "适中", pattern: "纯色", styles: ["韩系", "清新"], scenes: ["通勤"] },
+    { id: "2", category: "上衣", color: "浅蓝", season: "多季", thickness: "薄", pattern: "纯色", styles: ["清新"], scenes: [] },
+    { id: "3", category: "上衣", color: "黑色", season: "春秋", thickness: "厚", pattern: "纯色", styles: ["酷飒"], scenes: [] },
+    { id: "4", category: "上衣", color: "奶油", season: "秋冬", thickness: "厚", pattern: "纯色", styles: ["韩系"], scenes: [] },
+    { id: "5", category: "裤子", color: "白色", season: "春秋", thickness: "适中", pattern: "纯色", styles: ["韩系"], scenes: ["通勤"] },
+    { id: "6", category: "上衣", color: "灰色", season: "春秋", thickness: "适中", pattern: "条纹", styles: ["通勤"], scenes: [] }
   ];
   const result = inspiration.matchWardrobe([slot], items);
-  assert.deepEqual(result.matches[0].candidates.map((entry) => entry.item.id), ["1", "2", "3"]);
+  assert.deepEqual(result.matches[0].candidates.map((entry) => entry.item.id), ["1", "2"]);
+  assert.match(result.matches[0].candidates[0].suggestion, /春秋.*适中.*韩系/);
+  assert.equal(result.matches[0].candidates.some((entry) => entry.item.id === "3"), false);
+  assert.equal(result.matches[0].candidates.some((entry) => entry.item.id === "4"), false);
   assert.equal(result.matches[0].candidates.some((entry) => entry.item.id === "5"), false);
   assert.equal(result.matches[0].candidates.some((entry) => entry.item.id === "6"), false);
+});
+
+test("韩系参考上衣不得仅因同色和同季节匹配普通休闲T恤", () => {
+  const slot = { slot: "top", category: "上衣", name: "格纹荷叶边短袖上衣", evidence: "荷叶边、V领、收腰", color: "深蓝", season: "春夏", thickness: "薄", pattern: "格纹", styles: ["韩系", "甜美"], scenes: ["休闲"] };
+  const result = inspiration.matchWardrobe([slot], [{
+    id: "casual-tee", name: "蓝色上衣", category: "上衣", color: "蓝色", season: "春夏", thickness: "薄", pattern: "纯色", styles: ["休闲"], scenes: ["休闲"]
+  }]);
+  assert.deepEqual(result.matches[0].candidates, []);
+  assert.match(result.matches[0].advice, /韩系、甜美/);
+});
+
+test("韩系花边格纹上衣拒绝只命中简约的中性条纹衬衫", () => {
+  const slot = { slot: "top", category: "上衣", name: "格纹短袖上衣", evidence: "V领", color: "深蓝", season: "春夏", thickness: "薄", pattern: "格纹", designDetails: ["荷叶边", "收腰"], styles: ["韩系", "清新", "简约"], scenes: ["通勤"] };
+  const items = [
+    { id: "neutral-shirt", name: "条纹长袖衬衫", category: "上衣", color: "白色", season: "春夏", thickness: "薄", pattern: "条纹", styles: ["简约", "通勤"], scenes: ["通勤"] },
+    { id: "korean-plain", name: "韩系短袖上衣", category: "上衣", color: "深蓝", season: "春夏", thickness: "薄", pattern: "格纹", styles: ["韩系", "简约"], scenes: ["通勤"] },
+    { id: "korean-ruffle", name: "格纹短袖上衣", category: "上衣", color: "深蓝", season: "春夏", thickness: "薄", pattern: "格纹", designDetails: ["木耳边"], styles: ["韩系", "甜美"], scenes: ["通勤"] }
+  ];
+  const result = inspiration.matchWardrobe([slot], items);
+  assert.deepEqual(result.matches[0].candidates.map((entry) => entry.item.id), ["korean-ruffle"]);
+  assert.doesNotMatch(result.matches[0].candidates[0].suggestion, /中性色易搭配|互补色/);
+});
+
+test("结构化设计细节优先匹配同组细节，旧衣物仍回退名称", () => {
+  const slot = { slot: "top", category: "上衣", name: "蓝色上衣", color: "蓝色", season: "春夏", thickness: "薄", pattern: "纯色", designDetails: ["花边"], styles: ["韩系"], scenes: [] };
+  const result = inspiration.matchWardrobe([slot], [
+    { id: "confirmed-other", name: "荷叶边上衣", category: "上衣", color: "蓝色", season: "春夏", thickness: "薄", pattern: "纯色", designDetails: ["泡泡袖"], styles: ["韩系"], scenes: [] },
+    { id: "confirmed-same", name: "蓝色上衣", category: "上衣", color: "蓝色", season: "春夏", thickness: "薄", pattern: "纯色", design_details: ["木耳边"], styles: ["韩系"], scenes: [] },
+    { id: "legacy-name", name: "蓝色荷叶边上衣", category: "上衣", color: "蓝色", season: "春夏", thickness: "薄", pattern: "纯色", styles: ["韩系"], scenes: [] }
+  ]);
+  assert.deepEqual(result.matches[0].candidates.map((entry) => entry.item.id), ["confirmed-same", "legacy-name"]);
+});
+
+test("灵感确认页展示季节厚薄设计细节受控风格与匹配建议", () => {
+  const js = require("node:fs").readFileSync(new URL("../miniprogram/pages/inspiration/index.js", import.meta.url), "utf8");
+  const wxml = require("node:fs").readFileSync(new URL("../miniprogram/pages/inspiration/index.wxml", import.meta.url), "utf8");
+  assert.match(js, /season: slot\.season/);
+  assert.match(js, /thickness: slot\.thickness/);
+  assert.match(js, /designDetails: splitTags\(slot\.designDetailsText, 6\)/);
+  assert.match(wxml, />季节</);
+  assert.match(wxml, />厚薄</);
+  assert.match(wxml, />设计细节</);
+  assert.match(wxml, /item\.advice/);
+  assert.match(wxml, /candidate\.suggestion/);
+});
+
+test("衣物录入详情和两个 Schema 贯通可选设计细节字段", () => {
+  const fs = require("node:fs");
+  const addJs = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.js", import.meta.url), "utf8");
+  const addWxml = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.wxml", import.meta.url), "utf8");
+  const detailJs = fs.readFileSync(new URL("../miniprogram/pages/item-detail/index.js", import.meta.url), "utf8");
+  const cloudServices = fs.readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js", import.meta.url), "utf8");
+  const clothingSchema = JSON.parse(fs.readFileSync(new URL("../uniCloud-aliyun/database/wr_clothing_items.schema.json", import.meta.url), "utf8"));
+  const candidateSchema = JSON.parse(fs.readFileSync(new URL("../uniCloud-aliyun/database/wr_candidates.schema.json", import.meta.url), "utf8"));
+  assert.match(addJs, /designDetails: listFromText\(form\.designDetailsText, 6\)/);
+  assert.match(addWxml, /data-field="designDetailsText"/);
+  assert.match(detailJs, /designDetails: listFromText\(form\.designDetailsText, 6\)/);
+  assert.match(cloudServices, /design_details只能从荷叶边/);
+  assert.equal(clothingSchema.properties.design_details.arrayType, "string");
+  assert.equal(candidateSchema.properties.design_details.arrayType, "string");
+  assert.equal(clothingSchema.required.includes("design_details"), false);
+  assert.equal(candidateSchema.required.includes("design_details"), false);
 });
 
 test("整套衣物完整度区分完整、局部遮挡和需要单件补拍", () => {
@@ -314,6 +419,94 @@ test("衣橱展示画布保持原像素并将衣物居中放入正方形透明�
     const offset = index * 4;
     if (output.data[offset + 3] === 0) assert.deepEqual([...output.data.subarray(offset, offset + 4)], [0, 0, 0, 0]);
   }
+});
+
+test("主体贴边但透明面积正常时可通过补透明留白恢复质量检查", () => {
+  const width = 20;
+  const height = 20;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let y = 2; y < height; y += 1) for (let x = 5; x <= 14; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset] = 90;
+    rgba[offset + 1] = 110;
+    rgba[offset + 2] = 130;
+    rgba[offset + 3] = 255;
+  }
+  const touching = garmentMaskTest.encodePng(width, height, rgba);
+  const before = cloudTest.assessMattingQuality(touching);
+  assert.equal(before.accepted, false);
+  assert.ok(before.transparentRatio >= 0.08 && before.transparentRatio <= 0.95);
+  assert.ok(before.transparentBorderRatio < 0.98);
+  const reframed = garmentMask.buildWardrobeDisplayCanvas(touching);
+  assert.equal(reframed.visiblePixelPreservationScore, 100);
+  assert.equal(cloudTest.assessMattingQuality(reframed.buffer).accepted, true);
+  const recovered = cloudTest.recoverBorderTouchingMatting(touching, before);
+  assert.equal(recovered.recovered, true);
+  assert.equal(recovered.quality.accepted, true);
+});
+
+test("裤脚下存在明显孤立背景块时不得通过补透明留白", () => {
+  const width = 24;
+  const height = 24;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let y = 2; y < height; y += 1) for (let x = 6; x <= 17; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset] = 90;
+    rgba[offset + 1] = 110;
+    rgba[offset + 2] = 130;
+    rgba[offset + 3] = 255;
+  }
+  for (let y = 18; y <= 21; y += 1) for (let x = 19; x <= 22; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset] = 190;
+    rgba[offset + 1] = 185;
+    rgba[offset + 2] = 175;
+    rgba[offset + 3] = 255;
+  }
+  const contaminated = garmentMaskTest.encodePng(width, height, rgba);
+  const quality = cloudTest.assessMattingQuality(contaminated);
+  assert.equal(quality.accepted, false);
+  assert.ok(quality.secondaryForegroundRatio > 0.01);
+  assert.equal(cloudTest.recoverBorderTouchingMatting(contaminated, quality).recovered, false);
+  const reframed = garmentMask.buildWardrobeDisplayCanvas(contaminated);
+  assert.equal(cloudTest.assessMattingQuality(reframed.buffer).accepted, false);
+});
+
+test("人工预览模式只拦截无透明背景或主体几乎消失的严重结果", () => {
+  const build = (width, height, visible) => {
+    const rgba = Buffer.alloc(width * height * 4);
+    for (const [x, y] of visible) rgba[(y * width + x) * 4 + 3] = 255;
+    return garmentMaskTest.encodePng(width, height, rgba);
+  };
+  const reviewable = [];
+  for (let y = 2; y < 18; y += 1) for (let x = 4; x < 16; x += 1) reviewable.push([x, y]);
+  assert.equal(pngAlpha.assessBasicMattingQuality(build(20, 20, reviewable)).accepted, true);
+  const almostOpaque = [];
+  for (let y = 0; y < 20; y += 1) for (let x = 0; x < 20; x += 1) if (!(x === 0 && y === 0)) almostOpaque.push([x, y]);
+  assert.equal(pngAlpha.assessBasicMattingQuality(build(20, 20, almostOpaque)).accepted, false);
+  assert.equal(pngAlpha.assessBasicMattingQuality(build(20, 20, [[10, 10]])).accepted, false);
+});
+
+test("腾讯抠图 PNG 通过前置解码后不再交给规则不同的解析器", () => {
+  const width = 20;
+  const height = 20;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let y = 2; y < height; y += 1) for (let x = 5; x <= 14; x += 1) {
+    const offset = (y * width + x) * 4;
+    rgba[offset] = 90;
+    rgba[offset + 1] = 110;
+    rgba[offset + 2] = 130;
+    rgba[offset + 3] = 255;
+  }
+  const encoded = garmentMaskTest.encodePng(width, height, rgba);
+  const providerPng = encoded.subarray(0, encoded.length - 12);
+  const checked = cloudTest.assessMattingQuality(providerPng);
+  assert.equal(checked.accepted, false);
+  assert.ok(checked.transparentRatio >= 0.08 && checked.transparentRatio <= 0.95);
+  assert.throws(() => garmentMask.buildWardrobeDisplayCanvas(providerPng), { code: "GARMENT_MASK_INVALID" });
+  const reframed = garmentMask.buildWardrobeDisplayCanvas(providerPng, 0.12, { useValidatedRgbaDecoder: true });
+  assert.equal(reframed.visiblePixelPreservationScore, 100);
+  assert.equal(cloudTest.assessMattingQuality(reframed.buffer).accepted, true);
 });
 
 test("矩形人物裁剪不得伪装成清晰衣物轮廓", () => {
@@ -1081,6 +1274,16 @@ test("识别提示不把透明上衣下的贴身打底误当核心内搭", () =>
   assert.match(source, /不得把透过面料看到的身体、裤腰或阴影误写成独立内搭/);
 });
 
+test("百度抠图压缩大图并使用30秒窗口且腾讯回退拒绝明显第二主体", () => {
+  const source = require("node:fs").readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js", import.meta.url), "utf8");
+  assert.match(source, /imageMogr2\/auto-orient\/thumbnail\/2400x2400>\/format\/jpg\/quality\/88/);
+  assert.match(source, /image\.length > 4 \* 1024 \* 1024/);
+  assert.match(source, /imageSizeFromBuffer\(image\)/);
+  assert.match(source, /百度框选抠图响应超时，请稍后重试。", 30000\)/);
+  assert.match(source, /quality\.secondaryForegroundRatio > 0\.01/);
+  assert.match(source, /fallbackReasonCode = cleanText\(baiduError\?\.code, 80\)/);
+});
+
 test("固定组合结构字段可纠正冲突布尔值且普通分层不合并", () => {
   const fixed = cloudTest.normalizeOutfitDetections({ upper_body_mode: "single", detections: [{
     slot: "top", category: "上衣", color: "米白", pattern: "纯色", styles: [], structure: "长袖固定组合上装",
@@ -1327,6 +1530,19 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     mattingCallCount += 1;
     return { cutoutKey: "cutouts/new-item.png", modelName: "商品抠图", providerCallCount: 1 };
   };
+  cloudServices.detectFlatLayGarments = async () => ({
+    detections: [
+      { detectionId: "garment-0", category: "上衣", color: "白色", bbox: [40, 40, 480, 460], confidence: 0.97 },
+      { detectionId: "garment-1", category: "裤子", color: "蓝色", bbox: [500, 60, 960, 950], confidence: 0.96 }
+    ],
+    usage: { prompt_tokens: 30, completion_tokens: 10 },
+    model: "qwen-test"
+  });
+  cloudServices.createFlatLayGarmentCrops = async (_sourceKey, userId, parentTaskId, detections) => detections.map((item) => ({
+    ...item,
+    cropKey: `multi-garment-crops/${userId}/${parentTaskId}-${item.detectionId}.jpg`,
+    contentType: "image/jpeg"
+  }));
   let hangerEditCallCount = 0;
   cloudServices.removeHanger = async () => {
     hangerEditCallCount += 1;
@@ -1348,6 +1564,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
       thickness: "薄",
       pattern: "纯色",
       material: "针织感",
+      designDetails: ["荷叶边"],
       styles: ["温柔"],
       scenes: ["休闲"],
       needsConfirmation: ["请确认材质"]
@@ -1410,6 +1627,12 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(trialQuota.recognition.remaining, 19);
   assert.equal(trialQuota.hangerRemoval.remaining, 4);
   assert.equal(trialQuota.enforcement, "observe_only");
+  const multiQuota = _test.quotaSummary({ trial_started_at: "2026-08-01T00:00:00.000Z", trial_ends_at: "2026-08-08T00:00:00.000Z" }, [
+    { mode: "multi_detection", status: "completed", stage: "multi_review", prompt_tokens: 30, completion_tokens: 10, created_at: "2026-08-02T00:00:00.000Z" },
+    { mode: "multi_item", status: "completed", stage: "awaiting_confirmation", prompt_tokens: 30, completion_tokens: 10, created_at: "2026-08-02T00:01:00.000Z" },
+    { mode: "multi_item", status: "completed", stage: "saved", prompt_tokens: 30, completion_tokens: 10, created_at: "2026-08-02T00:02:00.000Z" }
+  ], fixedNow);
+  assert.equal(multiQuota.recognition.used, 1);
   assert.equal(_test.shanghaiDayKey("2026-08-03T16:30:00.000Z"), "2026-08-04");
   const seventhDayReward = _test.nextStarAccount({
     user_id: "user-1", balance: 6, total_earned: 6, current_streak: 6, longest_streak: 6,
@@ -1459,10 +1682,12 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
   else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-11-wear-record-detail-v41");
+  assert.equal(health.body.buildId, "2026-08-14-design-details-v56");
   assert.deepEqual(health.body.outfitPlans, { enabled: true, mode: "private" });
+  assert.deepEqual(health.body.multiGarment, { enabled: true, maxItems: 3, personPhotos: false });
   assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
-  assert.equal(health.body.models.productSegmentation, "SegmentCommodity");
+  assert.equal(health.body.models.productSegmentation, "BaiduControlMatting");
+  assert.equal(health.body.models.productSegmentationFallback, "SegmentCommodity");
   assert.equal(health.body.garmentSegmentation.provider, "aliyun-bailian");
   assert.deepEqual(health.body.outfitParsing, { enabled: true, region: "cn-beijing" });
   assert.deepEqual(health.body.garmentSegmentationDiagnostic, {
@@ -1526,10 +1751,28 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.ok(login.body.token);
   assert.equal(login.body.user.role, "admin");
 
+  const weakRegistration = readResponse(await main(makeEvent("/api/auth/register", "POST", {
+    username: "new-member", password: "short"
+  })));
+  assert.equal(weakRegistration.status, 400);
+  assert.match(weakRegistration.body.error, /用户名或密码格式/);
+  const openRegistration = readResponse(await main(makeEvent("/api/auth/register", "POST", {
+    username: "new-member", password: "password123"
+  })));
+  assert.equal(openRegistration.status, 201);
+  assert.equal(openRegistration.body.user.username, "new-member");
+  assert.match(openRegistration.body.recoveryCode, /^[A-F0-9]{12}$/);
+  const duplicateRegistration = readResponse(await main(makeEvent("/api/auth/register", "POST", {
+    username: "new-member", password: "password123"
+  })));
+  assert.equal(duplicateRegistration.status, 409);
+  const registeredLogin = readResponse(await main(makeEvent("/api/auth/login", "POST", {
+    username: "new-member", password: "password123"
+  })));
+  assert.equal(registeredLogin.status, 200);
+
   const authorization = { authorization: `Bearer ${login.body.token}` };
-  const diagnosticInvite = readResponse(await main(makeEvent("/api/admin/invites", "POST", { code: "DIAGNOSTIC-MEMBER" }, { "x-admin-token": "test-admin-token" })));
-  assert.equal(diagnosticInvite.status, 201);
-  const diagnosticMember = readResponse(await main(makeEvent("/api/auth/register", "POST", { inviteCode: "DIAGNOSTIC-MEMBER", username: "diagnostic-member", password: "password123" })));
+  const diagnosticMember = readResponse(await main(makeEvent("/api/auth/register", "POST", { username: "diagnostic-member", password: "password123" })));
   const memberAuthorization = { authorization: `Bearer ${diagnosticMember.body.token}` };
   const memberUpload = readResponse(await main(makeEvent("/api/outfit-captures/presign", "POST", { mimeType: "image/jpeg", size: 500000 }, memberAuthorization)));
   const forbiddenDiagnostic = readResponse(await main(makeEvent(`/api/admin/outfit-captures/${memberUpload.body.captureId}/segmentation-diagnostic`, "POST", {}, memberAuthorization)));
@@ -1565,13 +1808,34 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(plans.body.purchaseEnabled, false);
   assert.equal(plans.body.pricingRule, undefined);
   assert.deepEqual(plans.body.plans.map((plan) => plan.id), ["weekly", "monthly", "yearly"]);
-  assert.deepEqual(plans.body.plans.map((plan) => plan.price), [8.9, 48.9, 448.9]);
+  assert.deepEqual(plans.body.plans.map((plan) => plan.price), [6.9, 34.9, 298]);
+  assert.deepEqual(plans.body.plans.map((plan) => plan.renewalPrice), [6.21, 27.92, 208.6]);
+  assert.deepEqual(plans.body.plans.map((plan) => plan.renewalDiscount), [0.9, 0.8, 0.7]);
   assert.ok(plans.body.plans.every((plan) => plan.purchaseEnabled === false));
-  assert.ok(plans.body.plans.every((plan) => plan.quota.recognitionLimit === 20 && plan.quota.hangerRemovalLimit === 5));
+  assert.deepEqual(plans.body.plans.map((plan) => [plan.quota.recognitionLimit, plan.quota.hangerRemovalLimit]), [[6, 1], [40, 10], [40, 10]]);
   const budget = readResponse(await main(makeEvent("/api/ai-budget", "GET", null, authorization)));
   assert.equal(budget.status, 200);
   assert.equal(budget.body.remainingTasks, 1000);
   assert.equal(budget.body.remainingYuan, 50);
+  const multiUpload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
+    mimeType: "image/jpeg", size: 500000, mode: "multi_detection", idempotencyKey: "test-multi-detection"
+  }, authorization)));
+  assert.equal(multiUpload.status, 201);
+  const multiDetection = readResponse(await main(makeEvent(`/api/tasks/${multiUpload.body.taskId}/multi-garments`, "POST", {}, authorization)));
+  assert.equal(multiDetection.status, 200);
+  assert.deepEqual(multiDetection.body.detections.map((item) => item.category), ["上衣", "裤子"]);
+  const multiSplit = readResponse(await main(makeEvent(`/api/tasks/${multiUpload.body.taskId}/multi-garments/selection`, "POST", {
+    detectionIds: multiDetection.body.detections.map((item) => item.detectionId)
+  }, authorization)));
+  assert.equal(multiSplit.status, 200);
+  assert.equal(multiSplit.body.items.length, 2);
+  assert.equal(new Set(multiSplit.body.items.map((item) => item.taskId)).size, 2);
+  assert.ok(multiSplit.body.items.every((item) => item.cropUrl.includes("multi-garment-crops")));
+  const repeatedMultiSplit = readResponse(await main(makeEvent(`/api/tasks/${multiUpload.body.taskId}/multi-garments/selection`, "POST", {
+    detectionIds: multiDetection.body.detections.map((item) => item.detectionId)
+  }, authorization)));
+  assert.deepEqual(repeatedMultiSplit.body.items.map((item) => item.taskId), multiSplit.body.items.map((item) => item.taskId));
+  const budgetAfterMultiDetection = readResponse(await main(makeEvent("/api/ai-budget", "GET", null, authorization)));
 
   const outfitEvents = [];
   cloudServices.analyzeOutfit = async () => {
@@ -1914,7 +2178,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const recognitionBeforeMatting = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/recognition`, "POST", {}, authorization)));
   assert.equal(recognitionBeforeMatting.status, 409);
   const budgetAfterRejectedOrder = readResponse(await main(makeEvent("/api/ai-budget", "GET", null, authorization)));
-  assert.equal(budgetAfterRejectedOrder.body.remainingYuan, 50);
+  assert.equal(budgetAfterRejectedOrder.body.remainingYuan, budgetAfterMultiDetection.body.remainingYuan);
 
   const matting = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/matting`, "POST", {}, authorization)));
   assert.equal(matting.status, 200);
@@ -1938,7 +2202,8 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(recognition.status, 200);
   assert.equal(recognition.body.tags.category, "上衣");
   assert.equal(recognition.body.tags.season, "春夏");
-  assert.equal(recognition.body.budget.successfulTasks, 1);
+  assert.deepEqual(recognition.body.tags.designDetails, ["荷叶边"]);
+  assert.equal(recognition.body.budget.successfulTasks, budgetAfterMultiDetection.body.successfulTasks + 1);
   assert.equal(recognition.body.providerName, "阿里云百炼");
   assert.equal(recognition.body.modelName, "qwen3-vl-plus");
   assert.equal(lastRecognitionKey, "cutouts/new-item-no-hanger.png");
@@ -1949,7 +2214,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const replay = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/recognition`, "POST", {}, authorization)));
   assert.equal(replay.status, 200);
   assert.equal(replay.body.draftId, recognition.body.draftId);
-  assert.equal(replay.body.budget.successfulTasks, 1);
+  assert.equal(replay.body.budget.successfulTasks, recognition.body.budget.successfulTasks);
   const otherUserCannotReadTask = readResponse(await main(makeEvent(`/api/tasks/${upload.body.taskId}/matting`, "POST", {}, friendAuthorization)));
   assert.equal(otherUserCannotReadTask.status, 404);
 
@@ -1971,7 +2236,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-11-wear-record-detail-v41");
+  assert.equal(failedRecognition.body.buildId, "2026-08-14-design-details-v56");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
@@ -2023,12 +2288,14 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     thickness: "薄",
     pattern: "纯色",
     material: "棉混纺",
+    designDetails: ["荷叶边", "短袖"],
     styles: ["温柔"],
     scenes: ["休闲"]
   }, authorization)));
   assert.equal(saved.status, 201);
   assert.equal(saved.body.name, "用户确认后的上衣");
   assert.equal(saved.body.material, "棉混纺");
+  assert.deepEqual(saved.body.designDetails, ["荷叶边"]);
   assert.equal(saved.body.source_type, "outfit_supplement");
 
   cloudServices.sourceHash = async () => "d".repeat(64);
@@ -2076,12 +2343,14 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     thickness: "薄",
     pattern: "纯色",
     material: "棉混纺",
+    designDetails: ["木耳边", "不存在细节"],
     styles: ["温柔"],
     scenes: ["休闲"],
     price: 199
   }, authorization)));
   assert.equal(candidateCreated.status, 201);
   assert.equal(candidateCreated.body.material, "棉混纺");
+  assert.deepEqual(candidateCreated.body.designDetails, ["木耳边"]);
   assert.match(candidateCreated.body.imageUrl, /^https:\/\//);
 
   const candidateRead = readResponse(await main(makeEvent(`/api/candidates/${candidateCreated.body.id}`, "GET", null, authorization)));
@@ -2170,6 +2439,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const purchasedItem = afterPurchase.body.find((item) => item.name === "候选浅紫衬衫");
   assert.equal(purchasedItem.material, "棉混纺");
   assert.equal(purchasedItem.season, "春夏");
+  assert.deepEqual(purchasedItem.designDetails, ["木耳边"]);
 
   // 编辑只能改变用户确认字段，不能覆盖图片、归属或穿着次数。
   const updatedItem = readResponse(await main(makeEvent(`/api/items/${purchasedItem.id}`, "PATCH", {
@@ -2180,12 +2450,14 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     thickness: "适中",
     pattern: "纯色",
     material: "棉混纺",
+    designDetails: ["泡泡袖", "公主袖"],
     styles: ["通勤"],
     scenes: ["通勤", "休闲"],
     price: 188
   }, authorization)));
   assert.equal(updatedItem.status, 200);
   assert.equal(updatedItem.body.name, "修改后的浅紫衬衫");
+  assert.deepEqual(updatedItem.body.designDetails, ["泡泡袖"]);
   assert.equal(updatedItem.body.image_key, purchasedItem.image_key);
   assert.equal(updatedItem.body.wear_count, purchasedItem.wear_count);
 

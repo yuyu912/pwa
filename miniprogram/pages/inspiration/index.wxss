@@ -1,4 +1,4 @@
-.inspiration-page { padding-bottom: 80rpx; background: #f7f2e6; color: #554b43; min-height: 100vh; box-sizing: border-box; }
+.inspiration-page { padding-bottom: calc(150rpx + env(safe-area-inset-bottom)); background: #f7f2e6; color: #554b43; min-height: 100vh; box-sizing: border-box; }
 .hero { padding: 18rpx 8rpx 28rpx; }
 .eyebrow { color: #8c9875; }
 .title { margin-top: 14rpx; font-size: 48rpx; line-height: 1.25; font-weight: 700; }
@@ -33,6 +33,7 @@ textarea { box-sizing: border-box; width: 100%; height: 190rpx; padding: 22rpx; 
 .result-heading { margin: 34rpx 4rpx 20rpx; font-size: 38rpx; font-weight: 700; }
 .match-title { font-size: 31rpx; font-weight: 650; }
 .recognized { margin-top: 8rpx; color: #938678; font-size: 23rpx; }
+.match-advice { margin-top: 14rpx; padding: 16rpx; border-radius: 14rpx; background: #f2eee5; color: #756959; font-size: 23rpx; line-height: 1.55; }
 .candidate { display: flex; margin-top: 20rpx; padding-top: 20rpx; border-top: 2rpx solid #eee5d6; }
 .candidate image { width: 126rpx; height: 126rpx; border-radius: 18rpx; background: #eee8dc; }
 .candidate-copy { display: flex; flex: 1; flex-direction: column; justify-content: center; margin-left: 18rpx; }
@@ -43,3 +44,35 @@ textarea { box-sizing: border-box; width: 100%; height: 190rpx; padding: 22rpx; 
 .history-title { margin-bottom: 10rpx; font-size: 29rpx; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .delete { padding: 18rpx 0 18rpx 28rpx; color: #a65e58; }
 .new-button { margin-bottom: 26rpx; }
+
+/* 首页莓果粉主题：只统一配色，不改变灵感流程与布局。 */
+.inspiration-page { background: #f8f3e8; color: #554b47; }
+.inspiration-page .eyebrow,
+.inspiration-page .section-kicker,
+.inspiration-page .slot-name { color: #a76f7b; }
+.inspiration-page .subtitle,
+.inspiration-page .source-author,
+.inspiration-page .source-link,
+.inspiration-page .muted,
+.inspiration-page .field text,
+.inspiration-page .recognized,
+.inspiration-page .candidate-copy text,
+.inspiration-page .privacy-note,
+.inspiration-page .divider { color: #8f7d78; }
+.inspiration-page .tabs,
+.inspiration-page .card { border-color: rgba(193, 126, 140, .22); background: rgba(255, 252, 246, .94); }
+.inspiration-page .tab { color: #967d7f; }
+.inspiration-page .tab.active,
+.inspiration-page .status-pill { background: #f3e0e2; color: #8c5f69; }
+.inspiration-page textarea,
+.inspiration-page .field input,
+.inspiration-page .match-advice { background: #f6e9e7; color: #695b58; }
+.inspiration-page .primary { background: #c9828f; color: #fff; }
+.inspiration-page .secondary { background: #f2e2e2; color: #815d65; }
+.inspiration-page .progress { color: #88656b; }
+.inspiration-page .progress-dot { background: #c9828f; }
+.inspiration-page .source-platform { color: #a45f6c; }
+.inspiration-page .slot,
+.inspiration-page .candidate { border-color: #edddda; }
+.inspiration-page .candidate image { background: #f2e7e2; }
+.inspiration-page .gap { background: #f8e8e3; color: #8d665f; }

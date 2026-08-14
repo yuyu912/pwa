@@ -1,0 +1,13 @@
+<view class="tab-shell">
+  <view class="tab-bar">
+    <view wx:for="{{tabs}}" wx:key="pagePath" class="tab-item {{selected === index ? 'active' : ''}}" data-path="{{item.pagePath}}" data-index="{{index}}" bindtap="switchTab">
+      <view class="tab-icon {{item.icon}}-icon">
+        <block wx:if="{{item.icon === 'home'}}"><view class="home-roof"></view><view class="home-body"></view></block>
+        <block wx:elif="{{item.icon === 'bulb'}}"><view class="bulb-ray bulb-top"></view><view class="bulb-ray bulb-left"></view><view class="bulb-ray bulb-right"></view><view class="bulb-core"></view><view class="bulb-base"></view></block>
+        <block wx:elif="{{item.icon === 'calendar'}}"><view class="calendar-ring ring-left"></view><view class="calendar-ring ring-right"></view><view class="calendar-line"></view><view class="calendar-dot dot-one"></view><view class="calendar-dot dot-two"></view><view class="calendar-dot dot-three"></view></block>
+        <block wx:else><view class="mine-head"></view><view class="mine-body"></view></block>
+      </view>
+      <text>{{item.text}}</text>
+    </view>
+  </view>
+</view>
