@@ -36,6 +36,8 @@ test("添加衣物页保持顺序处理、逐件确认和失败跳过入口", ()
   const template = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.wxml", import.meta.url), "utf8");
   assert.match(script, /const count = this\.data\.entryMode === "candidate" \|\| this\.data\.photoMode === "multi" \? 1 : 9/);
   assert.match(script, /wx\.chooseMedia\(\{[\s\S]*count,/);
+  assert.match(script, /if \(this\.data\.batchItems\.length > 1 && this\.data\.stage !== "batch-complete"\)/);
+  assert.match(template, /class="upload-empty-button" catchtap="chooseImage"/);
   assert.match(script, /for \(let index = 0; index < batchItems\.length; index \+= 1\)/);
   assert.match(script, /await this\.compressFile/);
   assert.match(script, /nextBatchIndex\(this\.data\.batchItems, this\.data\.batchIndex\)/);
@@ -64,4 +66,20 @@ test("多件衣物入口限制单张无人物照片并在确认后复用逐件�
   assert.match(script, /最多返回 3 件/);
   assert.match(api, /detectMultipleGarments/);
   assert.match(api, /splitMultipleGarments/);
+});
+
+test("衣物属性使用受控多选标签且单件保存后可连续录入", () => {
+  const script = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.js", import.meta.url), "utf8");
+  const template = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.wxml", import.meta.url), "utf8");
+  assert.match(script, /const STYLES = \["韩系", "清新", "酷飒", "简约", "休闲", "通勤", "复古", "甜美", "运动", "街头", "优雅", "度假"\]/);
+  assert.match(script, /const SCENES = \["休闲", "通勤", "约会", "旅行", "聚会", "运动"\]/);
+  assert.match(script, /styleOptions: selectableOptions\(STYLES, tags\.styles \|\| \[\]\)/);
+  assert.match(script, /options\.filter\(\(item\) => item\.selected\)\.length >= 3/);
+  assert.match(script, /styles: this\.data\.styleOptions\.filter/);
+  assert.match(script, /stage: "single-complete"/);
+  assert.doesNotMatch(script, /setTimeout\(\(\) => wx\.redirectTo\(\{ url: "\/pages\/wardrobe\/index" \}\), 500\)/);
+  assert.match(script, /continueAdding\(\)[\s\S]*taskId: "", draftId: ""[\s\S]*batchItems: \[\][\s\S]*\(\) => this\.chooseImage\(\)/);
+  assert.match(template, /可多选，最多 3 项/);
+  assert.match(template, /bindtap="continueAdding">继续录入/);
+  assert.match(template, /bindtap="openWardrobe">查看我的衣橱/);
 });

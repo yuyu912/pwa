@@ -14,7 +14,7 @@ vm.runInNewContext(weatherSource, {
   exports: weatherModule.exports,
   require: () => ({ areaList: { province_list: {}, city_list: {}, county_list: {} } })
 });
-const { recommend } = weatherModule.exports;
+const { colorRelationship, recommend } = weatherModule.exports;
 const capsuleSource = fs.readFileSync(new URL("../miniprogram/utils/capsule-plan.js", import.meta.url), "utf8");
 const capsuleModule = { exports: {} };
 vm.runInNewContext(capsuleSource, { module: capsuleModule, exports: capsuleModule.exports, Number, Array });
@@ -175,16 +175,156 @@ test("搭配生成优先选择符合用户场景的上装和下装", () => {
 });
 
 test("换一套会在同类可选衣物中轮换", () => {
-  const result = structuredClone(recommend(outfitItems, outfitWeather, "休闲", 1));
-  assert.deepEqual(result.items.map((item) => item.id), ["2", "4"]);
+  const first = structuredClone(recommend(outfitItems, outfitWeather, "休闲", 0));
+  const second = structuredClone(recommend(outfitItems, outfitWeather, "休闲", 1));
+  assert.notDeepEqual(second.items.map((item) => item.id), first.items.map((item) => item.id));
+  assert.ok(second.outfitCount <= 3);
 });
 
-test("缺少下装时返回真实单品并给出缺失提示", () => {
-  const result = structuredClone(recommend(outfitItems.slice(0, 2), outfitWeather, "通勤"));
-  assert.deepEqual(result.items.map((item) => item.id), ["2"]);
+test("今日穿搭优先颜色口诀协调且保留单一图案重点", () => {
+  const items = [
+    { id: "pink-top", name: "粉色格纹上衣", category: "上衣", color: "粉色", pattern: "格纹", season: "多季", thickness: "适中", scenes: ["通勤"] },
+    { id: "green-bottom", name: "深绿长裤", category: "裤子", color: "深绿色", pattern: "纯色", season: "多季", thickness: "适中", scenes: ["通勤"] },
+    { id: "orange-bottom", name: "橙色长裤", category: "裤子", color: "橙色", pattern: "纯色", season: "多季", thickness: "适中", scenes: ["通勤"] }
+  ];
+  const result = structuredClone(recommend(items, outfitWeather, "通勤"));
+  assert.deepEqual(result.items.map((item) => item.id), ["pink-top", "green-bottom"]);
+  assert.match(result.reason, /颜色口诀协调配色/);
+  assert.match(result.reason, /图案单品搭配纯色/);
+  assert.equal(colorRelationship("蓝色", "白色").reason, "颜色口诀协调配色");
+});
+
+test("20℃和21℃都允许薄款加外套参与整套保暖评分", () => {
+  const items = [
+    { id: "thin-top", name: "薄上衣", category: "上衣", color: "白色", season: "多季", thickness: "薄", scenes: ["休闲"] },
+    { id: "thin-bottom", name: "薄长裤", category: "裤子", color: "黑色", season: "多季", thickness: "薄", scenes: ["休闲"] },
+    { id: "mid-coat", name: "适中外套", category: "外套", color: "黑色", season: "多季", thickness: "适中", scenes: ["休闲"] }
+  ];
+  for (const temperature of [20, 21]) {
+    const result = structuredClone(recommend(items, { temperature, high: temperature, condition: "晴" }, "休闲"));
+    assert.deepEqual(result.items.map((item) => item.id), ["thin-top", "thin-bottom", "mid-coat"]);
+  }
+});
+
+test("极端高温淘汰厚款但普通温度边界不一刀切", () => {
+  const items = [
+    { id: "thin", name: "薄上衣", category: "上衣", color: "白色", season: "春夏", thickness: "薄", scenes: ["休闲"] },
+    { id: "thick", name: "厚上衣", category: "上衣", color: "白色", season: "多季", thickness: "厚", scenes: ["休闲"] },
+    { id: "bottom", name: "薄长裤", category: "裤子", color: "黑色", season: "多季", thickness: "薄", scenes: ["休闲"] }
+  ];
+  const hot = structuredClone(recommend(items, { temperature: 31, high: 31, condition: "晴" }, "休闲"));
+  assert.equal(hot.items.some((item) => item.id === "thick"), false);
+  const mild = structuredClone(recommend(items, { temperature: 25, high: 25, condition: "晴" }, "休闲"));
+  assert.ok(mild.outfitCount >= 1);
+});
+
+test("30℃允许适中短袖与适中下装组合但仍淘汰厚款", () => {
+  const result = structuredClone(recommend([
+    { id: "mid-short-top", name: "适中短袖", category: "上衣", season: "春夏", thickness: "适中", scenes: ["约会"] },
+    { id: "mid-bottom", name: "适中下装", category: "裤子", season: "春夏", thickness: "适中", scenes: ["约会"] },
+    { id: "thick-top", name: "厚上衣", category: "上衣", season: "多季", thickness: "厚", scenes: ["约会"] }
+  ], { temperature: 30, low: 27, high: 31, condition: "多云" }, "约会"));
+  assert.deepEqual(result.items.map((item) => item.id), ["mid-short-top", "mid-bottom"]);
+  assert.equal(result.items.some((item) => item.id === "thick-top"), false);
+  assert.equal(result.complete, true);
+});
+
+test("寒冷或风雨天气缺少外套时明确报告结构缺口", () => {
+  const result = structuredClone(recommend([
+    { id: "mid-top", name: "适中上衣", category: "上衣", season: "秋冬", thickness: "适中", scenes: ["通勤"] },
+    { id: "mid-bottom", name: "适中长裤", category: "裤子", season: "秋冬", thickness: "适中", scenes: ["通勤"] }
+  ], { temperature: 12, high: 12, condition: "晴" }, "通勤"));
+  assert.ok(result.missing.includes("外套"));
+  assert.deepEqual(result.items, []);
   assert.equal(result.complete, false);
-  assert.deepEqual(result.missing, ["下装或连衣裙"]);
-  assert.equal(result.missingText, "下装或连衣裙");
+});
+
+test("天气框架先于裙装偏好，冬天不返回不安全的夏季薄裙", () => {
+  const items = [
+    { id: "summer-dress", name: "夏季薄裙", category: "连衣裙", season: "春夏", thickness: "薄", scenes: ["约会"] },
+    { id: "winter-top", name: "冬季厚上衣", category: "上衣", season: "秋冬", thickness: "厚", scenes: ["约会"] },
+    { id: "winter-pants", name: "冬季厚裤", category: "裤子", season: "秋冬", thickness: "厚", scenes: ["约会"] },
+    { id: "winter-coat", name: "冬季厚外套", category: "外套", season: "秋冬", thickness: "厚", scenes: ["约会"] }
+  ];
+  const result = structuredClone(recommend(items, { temperature: 5, low: 2, high: 7, condition: "晴" }, "约会", 0, {
+    preferredCategories: ["连衣裙"]
+  }));
+  assert.equal(result.items.some((item) => item.id === "summer-dress"), false);
+  assert.deepEqual(result.items.map((item) => item.id), ["winter-top", "winter-pants", "winter-coat"]);
+  assert.ok(result.missing.includes("当前天气下没有安全的连衣裙组合"));
+  assert.match(result.reason, /先通过天气安全筛选/);
+});
+
+test("凉冷天气允许薄裙与足够保暖的厚外套组成安全叠穿", () => {
+  const result = structuredClone(recommend([
+    { id: "summer-dress", name: "薄连衣裙", category: "连衣裙", season: "春夏", thickness: "薄", scenes: ["约会"] },
+    { id: "thick-coat", name: "厚外套", category: "外套", season: "秋冬", thickness: "厚", scenes: ["约会"] }
+  ], { temperature: 12, low: 12, high: 12, condition: "晴" }, "约会", 0, { preferredCategories: ["连衣裙"] }));
+  assert.deepEqual(result.items.map((item) => item.id), ["summer-dress", "thick-coat"]);
+  assert.equal(result.complete, true);
+});
+
+test("大温差天气优先可脱外套并分别适配白天和早晚", () => {
+  const items = [
+    { id: "thin-top", name: "薄上衣", category: "上衣", color: "白色", season: "春秋", thickness: "薄", scenes: ["通勤"] },
+    { id: "thin-bottom", name: "薄长裤", category: "裤子", color: "黑色", season: "春秋", thickness: "薄", scenes: ["通勤"] },
+    { id: "mid-coat", name: "适中外套", category: "外套", color: "黑色", season: "春秋", thickness: "适中", scenes: ["通勤"] }
+  ];
+  const result = structuredClone(recommend(items, { temperature: 23, low: 15, high: 27, condition: "晴" }, "通勤"));
+  assert.deepEqual(result.items.map((item) => item.id), ["thin-top", "thin-bottom", "mid-coat"]);
+  assert.match(result.reason, /早晚温差12℃.*外套可穿脱调节/);
+});
+
+test("穿搭助手偏好只能软排序且明确排除品类会硬过滤", () => {
+  const items = [
+    { id: "sweet-top", name: "甜美粉色上衣", category: "上衣", color: "粉色", season: "多季", thickness: "薄", styles: ["甜美"], scenes: ["约会"] },
+    { id: "plain-top", name: "简约白色上衣", category: "上衣", color: "白色", season: "多季", thickness: "薄", styles: ["简约"], scenes: ["约会"] },
+    { id: "skirt", name: "半身裙", category: "半身裙", color: "白色", season: "多季", thickness: "薄", styles: ["甜美"], scenes: ["约会"] },
+    { id: "pants", name: "长裤", category: "裤子", color: "米色", season: "多季", thickness: "薄", styles: ["甜美"], scenes: ["约会"] }
+  ];
+  const result = structuredClone(recommend(items, { temperature: 25, low: 22, high: 27, condition: "晴" }, "约会", 0, {
+    styles: ["甜美"], preferredColors: ["粉色"], excludedCategories: ["半身裙"]
+  }));
+  assert.deepEqual(result.items.map((item) => item.id), ["sweet-top", "pants"]);
+  assert.equal(result.items.some((item) => item.category === "半身裙"), false);
+  assert.match(result.reason, /甜美风格|喜欢的颜色/);
+});
+
+test("穿搭助手明确想穿裙子时优先天气安全的真实裙装", () => {
+  const items = [
+    { id: "date-dress", name: "隆重约会连衣裙", category: "连衣裙", color: "酒红色", season: "多季", thickness: "薄", styles: ["优雅"], scenes: ["约会"] },
+    { id: "casual-top", name: "休闲上衣", category: "上衣", color: "白色", season: "多季", thickness: "薄", styles: ["休闲"], scenes: ["休闲"] },
+    { id: "casual-pants", name: "休闲长裤", category: "裤子", color: "蓝色", season: "多季", thickness: "薄", styles: ["休闲"], scenes: ["休闲"] }
+  ];
+  const result = structuredClone(recommend(items, { temperature: 25, low: 22, high: 27, condition: "晴" }, "约会", 0, {
+    preferredCategories: ["连衣裙", "半身裙"], styles: ["优雅"]
+  }));
+  assert.deepEqual(result.items.map((item) => item.id), ["date-dress"]);
+  assert.match(result.reason, /优先满足你想穿的连衣裙或半身裙/);
+});
+
+test("多轮反馈可以锁定一件真实衣物并排除另一件", () => {
+  const items = [
+    { id: "keep-top", name: "保留上衣", category: "上衣", color: "白色", season: "多季", thickness: "薄", scenes: ["约会"] },
+    { id: "other-top", name: "其他上衣", category: "上衣", color: "粉色", season: "多季", thickness: "薄", scenes: ["约会"] },
+    { id: "old-pants", name: "旧裤子", category: "裤子", color: "黑色", season: "多季", thickness: "薄", scenes: ["约会"] },
+    { id: "new-pants", name: "新裤子", category: "裤子", color: "米色", season: "多季", thickness: "薄", scenes: ["约会"] }
+  ];
+  const result = structuredClone(recommend(items, { temperature: 25, low: 22, high: 27, condition: "晴" }, "约会", 0, {
+    lockedItemIds: ["keep-top"], excludedItemIds: ["old-pants"]
+  }));
+  assert.equal(result.items.some((item) => item.id === "keep-top"), true);
+  assert.equal(result.items.some((item) => item.id === "old-pants"), false);
+  assert.equal(result.items.some((item) => item.id === "new-pants"), true);
+});
+
+test("缺少下装时不把单件上衣伪装成完整天气穿搭", () => {
+  const result = structuredClone(recommend(outfitItems.slice(0, 2), outfitWeather, "通勤"));
+  assert.deepEqual(result.items, []);
+  assert.equal(result.complete, false);
+  assert.ok(result.missing.includes("下装或连衣裙"));
+  assert.ok(result.missing.includes("符合当前天气框架的完整搭配"));
+  assert.match(result.missingText, /下装或连衣裙/);
 });
 
 test("7 天胶囊按品类限额选择真实衣物并计算基础组合", () => {

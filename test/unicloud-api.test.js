@@ -9,7 +9,205 @@ const require = createRequire(import.meta.url);
 const cloudModule = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/cloud-services.js");
 const cloudTest = cloudModule._test;
 const inspiration = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/inspiration.js");
+const outfitAssistant = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/outfit-assistant.js");
+
+test("穿搭助手在模型格式异常时仍能从原话提取受控需求", () => {
+  const preferences = outfitAssistant.inferPreferencesFromText({
+    current: "我晚上要去约会，想穿温柔一点，不要裙子，我比较怕冷",
+    previous: "",
+    followupUsed: false
+  });
+  assert.equal(preferences.scene, "约会");
+  assert.deepEqual(preferences.styles, ["甜美"]);
+  assert.deepEqual(preferences.excludedCategories, ["半身裙", "连衣裙"]);
+  assert.equal(preferences.warmthPreference, "warmer");
+  assert.equal(preferences.needsClarification, false);
+});
+
+test("穿搭助手把想穿裙子保留为正向品类需求而不是继续追问", () => {
+  const first = outfitAssistant.inferPreferencesFromText({ current: "推荐一个裙子", followupUsed: false });
+  assert.deepEqual(first.preferredCategories, ["连衣裙", "半身裙"]);
+  assert.equal(first.needsClarification, false);
+  const followed = outfitAssistant.inferPreferencesFromText({ previous: "推荐一个裙子", current: "约会，想隆重一点", followupUsed: true });
+  assert.equal(followed.scene, "约会");
+  assert.deepEqual(followed.styles, ["优雅"]);
+  assert.deepEqual(followed.preferredCategories, ["连衣裙", "半身裙"]);
+});
+
+test("穿搭助手多轮反馈保留旧条件并只修改用户指出的部分", () => {
+  const current = outfitAssistant.normalizePreferences({ mode: "new", scene: "约会", styles: ["优雅"], preferred_categories: ["连衣裙"], preferred_colors: ["白色"] }, false);
+  const relaxed = outfitAssistant.inferPreferencesFromText({ current: "不要这么正式，轻松一点", contextPreferences: current, currentCategories: ["连衣裙"] });
+  assert.equal(relaxed.mode, "modify");
+  assert.equal(relaxed.scene, "约会");
+  assert.deepEqual(relaxed.styles, ["休闲", "简约"]);
+  assert.deepEqual(relaxed.preferredCategories, ["连衣裙"]);
+  assert.deepEqual(relaxed.preferredColors, ["白色"]);
+  const ambiguous = outfitAssistant.inferPreferencesFromText({ current: "这件不要", contextPreferences: relaxed, currentCategories: ["连衣裙"] });
+  assert.equal(ambiguous.needsClarification, true);
+  assert.match(ambiguous.question, /连衣裙.*换掉/);
+});
+
+test("穿搭助手能区分解释、换一套和继续修改", () => {
+  const current = outfitAssistant.normalizePreferences({ mode: "new", scene: "约会", styles: ["优雅"], preferred_categories: ["连衣裙"] }, false);
+  const explanation = outfitAssistant.inferPreferencesFromText({
+    current: "为什么推荐这套？", contextPreferences: current,
+    currentOutfitFacts: [{ name: "黑色连衣裙", category: "连衣裙", color: "黑色", reasons: ["符合约会场景", "当前天气可穿"] }]
+  });
+  assert.equal(explanation.action, "answer");
+  assert.match(explanation.reply, /黑色连衣裙.*约会场景/);
+  const reroll = outfitAssistant.inferPreferencesFromText({ current: "换一套看看", contextPreferences: current });
+  assert.equal(reroll.action, "reroll");
+  assert.equal(reroll.needsClarification, false);
+  const casual = outfitAssistant.inferPreferencesFromText({ current: "不要这么正式，轻松一点", contextPreferences: current });
+  assert.equal(casual.action, "recommend");
+  assert.deepEqual(casual.styles, ["休闲", "简约"]);
+});
+
+test("穿搭助手只对临时上游故障启用本地降级", () => {
+  assert.equal(outfitAssistant.shouldFallbackToRules({ code: "billing_maintenance", providerStatusCode: 503 }), true);
+  assert.equal(outfitAssistant.shouldFallbackToRules({ code: "VISION_TIMEOUT", status: 504 }), true);
+  assert.equal(outfitAssistant.shouldFallbackToRules({ code: "OUTFIT_ASSISTANT_OUTPUT_INVALID", status: 502 }), true);
+  assert.equal(outfitAssistant.shouldFallbackToRules({ code: "VISION_UNAUTHORIZED", providerStatusCode: 401 }), false);
+  assert.equal(outfitAssistant.shouldFallbackToRules({ code: "LYROUTER_CONFIG_INVALID", status: 500 }), false);
+});
+
+test("Qwen3.7 穿搭需求理解预留足够的完整 JSON 输出空间", () => {
+  const request = cloudTest.buildOutfitAssistantRequestBody("只返回JSON", { model: "qwen/qwen3.7-plus" });
+  assert.equal(request.max_completion_tokens, 900);
+  assert.equal(request.response_format.type, "json_object");
+  assert.equal(request.temperature, 0);
+});
 const pngAlpha = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/png-alpha.js");
+
+test("穿搭需求只保留受控字段且最多追问一次", () => {
+  const result = outfitAssistant.normalizePreferences({
+    scene: "约会", styles: ["韩系", "甜美", "不存在"], preferred_categories: ["连衣裙", "帽子"], excluded_categories: ["半身裙", "帽子"],
+    preferred_colors: ["粉色"], excluded_colors: ["黑色"], warmth_preference: "warmer", summary: "温柔约会"
+  });
+  assert.deepEqual(result.styles, ["韩系", "甜美"]);
+  assert.deepEqual(result.excludedCategories, ["半身裙"]);
+  assert.deepEqual(result.preferredCategories, ["连衣裙"]);
+  assert.deepEqual(result.preferredColors, ["粉色"]);
+  assert.equal(result.warmthPreference, "warmer");
+  assert.equal(result.action, "recommend");
+  assert.equal(outfitAssistant.normalizePreferences({ needsClarification: true }, false).needsClarification, true);
+  assert.equal(outfitAssistant.normalizePreferences({ needsClarification: true }, true).needsClarification, false);
+});
+
+test("穿搭需求提示不包含衣橱数据并锁定结构化输出", () => {
+  const prompt = outfitAssistant.promptForRequest(outfitAssistant.requestText("今天约会，不穿裙子", "", false));
+  assert.match(prompt, /不选择或编造衣物/);
+  assert.match(prompt, /excluded_categories/);
+  assert.match(prompt, /preferred_categories/);
+  assert.doesNotMatch(prompt, /衣物ID|完整衣橱/);
+});
+
+test("灵感页恢复小红书专用导入并保留截图、确认和私密历史", () => {
+  const fs = require("node:fs");
+  const js = fs.readFileSync(new URL("../miniprogram/pages/inspiration/index.js", import.meta.url), "utf8");
+  const wxml = fs.readFileSync(new URL("../miniprogram/pages/inspiration/index.wxml", import.meta.url), "utf8");
+  assert.match(js, /startLink\(\)/);
+  assert.match(js, /listInspirations/);
+  assert.match(js, /confirmInspiration/);
+  assert.match(wxml, /粘贴分享文本/);
+  assert.match(wxml, /直接上传截图/);
+  assert.match(wxml, /私密历史/);
+  assert.match(wxml, /matchLevel/);
+  assert.doesNotMatch(js, /understandOutfitRequest|contextPreferences|fallbackReason/);
+  assert.doesNotMatch(wxml, /穿搭助手|太冷|换个颜色/);
+});
+
+test("视觉供应商默认百炼，存在合并配置时选择 LYRouter", () => {
+  const dashscope = cloudTest.visionProviderConfig({
+    DASHSCOPE_API_KEY: "dashscope-test-key",
+    QWEN_VL_MODEL: "qwen-test"
+  });
+  assert.equal(dashscope.provider, "dashscope");
+  assert.equal(dashscope.model, "qwen-test");
+
+  const lyrouter = cloudTest.visionProviderConfig({
+    LYROUTER_CONFIG: JSON.stringify({
+      baseUrl: "https://api.lyrouter.com/v1/",
+      apiKey: "lyrouter-test-key",
+      model: "qwen/qwen3.6-flash",
+      inputYuanPerMillion: 1.2,
+      outputYuanPerMillion: 7.2
+    })
+  });
+  assert.equal(lyrouter.provider, "lyrouter");
+  assert.equal(lyrouter.endpoint, "https://api.lyrouter.com/v1");
+  assert.equal(lyrouter.model, "qwen/qwen3.6-flash");
+});
+
+test("LYRouter 视觉请求只发送标准 image_url，不携带百炼私有参数或密钥", () => {
+  const config = cloudTest.visionProviderConfig({
+    LYROUTER_CONFIG: JSON.stringify({
+      apiKey: "must-not-leak",
+      model: "qwen/qwen3.6-flash",
+      inputYuanPerMillion: 1.2,
+      outputYuanPerMillion: 7.2
+    })
+  });
+  const body = cloudTest.buildVisionRequestBody("https://images.test/item.jpg", config);
+  assert.equal(body.model, "qwen/qwen3.6-flash");
+  assert.equal(body.enable_thinking, undefined);
+  assert.equal(body.messages[0].content[0].max_pixels, undefined);
+  assert.equal(body.messages[0].content[0].image_url.url, "https://images.test/item.jpg");
+  assert.equal(JSON.stringify(body).includes("must-not-leak"), false);
+});
+
+test("LYRouter 合并配置无效时安全停止且不回显原文", () => {
+  assert.throws(
+    () => cloudTest.visionProviderConfig({ LYROUTER_CONFIG: "{secret-value" }),
+    (error) => error.code === "LYROUTER_CONFIG_INVALID" && !JSON.stringify(error).includes("secret-value")
+  );
+});
+
+test("LYRouter 合并配置可承载百度凭证但视觉配置不回显百度密钥", () => {
+  const env = {
+    LYROUTER_CONFIG: JSON.stringify({
+      apiKey: "lyrouter-key",
+      model: "qwen/qwen3.6-flash",
+      inputYuanPerMillion: 1.2,
+      outputYuanPerMillion: 7.2,
+      baiduApiKey: "baidu-api-key",
+      baiduSecretKey: "baidu-secret-key"
+    })
+  };
+  const config = cloudTest.visionProviderConfig(env);
+  assert.deepEqual(cloudTest.baiduCredentials(env), { apiKey: "baidu-api-key", secretKey: "baidu-secret-key" });
+  assert.equal(config.provider, "lyrouter");
+  assert.equal(JSON.stringify(config).includes("baidu-api-key"), false);
+  assert.equal(JSON.stringify(config).includes("baidu-secret-key"), false);
+});
+
+test("紧凑 LYRouter 配置可在单变量长度限制内承载百度凭证", () => {
+  const env = {
+    LYROUTER_CONFIG: JSON.stringify({
+      apiKey: "lyrouter-key",
+      model: "qwen/qwen3.6-flash",
+      inputYuanPerMillion: 1.2,
+      outputYuanPerMillion: 7.2,
+      bAk: "baidu-api-key",
+      bSk: "baidu-secret-key"
+    })
+  };
+  assert.deepEqual(cloudTest.baiduCredentials(env), { apiKey: "baidu-api-key", secretKey: "baidu-secret-key" });
+});
+
+test("视觉供应商 HTTP 错误映射保留状态证据且不泄露鉴权信息", () => {
+  const cases = [[400, "VISION_BAD_REQUEST"], [401, "VISION_UNAUTHORIZED"], [429, "VISION_RATE_LIMITED"], [503, "VISION_UPSTREAM_ERROR"]];
+  for (const [statusCode, code] of cases) {
+    const error = cloudTest.visionHttpError({ statusCode, data: {} }, "lyrouter");
+    assert.equal(error.code, code);
+    assert.equal(error.providerStatusCode, statusCode);
+    assert.equal(error.provider, "lyrouter");
+    assert.equal(JSON.stringify(error).includes("Authorization"), false);
+  }
+  const timeout = cloudTest.decorateVisionRequestError(Object.assign(new Error("timeout"), { code: "QWEN_TIMEOUT", status: 504 }), "lyrouter");
+  assert.equal(timeout.code, "VISION_TIMEOUT");
+  assert.equal(timeout.provider, "lyrouter");
+});
 
 test("无人物多件衣物定位最多保留三件可靠结果", () => {
   const detections = structuredClone(cloudTest.normalizeFlatLayGarments({
@@ -41,9 +239,32 @@ test("百度框选抠图只接受可靠主衣物框并换算像素坐标", () =>
   assert.throws(() => cloudTest.normalizePrimaryGarmentBox({ person_present: false, garment: { bbox_2d: [1, 1, 10, 10], confidence: 0.9 } }), { code: "GARMENT_BOX_INVALID" });
   const payload = cloudTest.baiduControlPayload(Buffer.from("image"), [100, 200, 900, 800], { width: 1000, height: 2000 });
   assert.deepEqual(structuredClone(payload.position), [[[100, 400], [901, 1602]]]);
+  const edgePayload = cloudTest.baiduControlPayload(Buffer.from("image"), [0, 0, 999, 999], { width: 1000, height: 2000 });
+  assert.deepEqual(structuredClone(edgePayload.position), [[[1, 1], [999, 1999]]]);
   assert.equal(payload.method, "control");
   assert.equal(payload.return_form, "rgba");
   assert.equal(payload.refine_mask, "true");
+});
+
+test("模型 JSON 解析忽略前后说明和无效花括号片段", () => {
+  assert.deepEqual(structuredClone(cloudTest.parseModelJson('分析示例 {不是JSON}\\n```json\\n{"person_present":false,"garment":{"bbox_2d":[1,2,998,997],"confidence":0.96}}\\n```\\n说明 {结束}')), {
+    person_present: false,
+    garment: { bbox_2d: [1, 2, 998, 997], confidence: 0.96 }
+  });
+});
+
+test("LYRouter 衣物定位为推理输出保留足够 JSON 空间", () => {
+  const request = cloudTest.primaryGarmentBoxRequestBody("https://example.com/private-source.jpg", {
+    provider: "lyrouter", model: "qwen/qwen3.6-flash"
+  });
+  assert.equal(request.max_completion_tokens, 800);
+  assert.equal(request.response_format.type, "json_object");
+});
+
+test("LYRouter 属性和灵感识别为推理输出保留完整 JSON 空间", () => {
+  const config = { provider: "lyrouter", model: "qwen/qwen3.6-flash" };
+  assert.equal(cloudTest.buildRecognitionRequestBody("https://example.com/item.png", config).max_completion_tokens, 1200);
+  assert.equal(cloudTest.buildInspirationRequestBody(["https://example.com/look.jpg"], config, "只返回JSON").max_completion_tokens, 1400);
 });
 
 test("灵感链接只接受小红书 HTTPS 单条地址", () => {
@@ -271,13 +492,39 @@ test("衣橱匹配先筛季节薄厚再按风格色彩排序并生成建议", ()
   assert.equal(result.matches[0].candidates.some((entry) => entry.item.id === "6"), false);
 });
 
-test("韩系参考上衣不得仅因同色和同季节匹配普通休闲T恤", () => {
+test("灵感缺少同色衣物时按颜色口诀协调换色并明确解释", () => {
+  const slot = { slot: "top", category: "上衣", name: "蓝色韩系上衣", color: "蓝色", season: "春夏", thickness: "薄", pattern: "纯色", styles: ["韩系"], scenes: ["休闲"] };
+  const result = inspiration.matchWardrobe([slot], [
+    { id: "white", name: "白色韩系上衣", category: "上衣", color: "白色", season: "春夏", thickness: "薄", pattern: "纯色", styles: ["韩系"], scenes: ["休闲"] },
+    { id: "orange", name: "橙色韩系上衣", category: "上衣", color: "橙色", season: "春夏", thickness: "薄", pattern: "纯色", styles: ["韩系"], scenes: ["休闲"] }
+  ]);
+  assert.equal(result.matches[0].candidates[0].item.id, "white");
+  assert.match(result.matches[0].candidates[0].suggestion, /缺少同色时采用协调换色/);
+});
+
+test("韩系参考没有严格候选时普通T恤只能标为协调替代", () => {
   const slot = { slot: "top", category: "上衣", name: "格纹荷叶边短袖上衣", evidence: "荷叶边、V领、收腰", color: "深蓝", season: "春夏", thickness: "薄", pattern: "格纹", styles: ["韩系", "甜美"], scenes: ["休闲"] };
   const result = inspiration.matchWardrobe([slot], [{
     id: "casual-tee", name: "蓝色上衣", category: "上衣", color: "蓝色", season: "春夏", thickness: "薄", pattern: "纯色", styles: ["休闲"], scenes: ["休闲"]
   }]);
-  assert.deepEqual(result.matches[0].candidates, []);
-  assert.match(result.matches[0].advice, /韩系、甜美/);
+  assert.equal(result.matches[0].candidates.length, 1);
+  assert.equal(result.matches[0].candidates[0].matchLevel, "coordinated_alternative");
+  assert.match(result.matches[0].candidates[0].suggestion, /不能完整还原韩系、甜美风格/);
+  assert.match(result.matches[0].advice, /没有找到高度还原/);
+  assert.equal(result.matches[0].missing, false);
+});
+
+test("标签缺失的同品类衣物仍可作为诚实替代但不跨品类硬凑", () => {
+  const slot = { slot: "bottom", category: "裤子", name: "酷飒长裤", season: "多季", thickness: "适中", styles: ["酷飒"] };
+  const result = inspiration.matchWardrobe([slot], [
+    { id: "sparse-pants", name: "黑色长裤", category: "裤子", color: "黑色", styles: [] },
+    { id: "wrong-category", name: "黑色半身裙", category: "半身裙", color: "黑色", styles: ["酷飒"] }
+  ]);
+  assert.deepEqual(result.matches[0].candidates.map((entry) => entry.item.id), ["sparse-pants"]);
+  assert.equal(result.matches[0].candidates[0].matchLabel, "协调替代");
+  const missing = inspiration.matchWardrobe([slot], [{ id: "only-skirt", category: "半身裙" }]);
+  assert.equal(missing.matches[0].missing, true);
+  assert.match(missing.matches[0].advice, /不会拿其他品类硬凑/);
 });
 
 test("韩系花边格纹上衣拒绝只命中简约的中性条纹衬衫", () => {
@@ -313,6 +560,8 @@ test("灵感确认页展示季节厚薄设计细节受控风格与匹配建议",
   assert.match(wxml, />设计细节</);
   assert.match(wxml, /item\.advice/);
   assert.match(wxml, /candidate\.suggestion/);
+  assert.match(wxml, /candidate\.matchLabel/);
+  assert.doesNotMatch(wxml, /wx:if="\{\{item\.missing\}\}">\{\{item\.advice\}\}/);
 });
 
 test("衣物录入详情和两个 Schema 贯通可选设计细节字段", () => {
@@ -1412,6 +1661,7 @@ const createMemoryDatabase = () => {
   const command = {
     in: (values) => ({ operation: "in", values }),
     inc: (value) => ({ operation: "inc", value }),
+    remove: () => ({ operation: "remove" }),
     set: (value) => ({ operation: "set", value }),
     gte: (value) => ({ operation: "gte", value, and(other) { return { operation: "and", conditions: [this, other] }; } }),
     lt: (value) => ({ operation: "lt", value })
@@ -1457,6 +1707,10 @@ const createMemoryDatabase = () => {
             const document = documents.get(documentId);
             if (!document) return { updated: 0 };
             for (const [field, value] of Object.entries(changes)) {
+              if (value?.operation === "remove") {
+                delete document[field];
+                continue;
+              }
               document[field] = value?.operation === "inc"
                 ? Number(document[field] || 0) + value.value
                 : value?.operation === "set"
@@ -1611,6 +1865,17 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     model: "qwen-test"
   });
   cloudServices.analyzeInspirationImages = successfulInspirationAnalysis;
+  let outfitAssistantCalls = 0;
+  cloudServices.understandOutfitRequest = async (prompt) => {
+    outfitAssistantCalls += 1;
+    if (String(prompt).includes("触发临时维护")) throw Object.assign(new Error("穿搭需求理解暂时不可用"), {
+      code: "billing_maintenance", providerStatusCode: 503, provider: "lyrouter"
+    });
+    return {
+      result: { scene: "约会", styles: ["韩系"], excluded_categories: ["半身裙"], preferred_colors: ["粉色"], warmth_preference: "normal", needsClarification: false, summary: "韩系裤装约会" },
+      usage: { prompt_tokens: 35, completion_tokens: 20 }, provider: "dashscope", model: "qwen-test"
+    };
+  };
 
   const { main, _test } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js");
   const fixedNow = Date.parse("2026-08-03T00:00:00.000Z");
@@ -1633,6 +1898,10 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     { mode: "multi_item", status: "completed", stage: "saved", prompt_tokens: 30, completion_tokens: 10, created_at: "2026-08-02T00:02:00.000Z" }
   ], fixedNow);
   assert.equal(multiQuota.recognition.used, 1);
+  const assistantQuota = _test.quotaSummary({ trial_started_at: "2026-08-01T00:00:00.000Z", trial_ends_at: "2026-08-08T00:00:00.000Z" }, [
+    { mode: "outfit_assistant", status: "completed", prompt_tokens: 30, completion_tokens: 10, created_at: "2026-08-02T00:00:00.000Z" }
+  ], fixedNow);
+  assert.equal(assistantQuota.recognition.used, 0);
   assert.equal(_test.shanghaiDayKey("2026-08-03T16:30:00.000Z"), "2026-08-04");
   const seventhDayReward = _test.nextStarAccount({
     user_id: "user-1", balance: 6, total_earned: 6, current_streak: 6, longest_streak: 6,
@@ -1682,7 +1951,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
   else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-14-design-details-v56");
+  assert.equal(health.body.buildId, "2026-08-18-qwen37-json-budget-v76");
   assert.deepEqual(health.body.outfitPlans, { enabled: true, mode: "private" });
   assert.deepEqual(health.body.multiGarment, { enabled: true, maxItems: 3, personPhotos: false });
   assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
@@ -1727,7 +1996,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
       wear_count: index === 0 ? 6 : 0,
       status: "active",
       created_at: `2026-01-0${index + 1}T00:00:00.000Z`,
-      source_hash: index === 0 ? "a".repeat(64) : null,
+      source_hash: index === 0 ? "a".repeat(64) : index === 1 ? "z".repeat(64) : null,
       search_entity_id: index === 0 ? "u1_i1" : null
     })),
     wear_logs: Array.from({ length: 6 }, (_, index) => ({
@@ -1780,17 +2049,18 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.match(forbiddenDiagnostic.body.error, /没有服饰分割诊断权限/);
   assert.equal(readResponse(await main(makeEvent(`/api/outfit-captures/${memberUpload.body.captureId}`, "DELETE", null, memberAuthorization))).status, 200);
   process.env.AMAP_WEATHER_KEY = "test-amap-key";
-  globalThis.uniCloud.httpclient.request = async () => ({
+  globalThis.uniCloud.httpclient.request = async (_url, options) => ({
     status: 200,
-    data: {
-      status: "1",
-      lives: [{ province: "广东", city: "深圳市", adcode: "440305", weather: "多云", temperature: "27", humidity: "72", winddirection: "东南", windpower: "3", reporttime: "2026-08-04 12:00:00" }]
-    }
+    data: options.data.extensions === "all"
+      ? { status: "1", forecasts: [{ province: "广东", city: "深圳市", adcode: "440305", reporttime: "2026-08-04 11:00:00", casts: [{ date: "2026-08-04", dayweather: "多云", nightweather: "晴", daytemp: "31", nighttemp: "22", daypower: "3", nightpower: "2" }] }] }
+      : { status: "1", lives: [{ province: "广东", city: "深圳市", adcode: "440305", weather: "多云", temperature: "27", humidity: "72", winddirection: "东南", windpower: "3", reporttime: "2026-08-04 12:00:00" }] }
   });
   const weather = readResponse(await main(makeEvent("/api/weather?adcode=440305", "GET", null, authorization)));
   assert.equal(weather.status, 200);
   assert.equal(weather.body.temperature, 27);
   assert.equal(weather.body.condition, "多云");
+  assert.equal(weather.body.low, 22);
+  assert.equal(weather.body.high, 31);
   const invalidWeather = readResponse(await main(makeEvent("/api/weather?adcode=bad", "GET", null, authorization)));
   assert.equal(invalidWeather.status, 400);
   const firstEntitlement = readResponse(await main(makeEvent("/api/entitlements/me", "GET", null, authorization)));
@@ -1817,6 +2087,26 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(budget.status, 200);
   assert.equal(budget.body.remainingTasks, 1000);
   assert.equal(budget.body.remainingYuan, 50);
+  const assistantResult = readResponse(await main(makeEvent("/api/outfit-assistant/understand", "POST", {
+    message: "今天约会，想穿韩系，不要裙子", followupUsed: false, idempotencyKey: "assistant-test-1"
+  }, authorization)));
+  assert.equal(assistantResult.status, 200);
+  assert.equal(assistantResult.body.preferences.scene, "约会");
+  assert.deepEqual(assistantResult.body.preferences.styles, ["韩系"]);
+  assert.deepEqual(assistantResult.body.preferences.excludedCategories, ["半身裙"]);
+  assert.equal(outfitAssistantCalls, 1);
+  const assistantReplay = readResponse(await main(makeEvent("/api/outfit-assistant/understand", "POST", {
+    message: "重复发送不会重复调用", followupUsed: false, idempotencyKey: "assistant-test-1"
+  }, authorization)));
+  assert.equal(assistantReplay.status, 200);
+  assert.equal(outfitAssistantCalls, 1);
+  const assistantFallback = readResponse(await main(makeEvent("/api/outfit-assistant/understand", "POST", {
+    message: "触发临时维护，约会想穿裙子", followupUsed: false, idempotencyKey: "assistant-test-503"
+  }, authorization)));
+  assert.equal(assistantFallback.status, 200);
+  assert.equal(assistantFallback.body.fallback, "controlled_text_rules");
+  assert.equal(assistantFallback.body.fallbackReason, "billing_maintenance");
+  assert.deepEqual(assistantFallback.body.preferences.preferredCategories, ["连衣裙", "半身裙"]);
   const multiUpload = readResponse(await main(makeEvent("/api/uploads/presign", "POST", {
     mimeType: "image/jpeg", size: 500000, mode: "multi_detection", idempotencyKey: "test-multi-detection"
   }, authorization)));
@@ -2003,6 +2293,14 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(deletionRequest.status, 201);
   const deletedSharedItem = readResponse(await main(makeEvent("/api/items/2", "DELETE", {}, authorization)));
   assert.equal(deletedSharedItem.status, 200);
+  const deletedStoredItem = await memoryDatabase.collection("wr_clothing_items").doc("2").get();
+  assert.equal(deletedStoredItem.data[0].source_hash, "z".repeat(64));
+  assert.equal(deletedStoredItem.data[0].source_hash_key, undefined);
+  await memoryDatabase.collection("wr_clothing_items").doc("2").update({ source_hash_key: `1:${"z".repeat(64)}` });
+  assert.equal(await _test.findActiveClothingBySourceHash("1", "z".repeat(64)), null);
+  const repairedDeletedItem = await memoryDatabase.collection("wr_clothing_items").doc("2").get();
+  assert.equal(repairedDeletedItem.data[0].source_hash_key, undefined);
+  assert.equal((await _test.findActiveClothingBySourceHash("1", "a".repeat(64))).id, "1");
   const closedAfterItemDelete = readResponse(await main(makeEvent(`/api/outfit-requests/${deletionRequest.body.id}/results`, "GET", null, authorization)));
   assert.equal(closedAfterItemDelete.body.request.status, "closed");
 
@@ -2236,7 +2534,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-14-design-details-v56");
+  assert.equal(failedRecognition.body.buildId, "2026-08-18-qwen37-json-budget-v76");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

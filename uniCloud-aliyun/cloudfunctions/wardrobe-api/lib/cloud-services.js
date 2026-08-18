@@ -492,20 +492,39 @@ const normalizePrimaryGarmentBox = (raw) => {
   return normalized;
 };
 
-const detectPrimaryGarmentBox = async (sourceKey) => {
-  required(["DASHSCOPE_API_KEY"]);
-  const model = process.env.QWEN_VL_MODEL || DEFAULT_VISION_MODEL;
-  const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
-  const requestBody = buildQwenRequestBody(signedUrl(sourceKey, "GET", 600), model);
-  requestBody.max_completion_tokens = 220;
+const primaryGarmentBoxRequestBody = (imageUrl, config) => {
+  const requestBody = buildVisionRequestBody(imageUrl, config);
+  // LYRouter 的推理模型可能把推理 Token 计入输出上限；预留空间避免最终 JSON 被截断。
+  requestBody.max_completion_tokens = config.provider === "lyrouter" ? 800 : 220;
   requestBody.messages[0].content[1].text = "定位照片中面积最大的主要衣物，只返回JSON：{person_present,garment:{bbox_2d,confidence}}。bbox_2d按0到999归一化并完整包住衣物，排除床单、被子、地板、衣架、包、饰品和标签。若出现真人，person_present必须为true且garment为null；边界不清时不要猜。";
-  const response = await qwenHttpRequest(`${endpoint}/chat/completions`, requestBody, process.env.DASHSCOPE_API_KEY);
+  return requestBody;
+};
+
+const requestPrimaryGarmentBox = async (sourceKey, config) => {
+  required(config.requiredEnv);
+  const requestBody = primaryGarmentBoxRequestBody(signedUrl(sourceKey, "GET", 600), config);
+  let response;
+  try {
+    response = await qwenHttpRequest(`${config.endpoint}/chat/completions`, requestBody, config.apiKey);
+  } catch (error) {
+    throw decorateVisionRequestError(error, config.provider);
+  }
   const providerStatusCode = responseStatus(response);
-  if (providerStatusCode < 200 || providerStatusCode >= 300) throw Object.assign(new Error("衣物定位暂时不可用，请稍后重试。"), { status: 502, code: "GARMENT_BOX_DETECTION_FAILED", providerStatusCode });
-  try { return normalizePrimaryGarmentBox(parseModelJson(response.data?.choices?.[0]?.message?.content)); }
+  if (providerStatusCode < 200 || providerStatusCode >= 300) throw visionHttpError(response, config.provider);
+  return normalizePrimaryGarmentBox(parseModelJson(response.data?.choices?.[0]?.message?.content));
+};
+
+const detectPrimaryGarmentBox = async (sourceKey) => {
+  const config = visionProviderConfig();
+  try { return await requestPrimaryGarmentBox(sourceKey, config); }
   catch (error) {
-    if (error.code) throw error;
-    throw Object.assign(new Error("衣物定位没有返回可解析结果。"), { status: 502, code: "GARMENT_BOX_INVALID_JSON" });
+    if (error.code || config.provider !== "lyrouter") throw error;
+    try {
+      return await requestPrimaryGarmentBox(sourceKey, visionProviderConfig({ ...process.env, LYROUTER_CONFIG: "" }));
+    } catch (fallbackError) {
+      if (fallbackError.code) throw fallbackError;
+      throw Object.assign(new Error("衣物定位没有返回可解析结果。"), { status: 502, code: "GARMENT_BOX_INVALID_JSON" });
+    }
   }
 };
 
@@ -528,13 +547,25 @@ const baiduJsonRequest = (url, body, timeoutMessage, timeoutMs = 15000) => new P
 
 let baiduAccessToken = "";
 let baiduAccessTokenExpiresAt = 0;
+const baiduCredentials = (env = process.env) => {
+  let mergedConfig = {};
+  try { mergedConfig = JSON.parse(String(env.LYROUTER_CONFIG || "{}")); } catch { mergedConfig = {}; }
+  return {
+    apiKey: String(env.BAIDU_API_KEY || mergedConfig.baiduApiKey || mergedConfig.bAk || "").trim(),
+    secretKey: String(env.BAIDU_SECRET_KEY || mergedConfig.baiduSecretKey || mergedConfig.bSk || "").trim()
+  };
+};
+
 const getBaiduAccessToken = async () => {
-  required(["BAIDU_API_KEY", "BAIDU_SECRET_KEY"]);
+  const { apiKey, secretKey } = baiduCredentials();
+  if (!apiKey || !secretKey) {
+    throw Object.assign(new Error("百度抠图凭证未完整配置。"), { status: 503, code: "BAIDU_CREDENTIALS_INCOMPLETE", providerCallCount: 0 });
+  }
   if (baiduAccessToken && Date.now() < baiduAccessTokenExpiresAt) return baiduAccessToken;
   const url = new URL("https://aip.baidubce.com/oauth/2.0/token");
   url.searchParams.set("grant_type", "client_credentials");
-  url.searchParams.set("client_id", process.env.BAIDU_API_KEY);
-  url.searchParams.set("client_secret", process.env.BAIDU_SECRET_KEY);
+  url.searchParams.set("client_id", apiKey);
+  url.searchParams.set("client_secret", secretKey);
   const response = await baiduJsonRequest(url, {}, "百度抠图鉴权超时，请稍后重试。");
   if (!response.data?.access_token) throw Object.assign(new Error("百度抠图鉴权失败。"), { status: 502, code: "BAIDU_AUTH_FAILED" });
   baiduAccessToken = response.data.access_token;
@@ -542,11 +573,18 @@ const getBaiduAccessToken = async () => {
   return baiduAccessToken;
 };
 
-const baiduControlPayload = (image, box, size) => ({
-  image: image.toString("base64"), method: "control",
-  position: [[[Math.round(box[0] * size.width / 999), Math.round(box[1] * size.height / 999)], [Math.round(box[2] * size.width / 999), Math.round(box[3] * size.height / 999)]]],
-  return_form: "rgba", refine_mask: "true"
-});
+const baiduControlPayload = (image, box, size) => {
+  // 百度 control 框必须严格位于图片内部，且宽高均不少于 10 像素。
+  const x1 = Math.min(Math.max(1, Math.round(box[0] * size.width / 999)), size.width - 11);
+  const y1 = Math.min(Math.max(1, Math.round(box[1] * size.height / 999)), size.height - 11);
+  const x2 = Math.min(Math.max(x1 + 10, Math.round(box[2] * size.width / 999)), size.width - 1);
+  const y2 = Math.min(Math.max(y1 + 10, Math.round(box[3] * size.height / 999)), size.height - 1);
+  return {
+    image: image.toString("base64"), method: "control",
+    position: [[[x1, y1], [x2, y2]]],
+    return_form: "rgba", refine_mask: "true"
+  };
+};
 
 const requestBaiduGarmentMatting = async (sourceKey) => {
   const [object, box, accessToken] = await Promise.all([
@@ -625,13 +663,18 @@ const extractGarment = async (sourceKey) => {
       fallbackReasonCode = cleanText(baiduError?.code, 80) || "BAIDU_MATTING_FAILED";
       output = await requestMatting("GoodsMatting", "商品抠图响应超时，请稍后重试。");
       providerCallCount = Math.max(1, Number(baiduError.providerCallCount) || 0) + 1;
-      quality = checkOutput(output, providerCallCount);
-      // 腾讯商品抠图若保留明显的第二主体（常见为被子、床单或旁边衣物），不能交给用户保存。
-      if (quality.secondaryForegroundRatio > 0.01) quality = { ...quality, accepted: false };
+      try {
+        // 腾讯回退必须使用严格质量门；与衣物连成一块的床罩也常会触碰透明画布边缘。
+        quality = assessMattingQuality(output);
+      } catch (error) {
+        throw Object.assign(new Error(`抠图结果无法校验：${error.message}`), {
+          status: 502, code: "MATTING_OUTPUT_INVALID", providerCallCount
+        });
+      }
       modelName = "腾讯商品抠图（百度无有效结果回退）";
     }
     if (!quality.accepted) {
-      throw Object.assign(new Error("抠图服务没有返回可供人工确认的透明衣物图，请重新选择图片。"), {
+      throw Object.assign(new Error("抠图服务未能完整分离衣物与背景，请稍后重新处理。"), {
         status: 422,
         code: "MATTING_QUALITY_LOW",
         providerCallCount,
@@ -746,13 +789,54 @@ const sanitizeTags = (value, allowed = null, max = 4) => Array.isArray(value)
 
 const parseModelJson = (content) => {
   const text = Array.isArray(content) ? content.map((item) => item.text || "").join("") : String(content || "");
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw Object.assign(new Error("AI 未返回可确认的标签。"), { status: 502 });
-  return JSON.parse(match[0]);
+  for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const character = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === "{") depth += 1;
+      else if (character === "}" && --depth === 0) {
+        try { return JSON.parse(text.slice(start, index + 1)); } catch { break; }
+      }
+    }
+  }
+  throw Object.assign(new Error("AI 未返回可确认的标签。"), { status: 502 });
 };
 
 // DCloud 官方响应字段为 status；兼容 statusCode 是为了支持不同 urllib 版本与本地测试替身。
 const responseStatus = (response) => Number(response?.statusCode || response?.status || 0);
+
+const visionHttpError = (response, provider, message = "AI 识别暂时不可用，请稍后再试。") => {
+  const providerStatusCode = responseStatus(response);
+  const codes = {
+    400: "VISION_BAD_REQUEST",
+    401: "VISION_UNAUTHORIZED",
+    403: "VISION_FORBIDDEN",
+    429: "VISION_RATE_LIMITED"
+  };
+  const upstreamCode = cleanText(response?.data?.error?.code, 80);
+  return Object.assign(new Error(message), {
+    status: providerStatusCode === 429 ? 503 : 502,
+    code: upstreamCode || codes[providerStatusCode] || (providerStatusCode >= 500 ? "VISION_UPSTREAM_ERROR" : "VISION_HTTP_ERROR"),
+    providerStatusCode,
+    providerUsage: response?.data?.usage || null,
+    provider
+  });
+};
+
+const decorateVisionRequestError = (error, provider) => {
+  error.provider = provider;
+  if (error.code === "QWEN_TIMEOUT") error.code = "VISION_TIMEOUT";
+  return error;
+};
 
 const buildQwenRequestBody = (imageUrl, model) => ({
   model,
@@ -776,6 +860,54 @@ const buildQwenRequestBody = (imageUrl, model) => ({
     ]
   }]
 });
+
+const visionProviderConfig = (env = process.env) => {
+  const lyrouterConfigText = String(env.LYROUTER_CONFIG || "").trim();
+  if (lyrouterConfigText) {
+    let lyrouterConfig;
+    try {
+      lyrouterConfig = JSON.parse(lyrouterConfigText);
+    } catch {
+      throw Object.assign(new Error("LYRouter 合并配置不是有效 JSON。"), { status: 500, code: "LYROUTER_CONFIG_INVALID" });
+    }
+    const apiKey = String(lyrouterConfig?.apiKey || "").trim();
+    const model = String(lyrouterConfig?.model || "").trim();
+    const inputYuanPerMillion = Number(lyrouterConfig?.inputYuanPerMillion);
+    const outputYuanPerMillion = Number(lyrouterConfig?.outputYuanPerMillion);
+    const supportedModels = ["qwen/qwen3.6-flash", "qwen/qwen3.7-plus", "qwen/qwen3.8-max"];
+    if (!apiKey || !supportedModels.includes(model) || !Number.isFinite(inputYuanPerMillion) || inputYuanPerMillion <= 0
+      || !Number.isFinite(outputYuanPerMillion) || outputYuanPerMillion <= 0) {
+      throw Object.assign(new Error("LYRouter 合并配置缺少密钥、受支持模型或有效单价。"), { status: 500, code: "LYROUTER_CONFIG_INVALID" });
+    }
+    return {
+      provider: "lyrouter",
+      providerName: "LYRouter",
+      endpoint: String(lyrouterConfig.baseUrl || "https://api.lyrouter.com/v1").replace(/\/+$/, ""),
+      apiKey,
+      model,
+      inputYuanPerMillion,
+      outputYuanPerMillion,
+      requiredEnv: ["LYROUTER_CONFIG"]
+    };
+  }
+  return {
+    provider: "dashscope",
+    providerName: "阿里云百炼",
+    endpoint: String(env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, ""),
+    apiKey: String(env.DASHSCOPE_API_KEY || "").trim(),
+    model: String(env.QWEN_VL_MODEL || "qwen3-vl-plus").trim(),
+    requiredEnv: ["DASHSCOPE_API_KEY", "QWEN_INPUT_YUAN_PER_MILLION", "QWEN_OUTPUT_YUAN_PER_MILLION"]
+  };
+};
+
+const buildVisionRequestBody = (imageUrl, config) => {
+  const requestBody = buildQwenRequestBody(imageUrl, config.model);
+  if (config.provider === "lyrouter") {
+    delete requestBody.enable_thinking;
+    requestBody.messages[0].content.forEach((part) => delete part.max_pixels);
+  }
+  return requestBody;
+};
 
 const buildQwenHttpOptions = (requestBody, apiKey) => {
   const content = JSON.stringify(requestBody);
@@ -2250,33 +2382,27 @@ const prepareOutfitDetection = async (detection) => {
 };
 
 // 千问只给“候选标签”，材质、季节、厚薄等需要由用户在页面上确认后才可正式入库。
-const recognizeImage = async (key) => {
-  // 未配置当前 Token 单价时直接停用真实调用，避免预算 50 元的估算失真。
-  required([
-    "DASHSCOPE_API_KEY",
-    "QWEN_INPUT_YUAN_PER_MILLION",
-    "QWEN_OUTPUT_YUAN_PER_MILLION"
-  ]);
-  const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
-  const model = process.env.QWEN_VL_MODEL || "qwen3-vl-plus";
+const buildRecognitionRequestBody = (imageUrl, config) => {
   const prompt = "你是衣橱应用的衣物标签助手。检查透明背景图是否主要保留一件完整衣物，再生成待用户确认的候选标签。只返回JSON，不要Markdown。字段：valid布尔值；reason中文；name简短中文名称，若清晰可见标志性设计，name必须包含最显著的一项；category仅可为上衣、裤子、半身裙、外套、连衣裙、鞋子；color主色中文；season仅可为春夏、春秋、秋冬、多季；thickness仅可为薄、适中、厚；pattern花纹中文；material视觉推测材质中文；design_details只能从荷叶边、花边、木耳边、泡泡袖、灯笼袖、蕾丝、镂空、蝴蝶结、系带、收腰、束腰、露肩、一字肩、娃娃领中选最多6项，没有则返回空数组；styles只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3个，并把最能定义衣物审美的核心风格放第一项；scenes从休闲、通勤、约会、旅行、聚会、运动中选最多3个；needsConfirmation最多4项。只记录图片中清晰可见的design_details，不确定不要猜；设计细节不得写入styles。不能有脸、头发、皮肤、肢体、模特或另一件主要衣物。材质、季节和厚薄只能作为候选，不得保证真实成分、尺码或合身。";
-  const requestBody = buildQwenRequestBody(signedUrl(key), model);
+  const requestBody = buildVisionRequestBody(imageUrl, config);
+  if (config.provider === "lyrouter") requestBody.max_completion_tokens = 1200;
   requestBody.messages[0].content[1].text = prompt;
-  const response = await qwenHttpRequest(
-    `${endpoint}/chat/completions`,
-    requestBody,
-    process.env.DASHSCOPE_API_KEY
-  );
+  return requestBody;
+};
+
+const recognizeImageWithConfig = async (key, config) => {
+  required(config.requiredEnv);
+  const requestBody = buildRecognitionRequestBody(signedUrl(key), config);
+  let response;
+  try {
+    response = await qwenHttpRequest(`${config.endpoint}/chat/completions`, requestBody, config.apiKey);
+  } catch (error) {
+    throw decorateVisionRequestError(error, config.provider);
+  }
   // uniCloud 的 urllib 响应使用 status；部分运行环境或测试替身使用 statusCode，因此两者都要兼容。
   const providerStatusCode = responseStatus(response);
   if (providerStatusCode < 200 || providerStatusCode >= 300) {
-    const providerError = response.data?.error || {};
-    throw Object.assign(new Error("AI 识别暂时不可用，请稍后再试。"), {
-      status: 502,
-      code: cleanText(providerError.code, 80) || "QWEN_HTTP_ERROR",
-      providerStatusCode,
-      providerUsage: response.data?.usage || null
-    });
+    throw visionHttpError(response, config.provider);
   }
   let raw;
   try {
@@ -2284,8 +2410,9 @@ const recognizeImage = async (key) => {
   } catch (error) {
     throw Object.assign(new Error("AI 未返回可解析的 JSON 标签。"), {
       status: 502,
-      code: "QWEN_INVALID_JSON",
-      providerUsage: response.data?.usage || null
+      code: "VISION_INVALID_JSON",
+      providerUsage: response.data?.usage || null,
+      provider: config.provider
     });
   }
   return {
@@ -2305,9 +2432,22 @@ const recognizeImage = async (key) => {
       needsConfirmation: sanitizeTags(raw.needsConfirmation, null, 4)
     },
     usage: response.data?.usage || {},
-    provider: "dashscope",
-    model: response.data?.model || model
+    provider: config.provider,
+    providerName: config.providerName,
+    model: response.data?.model || config.model
   };
+};
+
+const recognizeImage = async (key) => {
+  // 未配置当前 Token 单价时直接停用真实调用，避免预算 50 元的估算失真。
+  const config = visionProviderConfig();
+  try { return await recognizeImageWithConfig(key, config); }
+  catch (error) {
+    if (config.provider !== "lyrouter" || error.code !== "VISION_INVALID_JSON") throw error;
+    const fallback = await recognizeImageWithConfig(key, visionProviderConfig({ ...process.env, LYROUTER_CONFIG: "" }));
+    fallback.usage = mergeUsage(error.providerUsage || {}, fallback.usage);
+    return fallback;
+  }
 };
 
 const mergeUsage = (...values) => values.reduce((total, usage = {}) => ({
@@ -2315,14 +2455,14 @@ const mergeUsage = (...values) => values.reduce((total, usage = {}) => ({
   completion_tokens: total.completion_tokens + Number(usage.completion_tokens ?? usage.output_tokens ?? 0)
 }), { prompt_tokens: 0, completion_tokens: 0 });
 
-const buildInspirationRequestBody = (imageUrls, model, prompt) => {
-  const requestBody = buildQwenRequestBody(imageUrls[0], model);
-  requestBody.max_completion_tokens = 650;
+const buildInspirationRequestBody = (imageUrls, config, prompt) => {
+  const requestBody = buildVisionRequestBody(imageUrls[0], config);
+  requestBody.max_completion_tokens = config.provider === "lyrouter" ? 1400 : 650;
   for (let index = 1; index < imageUrls.length; index += 1) {
     requestBody.messages[0].content.splice(index, 0, {
       type: "image_url",
       image_url: { url: imageUrls[index] },
-      max_pixels: 786432
+      ...(config.provider === "dashscope" ? { max_pixels: 786432 } : {})
     });
   }
   requestBody.messages[0].content[imageUrls.length].text = prompt;
@@ -2335,12 +2475,12 @@ const inspirationDiagnostic = (error) => ({
 });
 
 const analyzeInspirationWithRequester = async (imageUrls, options, requester) => {
-  const model = options.model;
+  const config = options.config || { provider: "dashscope", model: options.model };
+  const model = config.model;
   const firstPrompt = "这些图片来自同一条穿搭灵感。只选择封面优先、最清晰的一套主穿搭，不拆分多套，不补全看不清的衣物。只返回严格JSON：{mainImageIndex,summary,slots:[{slot,category,name,color,season,thickness,pattern,design_details,styles,scenes,confidence,evidence}]}。mainImageIndex从0开始且不超过图片数量减1；summary不超过50字。slot最多各一个且仅可为top,bottom,dress,outerwear；category仅可为上衣、裤子、半身裙、连衣裙、外套，并必须与slot对应。season仅可为春夏、春秋、秋冬、多季；thickness仅可为薄、适中、厚；看不清时返回空字符串。design_details只能从荷叶边、花边、木耳边、泡泡袖、灯笼袖、蕾丝、镂空、蝴蝶结、系带、收腰、束腰、露肩、一字肩、娃娃领中选最多6项，没有则返回空数组，只记录清晰可见的细节。styles必须描述这件衣物在整套穿搭中的审美风格，只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3项，并把最能定义审美的核心风格放第一项，不能仅用简约或通勤代替清晰可见的韩系、甜美、酷飒等风格。设计或版型细节绝不能写入styles。scenes只能从休闲、通勤、约会、旅行、聚会、运动选择最多3项。不要输出鞋、包、配饰，不识别人脸、身材、尺码、品牌，也不要推断材质成分。evidence只写画面中可见依据。";
-  const firstResponse = await requester(buildInspirationRequestBody(imageUrls, model, firstPrompt));
+  const firstResponse = await requester(buildInspirationRequestBody(imageUrls, config, firstPrompt));
   if (responseStatus(firstResponse) < 200 || responseStatus(firstResponse) >= 300) {
-    const error = Object.assign(new Error("灵感识别暂时不可用，请稍后重试。"), { status: 502, code: "INSPIRATION_AI_FAILED" });
-    error.providerUsage = firstResponse.data?.usage || {};
+    const error = visionHttpError(firstResponse, config.provider, "灵感识别暂时不可用，请稍后重试。");
     throw error;
   }
   const firstUsage = firstResponse.data?.usage || {};
@@ -2356,7 +2496,7 @@ const analyzeInspirationWithRequester = async (imageUrls, options, requester) =>
     const retryPrompt = `重新检查同一批图片。上一次输出无法形成有效衣物槽位。公开标题仅作辅助背景：${title || "未提供"}；必须以图片中实际可见衣物为准，不得仅根据标题补全。只返回严格JSON对象，顶层必须为mainImageIndex、summary、slots；slots必须是数组。每项slot只能精确使用top、bottom、dress、outerwear，category只能精确使用上衣、裤子、半身裙、连衣裙、外套，且dress只能对应连衣裙、bottom只能对应裤子或半身裙。season只能为春夏、春秋、秋冬、多季，thickness只能为薄、适中、厚，看不清留空；design_details只能从荷叶边、花边、木耳边、泡泡袖、灯笼袖、蕾丝、镂空、蝴蝶结、系带、收腰、束腰、露肩、一字肩、娃娃领中选最多6项，没有则返回空数组；styles只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3项，并且只能写审美风格，设计细节不得写入styles。即使名称是白色连衣裙或无袖连衣裙，category也只能写连衣裙，具体款式写入name或evidence。不要输出鞋、包、配饰、人物、品牌、尺码或材质。`;
     let retryResponse;
     try {
-      retryResponse = await requester(buildInspirationRequestBody(imageUrls, model, retryPrompt));
+      retryResponse = await requester(buildInspirationRequestBody(imageUrls, config, retryPrompt));
     } catch (retryError) {
       retryError.code = retryError.code || "INSPIRATION_AI_FAILED";
       retryError.status = retryError.status || 502;
@@ -2366,7 +2506,7 @@ const analyzeInspirationWithRequester = async (imageUrls, options, requester) =>
     }
     const combinedUsage = mergeUsage(firstUsage, retryResponse.data?.usage || {});
     if (responseStatus(retryResponse) < 200 || responseStatus(retryResponse) >= 300) {
-      const error = Object.assign(new Error("灵感识别重试仍未完成。"), { status: 502, code: "INSPIRATION_AI_FAILED" });
+      const error = visionHttpError(retryResponse, config.provider, "灵感识别重试仍未完成。");
       error.providerUsage = combinedUsage;
       error.safeDiagnostic = { retryCount: 1, first: inspirationDiagnostic(firstError), second: { code: "INSPIRATION_AI_HTTP_FAILED" } };
       throw error;
@@ -2387,25 +2527,77 @@ const analyzeInspirationWithRequester = async (imageUrls, options, requester) =>
 };
 
 const analyzeInspirationImages = async (keys, options = {}) => {
-  required([
-    "DASHSCOPE_API_KEY",
-    "QWEN_INPUT_YUAN_PER_MILLION",
-    "QWEN_OUTPUT_YUAN_PER_MILLION"
-  ]);
+  const config = visionProviderConfig();
+  required(config.requiredEnv);
   const imageKeys = [...new Set((Array.isArray(keys) ? keys : []).filter(Boolean))].slice(0, 3);
   if (!imageKeys.length) throw Object.assign(new Error("没有可分析的灵感图片。"), { status: 409, code: "INSPIRATION_IMAGE_MISSING" });
-  const model = process.env.QWEN_VL_MODEL || DEFAULT_VISION_MODEL;
-  const endpoint = String(process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/+$/, "");
-  const analyzed = await analyzeInspirationWithRequester(
-    imageKeys.map((key) => signedUrl(key, "GET", 600)),
-    { model, sourceTitle: options.sourceTitle },
-    (requestBody) => qwenHttpRequest(`${endpoint}/chat/completions`, requestBody, process.env.DASHSCOPE_API_KEY)
+  const imageUrls = imageKeys.map((key) => signedUrl(key, "GET", 600));
+  const run = async (selectedConfig) => analyzeInspirationWithRequester(
+    imageUrls,
+    { config: selectedConfig, sourceTitle: options.sourceTitle },
+    async (requestBody) => {
+      try {
+        return await qwenHttpRequest(`${selectedConfig.endpoint}/chat/completions`, requestBody, selectedConfig.apiKey);
+      } catch (error) {
+        throw decorateVisionRequestError(error, selectedConfig.provider);
+      }
+    }
   );
-  return { ...analyzed, provider: "dashscope" };
+  try {
+    const analyzed = await run(config);
+    return { ...analyzed, provider: config.provider, providerName: config.providerName };
+  } catch (error) {
+    if (config.provider !== "lyrouter" || error.providerStatusCode || error.code?.startsWith("VISION_")) throw error;
+    const fallbackConfig = visionProviderConfig({ ...process.env, LYROUTER_CONFIG: "" });
+    required(fallbackConfig.requiredEnv);
+    const analyzed = await run(fallbackConfig);
+    analyzed.usage = mergeUsage(error.providerUsage || {}, analyzed.usage);
+    return { ...analyzed, provider: fallbackConfig.provider, providerName: fallbackConfig.providerName };
+  }
+};
+
+const buildOutfitAssistantRequestBody = (prompt, config) => ({
+    model: config.model,
+    temperature: 0,
+    // 推理模型会把思考过程计入输出上限；预留足够空间，避免正式 JSON 在结尾被截断。
+    max_completion_tokens: 900,
+    stream: false,
+    response_format: { type: "json_object" },
+    messages: [{ role: "user", content: [{ type: "text", text: String(prompt || "") }] }]
+  });
+
+const understandOutfitRequest = async (prompt) => {
+  const config = visionProviderConfig();
+  required(config.requiredEnv);
+  const requestBody = buildOutfitAssistantRequestBody(prompt, config);
+  let response;
+  try {
+    response = await qwenHttpRequest(`${config.endpoint}/chat/completions`, requestBody, config.apiKey);
+  } catch (error) {
+    throw decorateVisionRequestError(error, config.provider);
+  }
+  if (responseStatus(response) < 200 || responseStatus(response) >= 300) {
+    throw visionHttpError(response, config.provider, "穿搭需求理解暂时不可用，请使用下方快捷标签继续。");
+  }
+  const usage = response.data?.usage || {};
+  try {
+    return {
+      result: parseModelJson(response.data?.choices?.[0]?.message?.content),
+      usage,
+      provider: config.provider,
+      model: response.data?.model || config.model
+    };
+  } catch (error) {
+    error.code = "OUTFIT_ASSISTANT_OUTPUT_INVALID";
+    error.providerUsage = usage;
+    error.provider = config.provider;
+    throw error;
+  }
 };
 
 module.exports = {
   analyzeInspirationImages,
+  understandOutfitRequest,
   createInspirationUpload,
   createUpload,
   deleteObject,
@@ -2423,5 +2615,5 @@ module.exports = {
   signedUrl,
   sourceHash,
   storeTemporaryInspirationImages,
-  _test: { analyzeInspirationWithRequester, assessMattingQuality, authorizeViapiFileUpload, baiduControlPayload, buildCorrectiveFlatLayRequestBody, buildFlatLayRequestBody, buildHangerEditRequestBody, buildWardrobeProductRequestBody, buildOutfitParsingRequestBody, buildQwenHttpOptions, buildQwenRequestBody, buildViapiRpcV2Request, canonicalOutfitLabel, clothingClassesForDetection, correctionAvailable, cropOperation, deterministicSeed, flatLayAccepted, flatLayCandidateCount, flatLayFactRule, flatLaySize, flattenViapiQuery, garmentSegmentationConfigured, getGarmentSegmentationDiagnosticClient, inspirationDiagnostic, mattingFailureKind, mattingFailureReason, mergeUsage, normalizeFlatLayGarments, normalizePrimaryGarmentBox, normalizeOutfitDetections, normalizeSegmentClothClassUrls, normalizeStructureFacts, outfitCompleteness, outfitParsingType, paddedPixelBox, parseModelJson, postAuthorizedOssObject, recoverBorderTouchingMatting, responseStatus, retryableFlatLayError, sourceMaskAccepted, structureFactsText, userFacingVerificationReason, usesContrastingUpperBackground, usesFaithfulArrangement, usesFaithfulPresentation, usesFaithfulUpperPresentation, usesParsedSourceDisplay, validateCropSize, viapiCredentialMode: () => viapiCredentials().mode, viapiPercentEncode, viapiRpcV2Request, vectorCosine }
+  _test: { analyzeInspirationWithRequester, assessMattingQuality, authorizeViapiFileUpload, baiduControlPayload, baiduCredentials, buildCorrectiveFlatLayRequestBody, buildFlatLayRequestBody, buildHangerEditRequestBody, buildOutfitAssistantRequestBody, buildWardrobeProductRequestBody, buildOutfitParsingRequestBody, buildQwenHttpOptions, buildQwenRequestBody, buildVisionRequestBody, buildRecognitionRequestBody, buildInspirationRequestBody, buildViapiRpcV2Request, canonicalOutfitLabel, clothingClassesForDetection, correctionAvailable, cropOperation, decorateVisionRequestError, deterministicSeed, flatLayAccepted, flatLayCandidateCount, flatLayFactRule, flatLaySize, flattenViapiQuery, garmentSegmentationConfigured, getGarmentSegmentationDiagnosticClient, inspirationDiagnostic, mattingFailureKind, mattingFailureReason, mergeUsage, normalizeFlatLayGarments, normalizePrimaryGarmentBox, normalizeOutfitDetections, normalizeSegmentClothClassUrls, normalizeStructureFacts, outfitCompleteness, outfitParsingType, paddedPixelBox, parseModelJson, postAuthorizedOssObject, primaryGarmentBoxRequestBody, recoverBorderTouchingMatting, responseStatus, retryableFlatLayError, sourceMaskAccepted, structureFactsText, userFacingVerificationReason, usesContrastingUpperBackground, usesFaithfulArrangement, usesFaithfulPresentation, usesFaithfulUpperPresentation, usesParsedSourceDisplay, validateCropSize, viapiCredentialMode: () => viapiCredentials().mode, viapiPercentEncode, viapiRpcV2Request, vectorCosine, visionHttpError, visionProviderConfig }
 };

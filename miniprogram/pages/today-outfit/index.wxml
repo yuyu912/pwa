@@ -3,12 +3,12 @@
   <view wx:elif="{{error}}" class="outfit-card"><text class="title">天气暂不可用</text><text class="desc">{{error}}</text></view>
   <view wx:elif="{{!weather}}" class="outfit-card"><text class="title">正在获取天气</text></view>
   <block wx:else>
-    <view class="weather-strip"><view><text class="strip-place">{{location.fullName}}</text><text class="strip-meta">{{weather.isManual ? '手动设置' : '实时天气 · ' + weather.reportTime}}</text></view><view class="strip-reading"><text>{{weather.condition}}</text><text>{{weather.temperature}}°C</text></view></view>
+    <view class="weather-strip"><view><text class="strip-place">{{location.fullName}}</text><text class="strip-meta">{{weather.isManual ? '手动设置' : '实时天气 · ' + weather.reportTime}}</text></view><view class="strip-reading"><text>{{weather.condition}}</text><text>{{weather.temperature}}°C{{weather.largeTemperatureSwing ? ' · ' + weather.low + '~' + weather.high + '°C' : ''}}</text></view></view>
     <text class="heading">智能搭配建议</text>
     <view class="scene-field"><text class="scene-label">今天准备去哪里？</text><picker mode="selector" range="{{scenes}}" value="{{sceneIndex}}" bindchange="onSceneChange"><view class="scene-picker">{{scene}} ›</view></picker></view>
     <view wx:if="{{recommendation.items.length}}" class="outfit-card">
       <view class="outfit-art"><view wx:for="{{recommendation.items}}" wx:key="id" class="outfit-item"><view class="item-photo"><image wx:if="{{item.imageUrl}}" src="{{item.imageUrl}}" mode="aspectFit"/><view wx:else class="item-placeholder"><view class="hanger-line"></view></view></view><text class="item-name">{{item.name}}</text><text class="item-meta">{{item.category}}{{item.color ? ' · ' + item.color : ''}}</text></view></view>
-      <text class="title">{{recommendation.complete ? scene + '搭配建议' : scene + '单品建议'}}</text><text class="desc">{{recommendation.reason}}</text><text class="desc">{{weather.tip}}</text><view wx:if="{{recommendation.missing.length}}" class="missing"><text>衣橱缺少</text><text>{{recommendation.missingText}}</text></view><view class="tags"><text>真实衣物</text><text>场景优先</text><text>{{weather.isManual ? '手动天气' : '实时温度'}}</text></view><button class="secondary" bindtap="changeOutfit">换一套</button>
+      <text class="title">{{recommendation.complete ? scene + '搭配建议' : scene + '单品建议'}}</text><text class="desc">{{recommendation.reason}}</text><text class="desc">{{weather.tip}}</text><view wx:if="{{recommendation.missing.length}}" class="missing"><text>衣橱缺少</text><text>{{recommendation.missingText}}</text></view><view class="tags"><text>真实衣物</text><text>场景优先</text><text>{{weather.isManual ? '手动天气' : (weather.largeTemperatureSwing ? '今日温差' : '实时温度')}}</text></view><button class="secondary" bindtap="changeOutfit">换一套</button>
     </view>
     <view wx:else class="outfit-card gap-card"><text class="title">今天没有合适的完整搭配</text><text class="desc">衣橱缺少：{{recommendation.missingText}}</text></view>
     <button class="primary" bindtap="toWardrobe">去衣橱看看</button>

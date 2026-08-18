@@ -4,6 +4,9 @@ const { createBatch, updateBatchItem, nextBatchIndex, batchSummary } = require("
 const CATEGORIES = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"];
 const SEASONS = ["春夏", "春秋", "秋冬", "多季"];
 const THICKNESSES = ["薄", "适中", "厚"];
+const STYLES = ["韩系", "清新", "酷飒", "简约", "休闲", "通勤", "复古", "甜美", "运动", "街头", "优雅", "度假"];
+const SCENES = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
+const selectableOptions = (values, selected = []) => values.map((value) => ({ value, selected: selected.includes(value) }));
 
 const emptyForm = () => ({
   name: "",
@@ -39,6 +42,8 @@ Page({
     categories: CATEGORIES,
     seasons: SEASONS,
     thicknesses: THICKNESSES,
+    styleOptions: selectableOptions(STYLES),
+    sceneOptions: selectableOptions(SCENES),
     categoryIndex: 0,
     seasonIndex: 0,
     thicknessIndex: 0,
@@ -113,7 +118,7 @@ Page({
   },
 
   chooseImage() {
-    if (this.data.batchItems.length && this.data.stage !== "batch-complete") {
+    if (this.data.batchItems.length > 1 && this.data.stage !== "batch-complete") {
       wx.showToast({ title: "请先完成当前批次", icon: "none" });
       return;
     }
@@ -585,6 +590,8 @@ Page({
         scenesText: (tags.scenes || []).join("、"),
         price: ""
       },
+      styleOptions: selectableOptions(STYLES, tags.styles || []),
+      sceneOptions: selectableOptions(SCENES, tags.scenes || []),
       needsConfirmation: tags.needsConfirmation || []
     });
     this.updateCurrentBatch({ taskId: this.data.taskId, draftId: result.draftId, status: "confirming", errorText: "" });
@@ -593,6 +600,19 @@ Page({
 
   onFieldInput(event) {
     this.setData({ [`form.${event.currentTarget.dataset.field}`]: event.detail.value });
+  },
+
+  toggleTagOption(event) {
+    const key = event.currentTarget.dataset.type === "scene" ? "sceneOptions" : "styleOptions";
+    const value = event.currentTarget.dataset.value;
+    const options = this.data[key];
+    const current = options.find((item) => item.value === value);
+    if (!current) return;
+    if (!current.selected && options.filter((item) => item.selected).length >= 3) {
+      wx.showToast({ title: "最多选择 3 项", icon: "none" });
+      return;
+    }
+    this.setData({ [key]: options.map((item) => item.value === value ? { ...item, selected: !item.selected } : item) });
   },
 
   onCategoryChange(event) {
@@ -691,8 +711,8 @@ Page({
       pattern: form.pattern,
       material: form.material,
       designDetails: listFromText(form.designDetailsText, 6),
-      styles: listFromText(form.stylesText),
-      scenes: listFromText(form.scenesText),
+      styles: this.data.styleOptions.filter((item) => item.selected).map((item) => item.value),
+      scenes: this.data.sceneOptions.filter((item) => item.selected).map((item) => item.value),
       price: form.price
     };
   },
@@ -750,9 +770,20 @@ Page({
       const nextIndex = nextBatchIndex(this.data.batchItems, this.data.batchIndex);
       return setTimeout(() => nextIndex >= 0 ? this.loadBatchItem(nextIndex) : this.completeBatch(), 500);
     }
-    this.setData({ stage: "saved", stageText: "已放入衣橱", errorText: "" });
+    this.setData({ stage: "single-complete", stageText: "已放入衣橱", errorText: "" });
     wx.showToast({ title: "入库成功", icon: "success" });
-    setTimeout(() => wx.redirectTo({ url: "/pages/wardrobe/index" }), 500);
+  },
+
+  continueAdding() {
+    this.setData({
+      categoryIndex: 0, seasonIndex: 0, thicknessIndex: 0,
+      imagePath: "", resultImage: "", originalCutoutUrl: "", hangerEditUrl: "", selectedImage: "original", hangerEditBusy: false,
+      mimeType: "image/jpeg", fileSize: 0, taskId: "", draftId: "", manualUpload: null, manualUploaded: false,
+      stage: "idle", stageText: "", errorText: "", isDemo: false, manualMode: false, aiProgress: null, mattingQualityFailed: false,
+      form: emptyForm(), needsConfirmation: [], batchItems: [], batchIndex: -1, batchSummary: null, preparingBatch: false,
+      multiDetections: [], qualityWarning: "", mattingConfirmed: false,
+      styleOptions: selectableOptions(STYLES), sceneOptions: selectableOptions(SCENES)
+    }, () => this.chooseImage());
   },
 
   skipBatchItem() {

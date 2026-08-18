@@ -21,7 +21,7 @@
     <text class="batch-note">图片严格按顺序处理，当前件确认入库后才会进入下一件。</text>
   </view>
 
-  <view wx:if="{{stage !== 'batch-complete'}}" class="upload {{stage === 'multi-review' ? 'upload-multi-review' : ''}}" role="button" hover-class="upload-active" bindtap="handleUploadTap">
+  <view wx:if="{{stage !== 'batch-complete' && stage !== 'single-complete'}}" class="upload {{stage === 'multi-review' ? 'upload-multi-review' : ''}}" role="button" hover-class="upload-active" bindtap="handleUploadTap">
     <block wx:if="{{imagePath}}">
       <image class="preview" src="{{resultImage || imagePath}}" mode="{{stage === 'multi-review' ? 'widthFix' : 'aspectFit'}}"/>
       <view wx:for="{{multiDetections}}" wx:key="detectionId" class="garment-box {{item.selected ? '' : 'garment-box-off'}}" style="{{item.boxStyle}}">
@@ -29,9 +29,11 @@
       </view>
     </block>
     <block wx:else>
-      <text class="plus">＋</text>
-      <text>{{entryMode === 'candidate' ? '拍照或选择候选衣物图片' : photoMode === 'multi' ? '选择 1 张包含多件衣物的照片' : '选择 1–9 张单件衣物图片'}}</text>
-      <text class="hint">{{photoMode === 'multi' ? '仅限无人物、衣物边界清楚的照片' : '支持拍照或相册；压缩后不超过 2MB'}}</text>
+      <button class="upload-empty-button" catchtap="chooseImage">
+        <text class="plus">＋</text>
+        <text>{{entryMode === 'candidate' ? '拍照或选择候选衣物图片' : photoMode === 'multi' ? '选择 1 张包含多件衣物的照片' : '选择 1–9 张单件衣物图片'}}</text>
+        <text class="hint">{{photoMode === 'multi' ? '仅限无人物、衣物边界清楚的照片' : '支持拍照或相册；压缩后不超过 2MB'}}</text>
+      </button>
     </block>
   </view>
 
@@ -138,14 +140,16 @@
       <text>设计细节</text>
       <input value="{{form.designDetailsText}}" data-field="designDetailsText" bindinput="onFieldInput" placeholder="荷叶边、泡泡袖、蕾丝等，用逗号分隔"/>
     </label>
-    <label class="field">
+    <view class="field">
       <text>风格标签</text>
-      <input value="{{form.stylesText}}" data-field="stylesText" bindinput="onFieldInput" placeholder="用逗号分隔"/>
-    </label>
-    <label class="field">
+      <text class="tag-help">可多选，最多 3 项</text>
+      <view class="tag-options"><button wx:for="{{styleOptions}}" wx:key="value" class="tag-option {{item.selected ? 'tag-option-active' : ''}}" data-type="style" data-value="{{item.value}}" catchtap="toggleTagOption">{{item.selected ? '✓ ' : ''}}{{item.value}}</button></view>
+    </view>
+    <view class="field">
       <text>适用场景</text>
-      <input value="{{form.scenesText}}" data-field="scenesText" bindinput="onFieldInput" placeholder="休闲、通勤、约会等"/>
-    </label>
+      <text class="tag-help">可多选，最多 3 项</text>
+      <view class="tag-options"><button wx:for="{{sceneOptions}}" wx:key="value" class="tag-option {{item.selected ? 'tag-option-active' : ''}}" data-type="scene" data-value="{{item.value}}" catchtap="toggleTagOption">{{item.selected ? '✓ ' : ''}}{{item.value}}</button></view>
+    </view>
     <label class="field">
       <text>购入价格（可选）</text>
       <input type="digit" value="{{form.price}}" data-field="price" bindinput="onFieldInput" placeholder="用于计算单次穿衣成本"/>
@@ -157,6 +161,13 @@
     </view>
     <button wx:if="{{manualMode}}" class="primary save" bindtap="saveManual">确认基础录入</button>
     <button wx:else class="primary save" bindtap="saveConfirmed">{{entryMode === 'candidate' ? '确认标签并查看查重结果' : '确认标签并入库'}}</button>
+  </view>
+
+  <view wx:if="{{stage === 'single-complete'}}" class="single-complete">
+    <text class="complete-title">已放入衣橱</text>
+    <text class="complete-note">这件衣物已经安全保存，接下来可以继续录入或查看衣橱。</text>
+    <button class="primary" bindtap="continueAdding">继续录入</button>
+    <button class="ghost" bindtap="openWardrobe">查看我的衣橱</button>
   </view>
 
   <button class="back" bindtap="goBack">回到首页</button>

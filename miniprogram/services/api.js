@@ -104,6 +104,7 @@ module.exports = {
   createUpload: (data) => config.USE_MOCK ? Promise.resolve(mock.createUpload(data)) : request("/api/uploads/presign", "POST", data),
   getStyleProfile: () => request("/api/style-profile"),
   getCityTrends: (cityCode) => request(`/api/city-trends?cityCode=${encodeURIComponent(cityCode)}`),
+  understandOutfitRequest: (data) => request("/api/outfit-assistant/understand", "POST", data),
   createInspiration: (data) => request("/api/inspirations", "POST", data),
   createInspirationScreenshotUpload: (id, data) => request(`/api/inspirations/${encodeURIComponent(id)}/screenshot/presign`, "POST", data),
   analyzeInspiration: (id) => request(`/api/inspirations/${encodeURIComponent(id)}/analyze`, "POST"),

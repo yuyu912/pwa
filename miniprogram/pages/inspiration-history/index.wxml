@@ -1,0 +1,18 @@
+<view class="page history-page">
+  <view class="heading">私密灵感历史</view>
+  <view class="desc">打开记录时会按你当前衣橱重新匹配。</view>
+  <view wx:if="{{loading}}" class="card muted">正在读取…</view>
+  <view wx:if="{{error}}" class="card error">{{error}}</view>
+  <block wx:if="{{record}}">
+    <button class="ghost" bindtap="closeRecord">‹ 返回历史列表</button>
+    <view class="card"><view class="title">{{record.sourceTitle || record.summary || '穿搭灵感'}}</view><view class="muted">{{statusText[record.status]}}</view></view>
+    <view class="card" wx:for="{{record.matches}}" wx:key="slot">
+      <view class="title">{{item.inspiration.name || item.inspiration.category}}</view><view class="advice">{{item.advice}}</view>
+      <view class="candidate" wx:for="{{item.candidates}}" wx:for-item="candidate" wx:key="key"><image src="{{candidate.item.imageUrl}}" mode="aspectFill"/><view><text>{{candidate.item.name}}</text><text class="level">{{candidate.matchLabel}}</text><text class="muted">{{candidate.score}}分 · {{candidate.reasonsText}}</text></view></view>
+    </view>
+  </block>
+  <block wx:else>
+    <view wx:if="{{!loading && !history.length}}" class="card muted">还没有私密灵感记录</view>
+    <view class="card history-card" wx:for="{{history}}" wx:key="id"><view class="history-main" data-id="{{item.id}}" bindtap="openRecord"><view class="title">{{item.sourceTitle || item.summary || '穿搭灵感'}}</view><view class="muted">{{statusText[item.status]}} · {{item.updatedAt}}</view></view><view class="delete" data-id="{{item.id}}" catchtap="deleteRecord">删除</view></view>
+  </block>
+</view>

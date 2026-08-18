@@ -7,14 +7,17 @@ const repository = require("./lib/database");
 const cloud = require("./lib/cloud-services");
 const aiBudget = require("./lib/ai-budget");
 const inspiration = require("./lib/inspiration");
+const outfitAssistant = require("./lib/outfit-assistant");
 const weatherService = require("./lib/amap-weather");
 const { buildCityTrend, buildOutfitCandidates, buildStyleProfile } = require("./lib/outfit-insights");
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-14-design-details-v56";
+const BUILD_ID = "2026-08-18-qwen37-json-budget-v76";
 const OUTFIT_VISION_MODEL = process.env.QWEN_VL_MODEL || "qwen3-vl-flash-2026-01-22";
 const OUTFIT_IMAGE_EDIT_MODEL = "qwen-image-2.0-pro-2026-06-22";
+const visionProvider = () => cloud._test.visionProviderConfig();
+const visionProviderName = (provider) => provider === "lyrouter" ? "LYRouter" : "阿里云百炼";
 const GARMENT_SEGMENTATION_MODEL = "SegmentCloth";
 const PRODUCT_SEGMENTATION_MODEL = "SegmentCommodity";
 const outfitParsingConfigured = () => Boolean(
@@ -266,7 +269,7 @@ const quotaSummary = (user, tasks, currentTime = Date.now()) => {
     const createdAt = Date.parse(task.created_at || "");
     return Number.isFinite(createdAt) && createdAt >= window.startsAt && createdAt <= window.endsAt;
   });
-  const recognitionUsed = inWindow.filter((task) => !["inspiration", "multi_detection"].includes(task.mode)
+  const recognitionUsed = inWindow.filter((task) => !["inspiration", "multi_detection", "outfit_assistant"].includes(task.mode)
     && task.status === "completed"
     && (task.mode !== "multi_item" || task.stage === "saved")
     && aiBudget.integer(task.prompt_tokens) + aiBudget.integer(task.completion_tokens) > 0).length;
@@ -356,6 +359,16 @@ const mapItem = (item) => ({
   scenes: sanitizeTags(item.scenes, allowedScenes),
   imageUrl: cloud.signedUrl(item.image_key, "GET", 3600)
 });
+
+const findActiveClothingBySourceHash = async (userId, sourceHash) => {
+  const sourceHashKey = `${userId}:${sourceHash}`;
+  const exact = await repository.findOne("clothing", { source_hash_key: sourceHashKey });
+  if (!exact) return null;
+  if (exact.status === "active") return exact;
+  // 兼容旧版本软删除数据：保留原始哈希用于追溯，只释放阻止再次录入的唯一键。
+  await repository.update("clothing", exact.id, { source_hash_key: repository.command().remove() });
+  return null;
+};
 
 const clampNumber = (value, min, max, fallback) => {
   const number = Number(value);
@@ -752,6 +765,8 @@ const settleTaskBudget = async (taskId, userId, options) => {
       error_message: cleanText(options.errorMessage, 200),
       prompt_tokens: aiBudget.integer(task.prompt_tokens) + aiBudget.integer(options.usage?.prompt_tokens),
       completion_tokens: aiBudget.integer(task.completion_tokens) + aiBudget.integer(options.usage?.completion_tokens),
+      provider: options.provider || task.provider,
+      model: options.model || task.model,
       // uniCloud update 会把普通嵌套对象合并为点路径；旧失败任务的 result 为 null 时会报错。
       // command.set 明确替换整个 result，使旧任务可以安全重试并写入新的识别结果。
       result: repository.command().set(options.result || task.result || null),
@@ -1001,7 +1016,7 @@ const processMattingTask = async (taskId, userId) => {
     }
     const sourceHash = await cloud.sourceHash(task.source_key);
     const exact = task.mode !== "candidate"
-      ? await repository.findOne("clothing", { source_hash_key: `${userId}:${sourceHash}` })
+      ? await findActiveClothingBySourceHash(userId, sourceHash)
       : null;
     if (exact) {
       throw Object.assign(new Error("这张衣物图片已经录入过。"), {
@@ -1312,7 +1327,7 @@ const processRecognitionStep = async (taskId, userId) => {
       ...taskProgress(reservation.task, {
         status: "completed",
         stage: "awaiting_confirmation",
-        providerName: "阿里云百炼",
+        providerName: visionProviderName(reservation.task.provider),
         modelName: reservation.task.model || "qwen3-vl-plus",
         actionText: "已生成待确认的衣物候选标签"
       }),
@@ -1331,7 +1346,7 @@ const processRecognitionStep = async (taskId, userId) => {
       updated_at: now()
     });
     const recognition = await cloud.recognizeImage(recognitionKey);
-    const chargeMicros = aiBudget.estimateQwenCostMicros(recognition.usage);
+    const chargeMicros = aiBudget.estimateVisionCostMicros(recognition.usage, recognition.provider);
     if (!recognition.valid) {
       await settleTaskBudget(task.id, userId, {
         chargeMicros,
@@ -1340,6 +1355,8 @@ const processRecognitionStep = async (taskId, userId) => {
         errorCode: "GARMENT_NOT_ISOLATED",
         errorMessage: recognition.reason,
         usage: recognition.usage,
+        provider: recognition.provider,
+        model: recognition.model,
         success: false
       });
       settled = true;
@@ -1370,6 +1387,8 @@ const processRecognitionStep = async (taskId, userId) => {
       status: "completed",
       stage: "awaiting_confirmation",
       usage: recognition.usage,
+      provider: recognition.provider,
+      model: recognition.model,
       result,
       success: true
     });
@@ -1379,7 +1398,7 @@ const processRecognitionStep = async (taskId, userId) => {
       ...taskProgress(task, {
         status: "completed",
         stage: "awaiting_confirmation",
-        providerName: "阿里云百炼",
+        providerName: recognition.providerName || visionProviderName(recognition.provider),
         modelName: recognition.model,
         actionText: "已生成待确认的衣物候选标签"
       }),
@@ -1390,7 +1409,7 @@ const processRecognitionStep = async (taskId, userId) => {
     if (!settled) {
       const providerUsage = error?.providerUsage || {};
       await settleTaskBudget(task.id, userId, {
-        chargeMicros: aiBudget.estimateQwenCostMicros(providerUsage),
+        chargeMicros: aiBudget.estimateVisionCostMicros(providerUsage, error?.provider || task.provider),
         status: "failed_retryable",
         stage: "recognition_failed",
         errorCode: String(error?.code || "RECOGNITION_FAILED"),
@@ -1603,6 +1622,8 @@ const route = async (event) => {
     // 新构建只有在私人搭配集合也可访问时才报告 database=ready。
     await Promise.all([repository.count("users"), repository.count("outfitPlans")]);
     const parsingEnabled = outfitParsingConfigured();
+    const providerConfig = visionProvider();
+    const baiduConfig = cloud._test.baiduCredentials();
     return response(event, 200, {
       ok: true, service: "wardrobe", database: "ready", buildId: BUILD_ID,
       models: {
@@ -1612,12 +1633,15 @@ const route = async (event) => {
         productSegmentation: "BaiduControlMatting",
         productSegmentationFallback: PRODUCT_SEGMENTATION_MODEL
       },
+      visionRecognition: { provider: providerConfig.provider, model: providerConfig.model, enabled: Boolean(providerConfig.apiKey && providerConfig.model) },
+      productSegmentation: { provider: "baidu", enabled: Boolean(baiduConfig.apiKey && baiduConfig.secretKey) },
       garmentSegmentation: {
         provider: parsingEnabled ? "aliyun-bailian" : "aliyun-viapi",
         enabled: parsingEnabled || cloud._test.garmentSegmentationConfigured()
       },
       outfitParsing: { enabled: parsingEnabled, region: "cn-beijing" },
       inspiration: { enabled: true, platform: "xiaohongshu", mode: "private_observe_only" },
+      outfitAssistant: { enabled: true, mode: "single_followup_private" },
       outfitPlans: { enabled: true, mode: "private" },
       multiGarment: { enabled: true, maxItems: 3, personPhotos: false },
       garmentSegmentationDiagnostic: {
@@ -1702,6 +1726,83 @@ const route = async (event) => {
 
   const user = await requireActiveUser(event);
   const userId = String(user.id);
+
+  if (method === "POST" && path === "/api/outfit-assistant/understand") {
+    const input = outfitAssistant.requestText(body.message, body.previousMessage, body.followupUsed, body.contextPreferences, body.currentCategories, body.currentOutfitFacts);
+    const idempotencyKey = cleanText(body.idempotencyKey, 80);
+    if (!idempotencyKey) throw Object.assign(new Error("缺少穿搭需求的幂等标识。"), { status: 400 });
+    const taskId = idempotentId("outfit-assistant", userId, idempotencyKey);
+    let task = await repository.getById("aiUsage", taskId);
+    if (!task) {
+      const providerConfig = visionProvider();
+      await repository.add("aiUsage", {
+        user_id: userId,
+        idempotency_key: idempotencyKey,
+        source_key: "",
+        mode: "outfit_assistant",
+        provider: providerConfig.provider,
+        model: providerConfig.model,
+        status: "pending",
+        stage: "outfit_request_understanding",
+        reserved_micros: 0,
+        cost_micros: 0,
+        matting_calls: 0,
+        recognition_attempts: 0,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        result: null,
+        error_code: "",
+        error_message: "",
+        created_at: now(),
+        updated_at: now()
+      }, taskId);
+      task = await repository.getById("aiUsage", taskId);
+    }
+    const reservation = await reserveTaskBudget(taskId, userId);
+    if (reservation.completed && task.result?.preferences) {
+      return response(event, 200, { preferences: task.result.preferences, budget: await budgetSummary() });
+    }
+    try {
+      const understood = await cloud.understandOutfitRequest(outfitAssistant.promptForRequest(input));
+      const preferences = outfitAssistant.normalizePreferences(understood.result, input.followupUsed, input.contextPreferences);
+      const budget = await settleTaskBudget(taskId, userId, {
+        chargeMicros: aiBudget.estimateVisionCostMicros(understood.usage, understood.provider),
+        success: true,
+        status: "completed",
+        stage: "outfit_request_understanding",
+        usage: understood.usage,
+        result: { preferences },
+        provider: understood.provider,
+        model: understood.model
+      });
+      return response(event, 200, { preferences, budget });
+    } catch (error) {
+      if (outfitAssistant.shouldFallbackToRules(error)) {
+        const preferences = outfitAssistant.inferPreferencesFromText(input);
+        const budget = await settleTaskBudget(taskId, userId, {
+          chargeMicros: aiBudget.estimateVisionCostMicros(error.providerUsage || {}, error.provider || task.provider),
+          success: true, status: "completed", stage: "outfit_request_understanding_fallback",
+          usage: error.providerUsage || {}, result: { preferences }, provider: error.provider || task.provider, model: task.model
+        });
+        return response(event, 200, {
+          preferences, budget, fallback: "controlled_text_rules",
+          fallbackReason: cleanText(error.code, 80) || "temporary_upstream_error"
+        });
+      }
+      await settleTaskBudget(taskId, userId, {
+        chargeMicros: aiBudget.estimateVisionCostMicros(error.providerUsage || {}, error.provider || task.provider),
+        success: false,
+        status: "failed",
+        stage: "outfit_request_understanding",
+        usage: error.providerUsage || {},
+        errorCode: error.code || "OUTFIT_ASSISTANT_FAILED",
+        errorMessage: error.message,
+        provider: error.provider || task.provider,
+        model: task.model
+      }).catch(() => {});
+      throw error;
+    }
+  }
 
   if (method === "GET" && path === "/api/outfit-plans") {
     const plans = await repository.findMany("outfitPlans", { user_id: userId }, { orderBy: "updated_at", order: "desc", limit: 100 });
@@ -1964,13 +2065,14 @@ const route = async (event) => {
     const taskId = `inspiration-${record.id}`;
     let task = await repository.getById("aiUsage", taskId);
     if (!task) {
+      const providerConfig = visionProvider();
       await repository.add("aiUsage", {
         user_id: userId,
         idempotency_key: taskId,
         source_key: imageKeys[0],
         mode: "inspiration",
-        provider: "dashscope",
-        model: process.env.QWEN_VL_MODEL || OUTFIT_VISION_MODEL,
+        provider: providerConfig.provider,
+        model: providerConfig.model,
         status: "pending",
         stage: "inspiration_analysis",
         reserved_micros: 0,
@@ -1997,12 +2099,14 @@ const route = async (event) => {
         : await cloud.analyzeInspirationImages(imageKeys, { sourceTitle: record.source_title || "" });
       if (!reservation.completed) {
         await settleTaskBudget(taskId, userId, {
-          chargeMicros: aiBudget.estimateQwenCostMicros(analyzed.usage),
+          chargeMicros: aiBudget.estimateVisionCostMicros(analyzed.usage, analyzed.provider),
           success: true,
           status: "completed",
           stage: "inspiration_analysis",
           usage: analyzed.usage,
-          result: { analysis: analyzed.result }
+          result: { analysis: analyzed.result },
+          provider: analyzed.provider,
+          model: analyzed.model
         });
       }
       await repository.update("inspirations", record.id, {
@@ -2018,7 +2122,7 @@ const route = async (event) => {
     } catch (error) {
       if (reserved) {
         await settleTaskBudget(taskId, userId, {
-          chargeMicros: aiBudget.estimateQwenCostMicros(error.providerUsage || {}),
+          chargeMicros: aiBudget.estimateVisionCostMicros(error.providerUsage || {}, error.provider || task.provider),
           success: false,
           status: "failed",
           stage: "inspiration_analysis",
@@ -2218,7 +2322,7 @@ const route = async (event) => {
   if (method === "GET" && path === "/api/weather") {
     const adcode = String(query.adcode || "").trim();
     if (!/^\d{6}$/.test(adcode)) throw Object.assign(new Error("请选择有效的省、市或区县。"), { status: 400 });
-    return response(event, 200, await weatherService.getLiveWeather(adcode));
+    return response(event, 200, await weatherService.getWeather(adcode));
   }
 
   if (method === "POST" && path === "/api/auth/delete-request") {
@@ -2639,6 +2743,7 @@ const route = async (event) => {
     }
     const taskId = newId();
     const upload = cloud.createUpload(userId, mimeType, taskId);
+    const providerConfig = mode === "manual" ? null : visionProvider();
     await repository.add("aiUsage", {
       user_id: userId,
       idempotency_key: idempotencyKey,
@@ -2651,8 +2756,8 @@ const route = async (event) => {
       hanger_edit_model: "",
       source_hash: null,
       mode,
-      provider: mode === "manual" ? "none" : "dashscope",
-      model: mode === "manual" ? "" : process.env.QWEN_VL_MODEL || "qwen3-vl-plus",
+      provider: providerConfig?.provider || "none",
+      model: providerConfig?.model || "",
       status: "upload_pending",
       stage: "upload",
       reserved_micros: 0,
@@ -2781,7 +2886,7 @@ const route = async (event) => {
     if (!allowedCategories.includes(category)) throw Object.assign(new Error("请选择衣物品类。"), { status: 400 });
     const hash = task.source_hash;
     if (!hash) throw Object.assign(new Error("衣物图片校验结果已失效，请重新抠图。"), { status: 409 });
-    const exact = await repository.findOne("clothing", { source_hash_key: `${userId}:${hash}` });
+    const exact = await findActiveClothingBySourceHash(userId, hash);
     if (exact) throw Object.assign(new Error("这张衣物图片已经录入过。"), { status: 409 });
     const itemId = newId();
     const savedItemId = await repository.withTransaction(async (tx) => {
@@ -2976,7 +3081,10 @@ const route = async (event) => {
     if (method === "GET") return response(event, 200, mapItem(item));
     if (method === "DELETE") {
       // 这里只做软删除，不删除 COS 图片与穿着记录；后续如需恢复仍有数据基础。
-      await repository.update("clothing", itemId, { status: "inactive" });
+      await repository.update("clothing", itemId, {
+        status: "inactive",
+        source_hash_key: repository.command().remove()
+      });
       // 分享快照不再暴露已移出衣橱的衣物；若一条请求已无可分享衣物则自动关闭。
       const requests = await repository.findMany("outfitRequests", { owner_user_id: userId, status: "open" });
       await Promise.all(requests.filter((request) => (request.items || []).some((shared) => String(shared.id) === itemId)).map(async (request) => {
@@ -3241,4 +3349,4 @@ exports.main = async (event) => {
   }
 };
 
-exports._test = { acquireImageEditSlot, candidateWaitSummary, cleanText, cosineSimilarity, entitlementSummary, nextStarAccount, parseArray, parseBody, quotaSummary, sanitizeTags, shanghaiDayKey, shiftDayKey, shouldSkipOutfitCandidateMatching, tagSimilarity };
+exports._test = { acquireImageEditSlot, candidateWaitSummary, cleanText, cosineSimilarity, entitlementSummary, findActiveClothingBySourceHash, nextStarAccount, parseArray, parseBody, quotaSummary, sanitizeTags, shanghaiDayKey, shiftDayKey, shouldSkipOutfitCandidateMatching, tagSimilarity };

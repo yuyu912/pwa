@@ -22,12 +22,20 @@ const limitsFromEnv = (env = process.env) => ({
 
 // 千问返回实际输入/输出 Token 后才计算模型成本；单价由云端环境变量提供，不能写死在客户端。
 const estimateQwenCostMicros = (usage = {}, env = process.env) => {
+  return estimateVisionCostMicros(usage, "dashscope", env);
+};
+
+const estimateVisionCostMicros = (usage = {}, provider = "dashscope", env = process.env) => {
   const inputTokens = integer(usage.prompt_tokens ?? usage.input_tokens);
   const outputTokens = integer(usage.completion_tokens ?? usage.output_tokens);
-  // 默认值仅便于本地测试；真实调用前 recognizeImage 会强制要求环境变量，
-  // 以百炼控制台当天 qwen3-vl-plus 所在地域的价格为准。
-  const inputYuanPerMillion = Number(env.QWEN_INPUT_YUAN_PER_MILLION || 1);
-  const outputYuanPerMillion = Number(env.QWEN_OUTPUT_YUAN_PER_MILLION || 10);
+  const lyrouter = provider === "lyrouter";
+  let lyrouterConfig = {};
+  if (lyrouter) {
+    try { lyrouterConfig = JSON.parse(String(env.LYROUTER_CONFIG || "{}")); } catch { lyrouterConfig = {}; }
+  }
+  // LYRouter 配置异常时采用官网原价作保守兜底；真实调用会在供应商配置校验阶段提前停止。
+  const inputYuanPerMillion = Number((lyrouter ? lyrouterConfig.inputYuanPerMillion : env.QWEN_INPUT_YUAN_PER_MILLION) || (lyrouter ? 1.2 : 1));
+  const outputYuanPerMillion = Number((lyrouter ? lyrouterConfig.outputYuanPerMillion : env.QWEN_OUTPUT_YUAN_PER_MILLION) || (lyrouter ? 7.2 : 10));
   const yuan = (inputTokens * inputYuanPerMillion + outputTokens * outputYuanPerMillion) / 1_000_000;
   return integer(yuan * 1_000_000);
 };
@@ -65,6 +73,7 @@ module.exports = {
   DEFAULT_MATTING_COST_MICROS,
   DEFAULT_IMAGE_EDIT_COST_MICROS,
   estimateQwenCostMicros,
+  estimateVisionCostMicros,
   integer,
   limitsFromEnv,
   publicSummary

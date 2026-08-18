@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
-const { normalizeLive } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/amap-weather.js");
+const { normalizeForecast, normalizeLive } = require("../uniCloud-aliyun/cloudfunctions/wardrobe-api/lib/amap-weather.js");
 const homeWeatherSource = fs.readFileSync(new URL("../miniprogram/utils/home-weather.js", import.meta.url), "utf8");
 const homeWeatherModule = { exports: {} };
 vm.runInNewContext(homeWeatherSource, { module: homeWeatherModule, exports: homeWeatherModule.exports });
@@ -45,6 +45,28 @@ test("无效供应商结果不会伪造成实时天气", () => {
     () => normalizeLive({ status: "0", infocode: "10003", lives: [] }),
     (error) => error.status === 502 && error.code === "10003"
   );
+});
+
+test("高德当天预报归一化为最低最高温和昼夜天气", () => {
+  const result = normalizeForecast({
+    status: "1",
+    forecasts: [{ reporttime: "2026-08-17 08:00:00", casts: [{ date: "2026-08-17", dayweather: "晴", nightweather: "多云", daytemp: "29", nighttemp: "18", daypower: "3", nightpower: "2" }] }]
+  });
+  assert.equal(result.low, 18);
+  assert.equal(result.high, 29);
+  assert.equal(result.dayCondition, "晴");
+  assert.equal(result.nightCondition, "多云");
+});
+
+test("早晚温差达到8℃时提示可穿脱叠层", () => {
+  const result = weather.formatLiveWeather(
+    { city: "大连市", condition: "晴", temperature: 24, low: 15, high: 26 },
+    { cityName: "大连市", fullName: "辽宁省 大连市" }
+  );
+  assert.equal(result.temperatureSwing, 11);
+  assert.equal(result.largeTemperatureSwing, true);
+  assert.equal(result.needsOuterwear, true);
+  assert.match(result.tip, /早晚温差11℃.*可穿脱叠层/);
 });
 
 test("实时温度和降水会进入衣橱搭配规则", () => {

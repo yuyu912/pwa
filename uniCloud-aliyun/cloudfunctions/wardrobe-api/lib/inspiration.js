@@ -457,6 +457,45 @@ const colorFamily = (value) => {
   const family = COLOR_FAMILIES.find((values) => values.some((entry) => color.includes(entry)));
   return family ? family[0] : color;
 };
+const INSPIRATION_COLOR_RULES = {
+  "绿": ["黑", "白", "米", "棕", "紫"],
+  "深绿": ["紫", "黑", "黄", "蓝绿", "卡其"],
+  "黄": ["黑", "蓝", "紫", "棕", "白"],
+  "粉": ["深绿", "白", "米", "酒红", "蓝"],
+  "红": ["黑", "棕", "米", "灰", "蓝"],
+  "蓝": ["白", "粉", "绿", "灰", "棕"],
+  "浅蓝": ["白", "粉", "绿", "灰", "棕"],
+  "棕": ["白", "米", "黑", "红", "粉"],
+  "紫": ["浅蓝", "粉", "白", "黑", "棕"]
+};
+const inspirationColorKey = (value) => {
+  const color = normalized(value);
+  if (/深绿|墨绿|森林绿/.test(color)) return "深绿";
+  if (/蓝绿|青绿|薄荷/.test(color)) return "蓝绿";
+  if (/浅蓝|天蓝|雾蓝/.test(color)) return "浅蓝";
+  if (/酒红|勃艮第/.test(color)) return "酒红";
+  if (/米白|奶油|象牙|米色/.test(color)) return "米";
+  if (/卡其/.test(color)) return "卡其";
+  if (/咖啡|咖色|棕|驼/.test(color)) return "棕";
+  if (/粉|玫红/.test(color)) return "粉";
+  if (/紫/.test(color)) return "紫";
+  if (/绿/.test(color)) return "绿";
+  if (/黄|金/.test(color)) return "黄";
+  if (/蓝|牛仔/.test(color)) return "蓝";
+  if (/红/.test(color)) return "红";
+  if (/黑|炭灰/.test(color)) return "黑";
+  if (/灰|银/.test(color)) return "灰";
+  if (/白/.test(color)) return "白";
+  return color;
+};
+const inspirationColorRelationship = (anchorColor, candidateColor) => {
+  const anchor = inspirationColorKey(anchorColor);
+  const candidate = inspirationColorKey(candidateColor);
+  if (!anchor || !candidate) return { score: 0, reason: "" };
+  if (colorFamily(anchorColor) === colorFamily(candidateColor)) return { score: 20, reason: "色系接近" };
+  if ((INSPIRATION_COLOR_RULES[anchor] || []).includes(candidate)) return { score: 12, reason: "缺少同色时采用协调换色" };
+  return { score: 0, reason: "" };
+};
 const patternFamily = (value) => {
   const pattern = normalized(value);
   if (/(格纹|格子|棋盘)/.test(pattern)) return "格纹";
@@ -524,10 +563,9 @@ const scoreItem = (slot, item) => {
   if (slot.season && item.season) { score += 25; reasons.push(`${item.season}季节适配`); }
   if (thicknessGap === 0) { score += 20; reasons.push(`${item.thickness}厚度一致`); }
   else if (thicknessGap === 1) { score += 12; reasons.push("厚薄层次可协调"); }
-  const leftColor = colorFamily(slot.color);
-  const rightColor = colorFamily(item.color);
-  // 同槽位替代是在找“像原帖的单品”，这里只奖励同色系；互补色属于整套搭配，不在此处加分。
-  if (leftColor && rightColor && leftColor === rightColor) { score += 20; reasons.push("色系接近"); }
+  // 先还原原帖同色；没有同色时只使用已确认的定向颜色口诀做可解释换色。
+  const colorRelation = inspirationColorRelationship(slot.color, item.color);
+  if (colorRelation.score) { score += colorRelation.score; reasons.push(colorRelation.reason); }
   const styleScore = styleOverlap(targetStyles, itemStyles);
   if (styleScore) {
     score += Math.round(styleScore * 25);
@@ -538,21 +576,73 @@ const scoreItem = (slot, item) => {
   const sceneOverlap = overlap(slot.scenes, item.scenes);
   if (sceneOverlap) { score += Math.round(sceneOverlap * 4); reasons.push("场景相符"); }
   const suggestion = `推荐理由：${reasons.filter((reason) => reason !== "品类一致").join("；") || "品类与参考穿搭一致"}。`;
-  return { score: Math.min(100, score), reasons, suggestion };
+  return { score: Math.min(100, score), reasons, suggestion, matchLevel: "exact", matchLabel: "高度还原" };
+};
+
+// 严格还原为 0 时才进入替代层；品类仍是硬门，其余差异明确扣分并展示，避免把替代说成同款。
+const scoreFallbackItem = (slot, item) => {
+  if (slot.category !== item.category) return null;
+  let score = 30;
+  const reasons = ["品类一致"];
+  const differences = [];
+  const seasonMatches = seasonCompatible(slot.season, item.season);
+  if (seasonMatches) { score += 15; reasons.push("季节范围接近"); }
+  else { score -= 8; differences.push("季节不同"); }
+  const thicknessGap = thicknessDistance(slot.thickness, item.thickness);
+  if (thicknessGap === 0) { score += 15; reasons.push("厚度一致"); }
+  else if (thicknessGap === 1 || thicknessGap == null) { score += thicknessGap === 1 ? 8 : 0; if (thicknessGap === 1) reasons.push("厚薄可通过叠穿调整"); }
+  else { score -= 8; differences.push("厚薄差异较大"); }
+  const targetStyles = normalizeStyles(slot.styles);
+  const itemStyles = normalizeStyles(item.styles);
+  const sharedStyles = itemStyles.filter((style) => targetStyles.includes(style));
+  const targetSignatureStyles = targetStyles.filter((style) => SIGNATURE_STYLES.has(style));
+  const sharedSignatureStyles = sharedStyles.filter((style) => SIGNATURE_STYLES.has(style));
+  if (sharedSignatureStyles.length) { score += 20; reasons.push(`${sharedSignatureStyles.join("、")}风格呼应`); }
+  else if (sharedStyles.length) { score += 10; reasons.push(`${sharedStyles.join("、")}基础风格接近`); }
+  else if (targetStyles.length) { score -= 12; differences.push(`不能完整还原${targetStyles.join("、")}风格`); }
+  const targetPattern = patternFamily(slot.pattern);
+  const itemPattern = patternFamily(item.pattern);
+  if (targetPattern && targetPattern === itemPattern) { score += 8; reasons.push("图案一致"); }
+  else if (targetPattern && itemPattern === "纯色") { score += 2; reasons.push("用纯色降低替代难度"); differences.push(`未还原${targetPattern}图案`); }
+  else if (targetPattern) { score -= 6; differences.push("图案不同"); }
+  const targetDetails = resolvedDetails(slot.designDetails ?? slot.design_details, slot.name, slot.evidence);
+  const itemDetails = resolvedDetails(item.designDetails ?? item.design_details, item.name, item.pattern, item.styles);
+  const sharedDetails = targetDetails.filter((detail) => itemDetails.includes(detail));
+  if (sharedDetails.length) { score += 12; reasons.push(`${sharedDetails.join("、")}设计细节接近`); }
+  else if (targetDetails.length) { score -= 10; differences.push(`未还原${targetDetails.join("、")}设计细节`); }
+  const colorRelation = inspirationColorRelationship(slot.color, item.color);
+  if (colorRelation.score) { score += colorRelation.score; reasons.push(colorRelation.reason); }
+  const sceneOverlap = overlap(slot.scenes, item.scenes);
+  if (sceneOverlap) { score += Math.round(sceneOverlap * 4); reasons.push("场景相符"); }
+  const matchLevel = sharedSignatureStyles.length ? "style_alternative" : "coordinated_alternative";
+  const matchLabel = matchLevel === "style_alternative" ? "同风格替代" : "协调替代";
+  const positive = reasons.filter((reason) => reason !== "品类一致").join("；") || "保留了相同品类";
+  const caveat = differences.length ? `；差异：${differences.join("、")}` : "";
+  return { score: Math.max(0, Math.min(100, score)), reasons, differences, matchLevel, matchLabel, suggestion: `${matchLabel}：${positive}${caveat}。` };
 };
 
 const matchWardrobe = (slots, items) => {
   const matches = (Array.isArray(slots) ? slots : []).map((slot) => {
-    const candidates = (Array.isArray(items) ? items : []).map((item) => {
+    const wardrobeItems = Array.isArray(items) ? items : [];
+    const exactCandidates = wardrobeItems.map((item) => {
       const verdict = scoreItem(slot, item);
       return verdict ? { item, ...verdict } : null;
     }).filter((entry) => entry && entry.score >= 40)
       .sort((left, right) => right.score - left.score || String(left.item.id).localeCompare(String(right.item.id)))
       .slice(0, 3);
+    const candidates = exactCandidates.length ? exactCandidates : wardrobeItems.map((item) => {
+      const verdict = scoreFallbackItem(slot, item);
+      return verdict ? { item, ...verdict } : null;
+    }).filter((entry) => entry && entry.score >= 20)
+      .sort((left, right) => right.score - left.score || String(left.item.id).localeCompare(String(right.item.id)))
+      .slice(0, 3);
+    const matchMode = exactCandidates.length ? "exact" : candidates.length ? "alternative" : "missing";
     const advice = candidates.length
-      ? `优先选择${candidates[0].item.name || slot.category}：${candidates[0].suggestion.replace(/^推荐理由：/, "")}`
-      : `衣橱暂无符合${[slot.season, slot.thickness, ...normalizeStyles(slot.styles)].filter(Boolean).join("、") || "当前"}条件的${slot.category}。`;
-    return { slot: slot.slot, inspiration: slot, candidates, missing: candidates.length === 0, advice };
+      ? matchMode === "exact"
+        ? `优先选择${candidates[0].item.name || slot.category}：${candidates[0].suggestion.replace(/^推荐理由：/, "")}`
+        : `没有找到高度还原的${slot.category}，已放宽为真实衣橱中的替代方案；首选${candidates[0].item.name || slot.category}。`
+      : `衣橱中暂时没有可用于替代的${slot.category}，不会拿其他品类硬凑。`;
+    return { slot: slot.slot, inspiration: slot, candidates, matchMode, missing: candidates.length === 0, advice };
   });
   return { matches, missing: matches.filter((entry) => entry.missing).map((entry) => entry.inspiration.name || entry.inspiration.category) };
 };
@@ -576,6 +666,7 @@ module.exports = {
   resolveXiaohongshuPublicContent,
   sanitizeOutfitAnalysis,
   scoreItem,
+  scoreFallbackItem,
   slotForCategory,
   _test: { analysisEntries, cleanTags, colorFamily, distinctiveDetails, initialStateImages, isPlatformUiImage, isPublicErrorPage, metaAttributes, normalizeCategory, normalizeDesignDetails, normalizePublicImageUrl, normalizeSlot, normalizeStyles, parseInitialState, patternFamily, pinnedLookup, replaceBareUndefined, retryableAddressError, seasonCompatible, thicknessDistance, withAddressFallback }
 };

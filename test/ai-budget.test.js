@@ -33,6 +33,19 @@ test("千问成本使用输入和输出Token按整数微元估算", () => {
   assert.equal(cost, 2400);
 });
 
+test("LYRouter 成本使用独立单价且不读取百炼价格", () => {
+  const cost = budget.estimateVisionCostMicros(
+    { prompt_tokens: 1000, completion_tokens: 200 },
+    "lyrouter",
+    {
+      QWEN_INPUT_YUAN_PER_MILLION: "999",
+      QWEN_OUTPUT_YUAN_PER_MILLION: "999",
+      LYROUTER_CONFIG: JSON.stringify({ inputYuanPerMillion: 1.2, outputYuanPerMillion: 7.2 })
+    }
+  );
+  assert.equal(cost, 2640);
+});
+
 test("成功任务达到1000次时即使金额未满也停止", () => {
   const summary = budget.publicSummary({ spent_micros: 1_000_000, reserved_micros: 0, successful_tasks: 1000 });
   assert.equal(summary.status, "blocked");
