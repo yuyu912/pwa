@@ -26,6 +26,7 @@ const canvas = canvasModule.exports;
 const canvasMarkup = fs.readFileSync(new URL("../miniprogram/pages/outfit-canvas/index.wxml", import.meta.url), "utf8");
 const wardrobeSource = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.js", import.meta.url), "utf8");
 const wardrobeMarkup = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.wxml", import.meta.url), "utf8");
+const wardrobeStyles = fs.readFileSync(new URL("../miniprogram/pages/wardrobe/index.wxss", import.meta.url), "utf8");
 const addItemMarkup = fs.readFileSync(new URL("../miniprogram/pages/add-item/index.wxml", import.meta.url), "utf8");
 const candidateMarkup = fs.readFileSync(new URL("../miniprogram/pages/candidate/index.wxml", import.meta.url), "utf8");
 const loginSource = fs.readFileSync(new URL("../miniprogram/pages/login/index.js", import.meta.url), "utf8");
@@ -101,6 +102,12 @@ test("衣橱筛选可叠加关键词、品类、季节、厚薄和本月穿着�
   assert.deepEqual(result.filteredItems.map((item) => item.id), ["1"]);
   assert.equal(result.matchedCount, 1);
   assert.equal(result.monthlyWearTotal, 3);
+});
+
+test("衣橱品类筛选完整显示鞋子且允许自动换行", () => {
+  assert.ok(wardrobePage.data.categories.includes("鞋子"));
+  assert.match(wardrobeMarkup, /<view class="categories">/);
+  assert.match(wardrobeStyles, /\.categories\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*wrap/);
 });
 
 test("本月未穿只返回月度穿着次数为0的真实衣物", () => {
@@ -216,9 +223,20 @@ test("徒步场景优先用户确认过户外功能的衣物组合", () => {
     { id: "plain-top", name: "普通上衣", category: "上衣", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["运动"] },
     { id: "plain-pants", name: "普通长裤", category: "裤子", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["运动"] },
     { id: "hike-top", name: "速干上衣", category: "上衣", season: "多季", thickness: "适中", formality: "户外", functionTags: ["透气", "速干"], styles: ["运动"], scenes: ["运动"] },
-    { id: "hike-pants", name: "弹力徒步裤", category: "裤子", season: "多季", thickness: "适中", formality: "户外", functionTags: ["弹力", "耐磨"], styles: ["运动"], scenes: ["运动"] }
+    { id: "hike-pants", name: "弹力徒步裤", category: "裤子", season: "多季", thickness: "适中", formality: "户外", functionTags: ["弹力", "耐磨"], styles: ["运动"], scenes: ["运动"] },
+    { id: "hike-shoes", name: "防滑徒步鞋", category: "鞋子", season: "多季", thickness: "适中", formality: "户外", functionTags: ["防水", "耐磨"], styles: ["运动"], scenes: ["运动"] }
   ], outfitWeather, "运动", 0, { occasion: "徒步登山", formalityPreference: "outdoor" }));
-  assert.deepEqual(result.items.map((item) => item.id), ["hike-top", "hike-pants"]);
+  assert.deepEqual(result.items.map((item) => item.id), ["hike-top", "hike-pants", "hike-shoes"]);
+});
+
+test("户外或运动场景没有鞋子时不冒充完整穿搭", () => {
+  const result = structuredClone(recommend([
+    { id: "sport-top", name: "速干上衣", category: "上衣", season: "多季", thickness: "适中", formality: "运动", functionTags: ["透气", "速干"], scenes: ["运动"] },
+    { id: "sport-pants", name: "弹力长裤", category: "裤子", season: "多季", thickness: "适中", formality: "运动", functionTags: ["弹力"], scenes: ["运动"] }
+  ], outfitWeather, "运动", 0, { occasion: "跑步", formalityPreference: "athletic" }));
+  assert.deepEqual(result.items, []);
+  assert.match(result.missingText, /适合跑步的鞋子/);
+  assert.match(result.reason, /还没有鞋子/);
 });
 
 test("各场景先选择明确匹配的衣物组合再比较配色", () => {

@@ -216,6 +216,8 @@ function targetWarmthForTemperature(temperature) {
 }
 
 function itemWarmth(item) {
+  // 鞋子参与整套完整度与场景匹配，但不应被算作上半身保暖层。
+  if (item.category === "鞋子") return 0;
   const base = item.thickness === "薄" ? 1 : item.thickness === "厚" ? 3 : item.thickness === "适中" ? 2 : 1.8;
   if (["外套", "夹克", "风衣"].includes(item.category)) return base * 1.2;
   if (["裤子", "半身裙"].includes(item.category)) return base * 0.35;
@@ -325,6 +327,12 @@ const OCCASION_PROFILES = {
   "亲子出行": { styles: ["休闲", "简约", "清新"], categories: ["上衣", "裤子", "外套"], functions: ["轻便", "透气", "弹力"] }
 };
 const FORMALITY_LEVELS = { "休闲": 0, "轻商务": 1, "商务": 2, "半正式": 3, "正式": 4 };
+const SHOE_REQUIRED_OCCASIONS = new Set(["徒步登山", "露营", "跑步", "健身", "球类运动", "骑行", "滑雪", "水上运动"]);
+
+function requiresShoes(preferences = {}) {
+  return SHOE_REQUIRED_OCCASIONS.has(preferences.occasion)
+    || ["athletic", "outdoor"].includes(preferences.formalityPreference);
+}
 
 function sceneProfileScore(item, scene) {
   const profile = SCENE_PROFILES[scene] || SCENE_PROFILES["休闲"];
@@ -487,7 +495,7 @@ function scoreCombination(items, scene, weather, preferences = {}) {
   return { score, reasons, sceneTier: sceneFit.tier, sceneMatches: sceneFit.explicitMatches, preferenceMatches: styleMatches + formalityMatches + occasionMatches, formalityMatches };
 }
 
-function buildCombinations(tops, bottoms, dresses, outerwear, weather, scene, preferences = {}) {
+function buildCombinations(tops, bottoms, dresses, outerwear, shoes, weather, scene, preferences = {}) {
   const bases = dresses.map((dress) => [dress]);
   tops.forEach((top) => bottoms.forEach((bottom) => bases.push([top, bottom])));
   const combinations = [];
@@ -499,7 +507,10 @@ function buildCombinations(tops, bottoms, dresses, outerwear, weather, scene, pr
       outerwear.forEach((item) => combinations.push([...base, item]));
     } else combinations.push(base);
   });
-  const weatherSafe = combinations.filter((items) => combinationWeatherSafe(items, weather, preferences));
+  const completeCombinations = requiresShoes(preferences)
+    ? combinations.flatMap((items) => shoes.map((shoe) => [...items, shoe]))
+    : combinations;
+  const weatherSafe = completeCombinations.filter((items) => combinationWeatherSafe(items, weather, preferences));
   const preferredCategories = new Set(preferences.preferredCategories || []);
   const preferred = preferredCategories.size
     ? weatherSafe.filter((items) => items.some((item) => preferredCategories.has(item.category)))
@@ -530,6 +541,7 @@ function recommend(items, weather, scene = "休闲", offset = 0, preferences = {
   const tops = ranked.filter((item) => ["上衣", "T恤", "衬衫", "针织衫"].includes(item.category)).slice(0, 12);
   const bottoms = ranked.filter((item) => ["裤子", "半身裙"].includes(item.category)).slice(0, 12);
   const outerwear = ranked.filter((item) => ["外套", "夹克", "风衣"].includes(item.category)).slice(0, 12);
+  const shoes = ranked.filter((item) => item.category === "鞋子").slice(0, 12);
   const missing = [];
   if (!dresses.length && (!tops.length || !bottoms.length)) {
     if (!tops.length && !bottoms.length) missing.push("适合当前温度的衣物");
@@ -537,7 +549,8 @@ function recommend(items, weather, scene = "休闲", offset = 0, preferences = {
     if (!bottoms.length) missing.push("下装或连衣裙");
   }
   if (outerwearMode(weather) === "required" && !outerwear.length) missing.push("外套");
-  const combinations = buildCombinations(tops, bottoms, dresses, outerwear, weather, scene, preferences);
+  if (requiresShoes(preferences) && !shoes.length) missing.push(`适合${preferences.occasion || scene}的鞋子`);
+  const combinations = buildCombinations(tops, bottoms, dresses, outerwear, shoes, weather, scene, preferences);
   const selected = combinations.length ? combinations[offset % combinations.length] : null;
   const occasionText = preferences.occasion || `${scene}场景`;
   const selectedCandidateItems = selected?.items || [];
@@ -564,7 +577,9 @@ function recommend(items, weather, scene = "休闲", offset = 0, preferences = {
       ? `当前衣橱没有同时符合${occasionText}正式度和天气条件的完整组合，因此没有用休闲衣物冒充正式穿搭。`
       : selected
       ? `${sceneMatchedCount === selectedItems.length ? `先按${occasionText}选择衣物，再通过天气安全筛选` : `衣橱没有整套明确标注为${occasionText}的衣物，已结合现有场景、正式度、风格和功能标签选择接近款并通过天气安全筛选`}${coordinationReasons.length ? `；${coordinationReasons.join("；")}` : ""}。`
-      : `当前衣橱没有通过今日温度、温差和风雨条件的完整组合，未返回不安全的替代穿搭。`
+      : requiresShoes(preferences) && !shoes.length
+        ? `服装部分会继续按${occasionText}和天气筛选，但衣橱里还没有鞋子，因此暂不把它称为完整穿搭。请先在衣橱录入鞋子。`
+        : `当前衣橱没有通过今日温度、温差和风雨条件的完整组合，未返回不安全的替代穿搭。`
   };
 }
 

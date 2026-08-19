@@ -11,8 +11,8 @@
 .search-mark { position: relative; width: 25rpx; height: 25rpx; border: 3rpx solid #bd7381; border-radius: 50%; box-sizing: border-box; transform: rotate(-7deg); }
 .search-mark::after { position: absolute; right: -10rpx; bottom: -7rpx; width: 13rpx; height: 3rpx; border-radius: 3rpx; background: #bd7381; content: ""; transform: rotate(48deg); }
 
-.categories { margin-top: 20rpx; white-space: nowrap; }
-.category { display: inline-block; margin-right: 12rpx; padding: 11rpx 20rpx; border: 2rpx solid transparent; border-radius: 999rpx; background: #f1dfe2; color: #8f7d78; font-size: 24rpx; }
+.categories { display: flex; margin-top: 20rpx; flex-wrap: wrap; }
+.category { display: inline-block; margin: 0 12rpx 12rpx 0; padding: 11rpx 20rpx; border: 2rpx solid transparent; border-radius: 999rpx; background: #f1dfe2; color: #8f7d78; font-size: 24rpx; }
 .category.active { border-color: rgba(189,115,129,.14); background: #bd7381; color: #fff; }
 
 .advanced-toggle { display: flex; align-items: center; justify-content: space-between; margin-top: 20rpx; padding: 18rpx 10rpx 4rpx; border-top: 2rpx dashed rgba(189,115,129,.28); }

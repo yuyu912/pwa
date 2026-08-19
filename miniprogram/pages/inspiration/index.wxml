@@ -10,6 +10,10 @@
       <view class="message-row {{item.role}}" id="{{item.id}}" wx:for="{{messages}}" wx:key="id">
         <view class="bubble text-bubble" wx:if="{{item.type === 'text'}}">{{item.text}}</view>
         <view class="bubble progress-bubble" wx:elif="{{item.type === 'progress'}}"><view class="progress-dot"></view>{{item.text}}</view>
+        <view class="bubble state-card" wx:elif="{{item.type === 'state'}}">
+          <view class="state-title">我理解的需求</view>
+          <view class="state-tags"><text wx:for="{{item.tags}}" wx:key="*this">{{item}}</text></view>
+        </view>
 
         <view class="bubble source-card" wx:elif="{{item.type === 'source'}}">
           <view class="source-platform">小红书灵感</view>
@@ -43,13 +47,17 @@
         </view>
 
         <view class="bubble outfit-card" wx:elif="{{item.type === 'outfit'}}">
-          <view class="section-title">这套来自你的真实衣橱</view>
+          <view class="section-title">{{item.items.length ? '这套来自你的真实衣橱' : '暂时没有完整匹配'}}</view>
           <view class="outfit-item" wx:for="{{item.items}}" wx:for-item="garment" wx:key="id">
             <image src="{{garment.imageUrl}}" mode="aspectFill"/>
             <view class="item-copy"><view class="item-name">{{garment.name}}</view><view class="muted">{{garment.category}} · {{garment.color}}</view></view>
             <view class="item-actions" wx:if="{{item.actionable}}"><text data-item-id="{{garment.id}}" catchtap="keepItem">保留</text><text data-item-id="{{garment.id}}" catchtap="replaceItem">换掉</text></view>
           </view>
           <view class="reason">{{item.reason}}</view><view class="gap" wx:if="{{item.missingText}}">还缺：{{item.missingText}}</view>
+          <view class="relax-actions" wx:if="{{item.actionable && item.relaxOptions.length}}">
+            <view class="relax-title">你确认后，我可以逐级放宽：</view>
+            <button wx:for="{{item.relaxOptions}}" wx:for-item="option" wx:key="key" data-key="{{option.key}}" data-value="{{option.value}}" data-label="{{option.label}}" catchtap="relaxPreference">{{option.label}}</button>
+          </view>
         </view>
 
         <view class="bubble outfit-card" wx:elif="{{item.type === 'inspiration'}}">

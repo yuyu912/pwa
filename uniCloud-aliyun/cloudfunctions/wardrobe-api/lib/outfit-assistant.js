@@ -129,7 +129,13 @@ function inferPreferencesFromText(input = {}) {
     ["亲子出行", ["亲子", "带孩子", "遛娃"]], ["上课", ["上课", "上学", "校园"]], ["逛街", ["逛街", "购物"]],
     ["通勤", ["通勤", "上班"]], ["日常", ["日常", "散步", "在家", "休闲"]]
   ];
-  const businessMeal = includesAny(["领导", "客户", "商务"]) && includesAny(["吃饭", "饭局", "宴请", "聚餐"]);
+  const current = input.contextPreferences || {};
+  // “见领导，正式一点”下一轮再补充“是一个饭局”时，业务关系已经存在于受控状态中。
+  // 这里只组合相邻语义，不回放整段历史，避免旧场景长期污染新需求。
+  const hasBusinessContext = ["商务会议", "面试", "商务饭局"].includes(current.occasion)
+    || current.formalityPreference === "business";
+  const businessMeal = (includesAny(["领导", "客户", "商务"]) || hasBusinessContext)
+    && includesAny(["吃饭", "饭局", "宴请", "聚餐"]);
   const occasionMatch = businessMeal ? ["商务饭局", []] : occasionRules.find(([, words]) => includesAny(words));
   const sceneRules = [
     ["通勤", ["通勤", "上班", "开会", "面试", "领导", "商务"]], ["约会", ["约会"]],
@@ -137,7 +143,6 @@ function inferPreferencesFromText(input = {}) {
     ["运动", ["运动", "健身", "跑步"]], ["休闲", ["上课", "逛街", "散步", "日常", "休闲"]]
   ];
   const sceneMatch = occasionMatch ? [OCCASION_SCENES[occasionMatch[0]], []] : sceneRules.find(([, words]) => includesAny(words));
-  const current = input.contextPreferences || {};
   const asksWhy = includesAny(["为什么", "为什么推荐", "推荐理由", "怎么搭", "合适吗"]);
   const asksReroll = includesAny(["换一套", "再来一套", "下一套", "换个搭配"]);
   const isNew = !Object.keys(current).length || includesAny(["重新推荐", "重新搭配", "换个场合", "另一套需求"]);
@@ -195,6 +200,36 @@ function inferPreferencesFromText(input = {}) {
   }, input.followupUsed, current);
 }
 
+function reconcilePreferences(input = {}, raw = {}) {
+  const model = normalizePreferences(raw, input.followupUsed, input.contextPreferences);
+  const rules = inferPreferencesFromText(input);
+  const current = input.contextPreferences || {};
+  const hasContext = Boolean(Object.keys(current).length);
+  const same = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+  const result = { ...model };
+  const fields = ["scene", "occasion", "formalityPreference", "styles", "preferredCategories", "excludedCategories", "preferredColors", "excludedColors", "warmthPreference"];
+  const initialSignal = (field) => {
+    if (field === "scene") return Boolean(rules.occasion) || rules.scene !== "休闲";
+    if (field === "occasion") return Boolean(rules.occasion);
+    if (field === "formalityPreference") return Boolean(rules.occasion) || rules.formalityPreference !== "smart_casual";
+    if (["styles", "preferredCategories", "excludedCategories", "preferredColors", "excludedColors"].includes(field)) return (rules[field] || []).length > 0;
+    if (field === "warmthPreference") return rules.warmthPreference !== "normal";
+    return false;
+  };
+  fields.forEach((field) => {
+    const changedByCurrentTurn = hasContext ? !same(rules[field], current[field]) : initialSignal(field);
+    if (changedByCurrentTurn) result[field] = rules[field];
+  });
+  // 格式正确不代表语义正确：规则明确识别到“为什么/换一套/新限制”时，动作也要复核。
+  const ruleChangedState = fields.some((field) => hasContext ? !same(rules[field], current[field]) : initialSignal(field));
+  if (rules.action !== "recommend" || ruleChangedState) result.action = rules.action;
+  if (rules.needsClarification) {
+    result.needsClarification = true;
+    result.question = rules.question;
+  }
+  return normalizePreferences({ ...result, mode: rules.mode }, input.followupUsed, input.contextPreferences);
+}
+
 function requestText(message, previousMessage = "", followupUsed = false, contextPreferences = {}, currentCategories = [], currentOutfitFacts = [], recentMessages = []) {
   const current = cleanText(message, 300);
   const previous = cleanText(previousMessage, 300);
@@ -214,4 +249,4 @@ function promptForRequest(input) {
   return `你是穿搭对话状态解析器，不选择或编造衣物。只返回JSON：{mode,action,scene,occasion,formality_preference,styles,preferred_categories,excluded_categories,preferred_colors,excluded_colors,warmth_preference,needsClarification,question,summary,reply}。action只能为recommend、answer、reroll：修改需求用recommend；询问当前搭配原因或是否合适用answer；只要求换一套且不改条件用reroll。answer时只能依据“当前搭配事实”回答，reply不超过80字，不得补充事实中没有的衣物、材质、品牌或效果；recommend和reroll可用一句自然话确认用户修改。mode只能为new或modify：用户明确重新开始才用new；对上一套提出更休闲、更正式、换品类、不要某颜色、太冷太热等意见必须用modify，并在当前状态基础上返回修改后的完整状态。scene是兼容用大场景，只能为休闲、通勤、约会、旅行、聚会、运动之一。occasion是具体场景，只能从${ALLOWED_OCCASIONS.join("、")}中选一个；“正式”是正式程度，不等于通勤，领导饭局应为商务饭局/聚会，婚礼应为婚礼宾客/聚会，徒步露营应归户外。formality_preference只能为casual、smart_casual、business、semi_formal、formal、athletic、outdoor之一。styles只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3项；“不要这么正式”应删除优雅/通勤并改为休闲或简约。preferred_categories和excluded_categories只能从上衣、裤子、半身裙、外套、连衣裙、鞋子中选；用户说裙子或裙装但未细分时返回连衣裙和半身裙。颜色使用简短中文；warmth_preference只能为warmer、cooler、normal。无法确定“这件”指哪件时才追问；其他已明确任一条件时不要机械追问。最近对话：${JSON.stringify(input.recentMessages || [])}；当前受控状态：${JSON.stringify(input.contextPreferences || {})}；当前搭配事实：${JSON.stringify(input.currentOutfitFacts || [])}；首次输入：${input.previous || "无"}；本次输入：${input.current}；followupUsed=${input.followupUsed}`;
 }
 
-module.exports = { ALLOWED_CATEGORIES, ALLOWED_FORMALITIES, ALLOWED_OCCASIONS, ALLOWED_SCENES, ALLOWED_STYLES, cleanRecentMessages, inferPreferencesFromText, normalizePreferences, promptForRequest, requestText, shouldFallbackToRules };
+module.exports = { ALLOWED_CATEGORIES, ALLOWED_FORMALITIES, ALLOWED_OCCASIONS, ALLOWED_SCENES, ALLOWED_STYLES, cleanRecentMessages, inferPreferencesFromText, normalizePreferences, promptForRequest, reconcilePreferences, requestText, shouldFallbackToRules };

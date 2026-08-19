@@ -11,9 +11,9 @@
       <view class="search-mark"></view>
       <input value="{{keyword}}" bindinput="onKeyword" placeholder="搜索名称、颜色、材质或场景" />
     </view>
-    <scroll-view class="categories" scroll-x enhanced show-scrollbar="{{false}}">
+    <view class="categories">
       <text wx:for="{{categories}}" wx:key="*this" class="category {{activeCategory === item ? 'active' : ''}}" bindtap="selectCategory" data-category="{{item}}">{{item}}</text>
-    </scroll-view>
+    </view>
 
     <view class="advanced-toggle" bindtap="toggleFilters">
       <view class="advanced-title-row">

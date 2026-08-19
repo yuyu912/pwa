@@ -89,10 +89,23 @@ test("穿搭助手连续多轮保留正式偏好并叠加新限制", () => {
     followupUsed: true
   });
   assert.equal(dinner.scene, "聚会");
+  assert.equal(dinner.occasion, "商务饭局");
   assert.deepEqual(dinner.styles, ["通勤", "优雅"]);
   assert.equal(noDress.scene, "聚会");
   assert.deepEqual(noDress.styles, ["通勤", "优雅"]);
   assert.deepEqual(noDress.excludedCategories, ["半身裙", "连衣裙"]);
+});
+
+test("穿搭助手会复核格式正确但语义冲突的模型结果", () => {
+  const input = outfitAssistant.requestText("参加朋友婚礼，但不要裙子", "", false, {}, [], [], []);
+  const reconciled = outfitAssistant.reconcilePreferences(input, {
+    mode: "new", action: "recommend", scene: "休闲", occasion: "日常",
+    formality_preference: "casual", styles: ["休闲"], excluded_categories: []
+  });
+  assert.equal(reconciled.scene, "聚会");
+  assert.equal(reconciled.occasion, "婚礼宾客");
+  assert.equal(reconciled.formalityPreference, "semi_formal");
+  assert.deepEqual(reconciled.excludedCategories, ["半身裙", "连衣裙"]);
 });
 
 test("模型在修改轮返回空数组时不得清空已确认上下文", () => {
@@ -223,6 +236,8 @@ test("灵感页提供临时多轮消息流并保留截图、确认和私密历�
   assert.match(wxml, /穿搭助手/);
   assert.match(wxml, /catchtap="keepItem"/);
   assert.match(wxml, /catchtap="replaceItem"/);
+  assert.match(wxml, /我理解的需求/);
+  assert.match(wxml, /catchtap="relaxPreference"/);
 });
 
 test("公网 Demo 自动读取固定账号且不携带真实登录凭据或开放写操作", () => {
@@ -2094,7 +2109,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
   else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-19-contextual-occasion-agent-v81");
+  assert.equal(health.body.buildId, "2026-08-19-verified-context-shoe-agent-v82");
   assert.deepEqual(health.body.outfitPlans, { enabled: true, mode: "private" });
   assert.deepEqual(health.body.multiGarment, { enabled: true, maxItems: 3, personPhotos: false });
   assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
@@ -2236,7 +2251,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(assistantResult.status, 200);
   assert.equal(assistantResult.body.preferences.scene, "约会");
   assert.deepEqual(assistantResult.body.preferences.styles, ["韩系"]);
-  assert.deepEqual(assistantResult.body.preferences.excludedCategories, ["半身裙"]);
+  assert.deepEqual(assistantResult.body.preferences.excludedCategories, ["半身裙", "连衣裙"]);
   assert.equal(outfitAssistantCalls, 1);
   const assistantReplay = readResponse(await main(makeEvent("/api/outfit-assistant/understand", "POST", {
     message: "重复发送不会重复调用", followupUsed: false, idempotencyKey: "assistant-test-1"
@@ -2677,7 +2692,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-19-contextual-occasion-agent-v81");
+  assert.equal(failedRecognition.body.buildId, "2026-08-19-verified-context-shoe-agent-v82");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
