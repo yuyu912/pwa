@@ -18,6 +18,10 @@ const cleanTags = (value, allowed = null, max = 3) => (Array.isArray(value) ? va
   .map((entry) => cleanText(entry, 20))
   .filter((entry, index, list) => entry && list.indexOf(entry) === index && (!allowed || allowed.includes(entry)))
   .slice(0, max);
+const cleanIds = (value, max = 24) => (Array.isArray(value) ? value : [])
+  .map((entry) => cleanText(entry, 80))
+  .filter((entry, index, list) => entry && list.indexOf(entry) === index)
+  .slice(0, max);
 
 const hostAllowed = (hostname, roots) => roots.some((root) => hostname === root || hostname.endsWith(`.${root}`));
 
@@ -621,28 +625,56 @@ const scoreFallbackItem = (slot, item) => {
   return { score: Math.max(0, Math.min(100, score)), reasons, differences, matchLevel, matchLabel, suggestion: `${matchLabel}：${positive}${caveat}。` };
 };
 
-const matchWardrobe = (slots, items) => {
-  const matches = (Array.isArray(slots) ? slots : []).map((slot) => {
-    const wardrobeItems = Array.isArray(items) ? items : [];
+const matchWardrobe = (slots, items, options = {}) => {
+  const lockedItemIds = new Set(cleanIds(options.lockedItemIds, 12));
+  const excludedItemIds = new Set(cleanIds(options.excludedItemIds, 24));
+  const preferredColors = cleanTags(options.preferredColors, null, 4).map(colorFamily);
+  const excludedColors = new Set(cleanTags(options.excludedColors, null, 4).map(colorFamily));
+  const preferredStyles = normalizeStyles(options.styles);
+  const preferredCategories = cleanTags(options.preferredCategories, ALLOWED_CATEGORIES, 4);
+  const excludedCategories = new Set(cleanTags(options.excludedCategories, ALLOWED_CATEGORIES, 4));
+  const matches = (Array.isArray(slots) ? slots : []).map((originalSlot) => {
+    const replacementCategory = excludedCategories.has(originalSlot.category)
+      ? preferredCategories.find((category) => !excludedCategories.has(category)) || ""
+      : "";
+    if (excludedCategories.has(originalSlot.category) && !replacementCategory) {
+      return { slot: originalSlot.slot, inspiration: originalSlot, candidates: [], matchMode: "excluded", missing: true, advice: `已按你的要求排除${originalSlot.category}；请告诉我想换成什么品类。` };
+    }
+    const slot = replacementCategory
+      ? { ...originalSlot, slot: slotForCategory(replacementCategory), category: replacementCategory, name: `${replacementCategory}替代` }
+      : originalSlot;
+    const wardrobeItems = (Array.isArray(items) ? items : []).filter((item) => {
+      if (excludedItemIds.has(String(item.id))) return false;
+      if (excludedColors.has(colorFamily(item.color))) return false;
+      return true;
+    });
+    const locked = wardrobeItems.find((item) => lockedItemIds.has(String(item.id)) && item.category === slot.category);
+    const preferenceBonus = (item) => {
+      let bonus = 0;
+      if (preferredColors.includes(colorFamily(item.color))) bonus += 18;
+      if (normalizeStyles(item.styles).some((style) => preferredStyles.includes(style))) bonus += 14;
+      return bonus;
+    };
     const exactCandidates = wardrobeItems.map((item) => {
       const verdict = scoreItem(slot, item);
-      return verdict ? { item, ...verdict } : null;
+      return verdict ? { item, ...verdict, score: Math.min(100, verdict.score + preferenceBonus(item)) } : null;
     }).filter((entry) => entry && entry.score >= 40)
       .sort((left, right) => right.score - left.score || String(left.item.id).localeCompare(String(right.item.id)))
       .slice(0, 3);
     const candidates = exactCandidates.length ? exactCandidates : wardrobeItems.map((item) => {
       const verdict = scoreFallbackItem(slot, item);
-      return verdict ? { item, ...verdict } : null;
+      return verdict ? { item, ...verdict, score: Math.min(100, verdict.score + preferenceBonus(item)) } : null;
     }).filter((entry) => entry && entry.score >= 20)
       .sort((left, right) => right.score - left.score || String(left.item.id).localeCompare(String(right.item.id)))
       .slice(0, 3);
-    const matchMode = exactCandidates.length ? "exact" : candidates.length ? "alternative" : "missing";
-    const advice = candidates.length
+    const selectedCandidates = locked ? [{ item: locked, ...(scoreItem(slot, locked) || scoreFallbackItem(slot, locked)) }] : candidates;
+    const matchMode = locked ? "locked" : exactCandidates.length ? "exact" : selectedCandidates.length ? "alternative" : "missing";
+    const advice = selectedCandidates.length
       ? matchMode === "exact"
-        ? `优先选择${candidates[0].item.name || slot.category}：${candidates[0].suggestion.replace(/^推荐理由：/, "")}`
-        : `没有找到高度还原的${slot.category}，已放宽为真实衣橱中的替代方案；首选${candidates[0].item.name || slot.category}。`
+        ? `优先选择${selectedCandidates[0].item.name || slot.category}：${selectedCandidates[0].suggestion.replace(/^推荐理由：/, "")}`
+        : matchMode === "locked" ? `已按你的要求保留${selectedCandidates[0].item.name || slot.category}。` : `没有找到高度还原的${slot.category}，已放宽为真实衣橱中的替代方案；首选${selectedCandidates[0].item.name || slot.category}。`
       : `衣橱中暂时没有可用于替代的${slot.category}，不会拿其他品类硬凑。`;
-    return { slot: slot.slot, inspiration: slot, candidates, matchMode, missing: candidates.length === 0, advice };
+    return { slot: slot.slot, inspiration: slot, candidates: selectedCandidates, matchMode, missing: selectedCandidates.length === 0, advice };
   });
   return { matches, missing: matches.filter((entry) => entry.missing).map((entry) => entry.inspiration.name || entry.inspiration.category) };
 };

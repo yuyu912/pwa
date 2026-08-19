@@ -2,6 +2,7 @@ const api = require("../../services/api");
 const session = require("../../services/session");
 const weatherService = require("../../services/weather");
 const { getWeatherIcon } = require("../../utils/home-weather");
+const config = require("../../config");
 
 const HOME_WEATHER_TIPS = {
   "晴": "适合轻薄透气穿搭",
@@ -24,14 +25,14 @@ const entitlementView = (entitlement) => {
 };
 
 Page({
-  data: { itemCount: 0, weatherTemp: "选择地区", weatherCopy: "", weatherTip: "设置地区后获取实时天气", weatherIcon: "cloud", hasLocation: false, imageErrors: {}, entitlement: null },
+  data: { demoReadonly: config.DEMO_READONLY, itemCount: 0, weatherTemp: "选择地区", weatherCopy: "", weatherTip: "设置地区后获取实时天气", weatherIcon: "cloud", hasLocation: false, imageErrors: {}, entitlement: null },
   async onShow() {
     if (this.getTabBar()) this.getTabBar().setData({ selected: 0 });
     const { user, token } = session.restore();
     if (!user || !token) return wx.redirectTo({ url: "/pages/login/index" });
     try { this.setData({ itemCount: (await api.listItems()).length }); }
     catch { this.setData({ itemCount: 0 }); }
-    try {
+    if (!config.DEMO_READONLY) try {
       const entitlement = entitlementView(await api.getEntitlement());
       this.setData({ entitlement });
       const app = getApp();

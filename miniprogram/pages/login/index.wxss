@@ -3,9 +3,9 @@
 .title { display: block; margin-top: 20rpx; color: #493063; font-size: 52rpx; font-weight: 700; line-height: 1.34; white-space: pre-line; }
 .hero .muted { display: block; margin-top: 26rpx; }
 .form-card { display: flex; flex-direction: column; gap: 18rpx; }
-.label { font-size: 25rpx; color: #725c89; }
-input { height: 80rpx; padding: 0 22rpx; background: #f7f2fc; border-radius: 16rpx; font-size: 28rpx; }
+.label { font-size: 25rpx; color: #815963; }
+input { height: 80rpx; padding: 0 22rpx; background: #f7e9eb; border-radius: 16rpx; font-size: 28rpx; }
 .primary { margin-top: 20rpx; }
 .mode-switch { margin-top: 8rpx; color: #7a58a8; font-size: 25rpx; text-align: center; }
 .error { color: #b14d65; font-size: 25rpx; }
-.contract-note { display: flex; flex-direction: column; gap: 8rpx; padding: 34rpx 22rpx; color: #8b8298; font-size: 22rpx; }
+.contract-note { display: flex; flex-direction: column; gap: 8rpx; padding: 34rpx 22rpx; color: #947f82; font-size: 22rpx; }

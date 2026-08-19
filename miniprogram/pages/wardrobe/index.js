@@ -1,6 +1,7 @@
 const api = require("../../services/api");
 const session = require("../../services/session");
 const { filterWardrobe, countAdvancedFilters } = require("../../utils/wardrobe-filter");
+const config = require("../../config");
 
 function normalizeItem(item) {
   // 云端沿用数据库字段 wear_count，模拟数据使用 wearCount；页面统一后不再出现“已穿 次”。
@@ -18,6 +19,7 @@ function currentMonthRange() {
 Page({
   data: {
     user: {},
+    demoReadonly: config.DEMO_READONLY,
     items: [],
     filteredItems: [],
     keyword: "",

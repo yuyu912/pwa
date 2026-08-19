@@ -1,10 +1,12 @@
 const api = require("../../services/api");
 const session = require("../../services/session");
 const { previewPlan } = require("../../utils/outfit-gallery");
+const config = require("../../config");
 
 Page({
   data: {
     plans: [],
+    demoReadonly: config.DEMO_READONLY,
     loading: true,
     error: ""
   },

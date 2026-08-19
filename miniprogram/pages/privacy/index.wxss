@@ -2,5 +2,5 @@
 .title { margin: 12rpx 0 28rpx; font-size: 46rpx; font-weight: 600; }
 .privacy-card { margin-bottom: 20rpx; }
 .heading { margin-bottom: 8rpx; color: #71566e; font-weight: 600; }
-.content { color: #67566f; line-height: 1.8; }
+.content { color: #75686b; line-height: 1.8; }
 .secondary { margin-top: 8rpx; }

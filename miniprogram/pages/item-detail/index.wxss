@@ -6,23 +6,23 @@
 .section { display: flex; flex-direction: column; gap: 18rpx; margin-top: 22rpx; }
 .section-title { font-size: 30rpx; font-weight: 700; }
 .attribute-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14rpx; }
-.attribute { display: flex; flex-direction: column; gap: 6rpx; padding: 16rpx; border-radius: 16rpx; background: #f8f4fb; color: #493d56; font-size: 26rpx; }
+.attribute { display: flex; flex-direction: column; gap: 6rpx; padding: 16rpx; border-radius: 16rpx; background: #f7edef; color: #5f4b50; font-size: 26rpx; }
 .attribute-label { color: #968a9f; font-size: 22rpx; }
 .tags { display: flex; flex-wrap: wrap; gap: 10rpx; }
-.tag { padding: 7rpx 14rpx; border-radius: 999rpx; background: #f3ecfa; color: #765795; font-size: 23rpx; }
+.tag { padding: 7rpx 14rpx; border-radius: 999rpx; background: #f1dfe2; color: #8c5963; font-size: 23rpx; }
 .style-tag { background: #f8eef1; color: #956877; }
-.field-label { color: #81758a; font-size: 24rpx; }
-.picker, textarea { padding: 20rpx; background: #f7f2fc; border-radius: 16rpx; color: #655771; font-size: 27rpx; }
+.field-label { color: #947f82; font-size: 24rpx; }
+.picker, textarea { padding: 20rpx; background: #f7e9eb; border-radius: 16rpx; color: #79575d; font-size: 27rpx; }
 textarea { box-sizing: border-box; width: 100%; min-height: 150rpx; }
 .message { color: #56805b; font-size: 25rpx; }
 .history-list { display: flex; flex-direction: column; gap: 14rpx; }
-.history-item { display: flex; flex-direction: column; gap: 8rpx; padding: 18rpx; border-radius: 18rpx; background: #f8f4fb; }
+.history-item { display: flex; flex-direction: column; gap: 8rpx; padding: 18rpx; border-radius: 18rpx; background: #f7edef; }
 .history-top { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
-.history-date { color: #493d56; font-size: 26rpx; font-weight: 600; }
-.history-scene { padding: 5rpx 12rpx; border-radius: 999rpx; background: #eee5f6; color: #765795; font-size: 22rpx; }
-.history-comfort, .history-note { color: #81758a; font-size: 24rpx; }
-.field { display: flex; flex-direction: column; gap: 10rpx; color: #81758a; font-size: 24rpx; }
-.field input { box-sizing: border-box; width: 100%; padding: 20rpx; border-radius: 16rpx; background: #f7f2fc; color: #493d56; font-size: 27rpx; }
+.history-date { color: #5f4b50; font-size: 26rpx; font-weight: 600; }
+.history-scene { padding: 5rpx 12rpx; border-radius: 999rpx; background: #f1dfe2; color: #8c5963; font-size: 22rpx; }
+.history-comfort, .history-note { color: #947f82; font-size: 24rpx; }
+.field { display: flex; flex-direction: column; gap: 10rpx; color: #947f82; font-size: 24rpx; }
+.field input { box-sizing: border-box; width: 100%; padding: 20rpx; border-radius: 16rpx; background: #f7e9eb; color: #5f4b50; font-size: 27rpx; }
 .edit-columns, .edit-actions, .management-actions { display: flex; gap: 16rpx; }
 .edit-columns .field, .edit-actions button, .management-actions button { flex: 1; min-width: 0; }
 .management-actions { margin-top: 22rpx; }

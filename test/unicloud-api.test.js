@@ -34,6 +34,19 @@ test("穿搭助手把想穿裙子保留为正向品类需求而不是继续追�
   assert.deepEqual(followed.preferredCategories, ["连衣裙", "半身裙"]);
 });
 
+test("穿搭助手多轮说不想穿裙子时清除旧裙装偏好", () => {
+  const current = outfitAssistant.normalizePreferences({ mode: "new", scene: "约会", preferred_categories: ["连衣裙", "半身裙"] }, false);
+  const changed = outfitAssistant.inferPreferencesFromText({
+    current: "不想穿裙子，有没有别的推荐",
+    recentMessages: [{ role: "user", content: "我想穿裙子" }],
+    contextPreferences: current,
+    followupUsed: true
+  });
+  assert.deepEqual(changed.excludedCategories, ["半身裙", "连衣裙"]);
+  assert.deepEqual(changed.preferredCategories, []);
+  assert.equal(changed.scene, "约会");
+});
+
 test("穿搭助手多轮反馈保留旧条件并只修改用户指出的部分", () => {
   const current = outfitAssistant.normalizePreferences({ mode: "new", scene: "约会", styles: ["优雅"], preferred_categories: ["连衣裙"], preferred_colors: ["白色"] }, false);
   const relaxed = outfitAssistant.inferPreferencesFromText({ current: "不要这么正式，轻松一点", contextPreferences: current, currentCategories: ["连衣裙"] });
@@ -45,6 +58,87 @@ test("穿搭助手多轮反馈保留旧条件并只修改用户指出的部分",
   const ambiguous = outfitAssistant.inferPreferencesFromText({ current: "这件不要", contextPreferences: relaxed, currentCategories: ["连衣裙"] });
   assert.equal(ambiguous.needsClarification, true);
   assert.match(ambiguous.question, /连衣裙.*换掉/);
+});
+
+test("穿搭助手以本轮正式要求覆盖历史休闲措辞", () => {
+  const current = outfitAssistant.normalizePreferences({ mode: "new", scene: "休闲", styles: ["休闲"] }, false);
+  const formal = outfitAssistant.inferPreferencesFromText({
+    current: "我晚上是跟领导的饭局，要正式一点的穿搭",
+    recentMessages: [{ role: "assistant", content: "已按休闲场景推荐" }],
+    contextPreferences: current,
+    followupUsed: true
+  });
+  assert.equal(formal.mode, "modify");
+  assert.equal(formal.scene, "聚会");
+  assert.equal(formal.occasion, "商务饭局");
+  assert.deepEqual(formal.styles, ["通勤", "优雅"]);
+});
+
+test("穿搭助手连续多轮保留正式偏好并叠加新限制", () => {
+  const formal = outfitAssistant.inferPreferencesFromText({ current: "晚上见领导，想穿正式一点" });
+  const dinner = outfitAssistant.inferPreferencesFromText({
+    current: "一个饭局",
+    contextPreferences: formal,
+    recentMessages: [{ role: "user", content: "晚上见领导，想穿正式一点" }],
+    followupUsed: true
+  });
+  const noDress = outfitAssistant.inferPreferencesFromText({
+    current: "但是不要裙子",
+    contextPreferences: dinner,
+    recentMessages: [{ role: "user", content: "晚上见领导，想穿正式一点" }, { role: "user", content: "一个饭局" }],
+    followupUsed: true
+  });
+  assert.equal(dinner.scene, "聚会");
+  assert.deepEqual(dinner.styles, ["通勤", "优雅"]);
+  assert.equal(noDress.scene, "聚会");
+  assert.deepEqual(noDress.styles, ["通勤", "优雅"]);
+  assert.deepEqual(noDress.excludedCategories, ["半身裙", "连衣裙"]);
+});
+
+test("模型在修改轮返回空数组时不得清空已确认上下文", () => {
+  const current = outfitAssistant.normalizePreferences({
+    mode: "new", scene: "聚会", styles: ["通勤", "优雅"], excluded_categories: ["连衣裙"]
+  }, false);
+  const merged = outfitAssistant.normalizePreferences({
+    mode: "modify", action: "recommend", styles: [], excluded_categories: [], summary: "继续调整"
+  }, true, current);
+  assert.equal(merged.scene, "聚会");
+  assert.deepEqual(merged.styles, ["通勤", "优雅"]);
+  assert.deepEqual(merged.excludedCategories, ["连衣裙"]);
+});
+
+test("穿搭助手区分常见子场景、正式度和户外活动", () => {
+  const cases = [
+    ["见领导吃饭，要正式一点", "聚会", "商务饭局", "formal"],
+    ["参加朋友婚礼", "聚会", "婚礼宾客", "semi_formal"],
+    ["明天有面试", "通勤", "面试", "business"],
+    ["周末去徒步", "运动", "徒步登山", "outdoor"],
+    ["露营而且晚上怕冷", "运动", "露营", "outdoor"],
+    ["下班去跑步", "运动", "跑步", "athletic"],
+    ["去海边度假", "旅行", "海边度假", "casual"],
+    ["带孩子出去玩", "休闲", "亲子出行", "casual"],
+    ["去看展", "聚会", "演出观展", "smart_casual"],
+    ["周末去骑行", "运动", "骑行", "outdoor"],
+    ["去雪场滑雪", "运动", "滑雪", "outdoor"]
+  ];
+  for (const [message, scene, occasion, formalityPreference] of cases) {
+    const result = outfitAssistant.inferPreferencesFromText({ current: message });
+    assert.equal(result.scene, scene, message);
+    assert.equal(result.occasion, occasion, message);
+    assert.equal(result.formalityPreference, formalityPreference, message);
+  }
+});
+
+test("正式程度独立于大场景并在后续对话中保留", () => {
+  const date = outfitAssistant.inferPreferencesFromText({ current: "约会，想穿正式一点" });
+  const warmer = outfitAssistant.inferPreferencesFromText({ current: "晚上怕冷", contextPreferences: date, followupUsed: true });
+  assert.equal(date.scene, "约会");
+  assert.equal(date.occasion, "约会");
+  assert.equal(date.formalityPreference, "formal");
+  assert.equal(warmer.scene, "约会");
+  assert.equal(warmer.occasion, "约会");
+  assert.equal(warmer.formalityPreference, "formal");
+  assert.equal(warmer.warmthPreference, "warmer");
 });
 
 test("穿搭助手能区分解释、换一套和继续修改", () => {
@@ -102,19 +196,48 @@ test("穿搭需求提示不包含衣橱数据并锁定结构化输出", () => {
   assert.doesNotMatch(prompt, /衣物ID|完整衣橱/);
 });
 
-test("灵感页恢复小红书专用导入并保留截图、确认和私密历史", () => {
+test("穿搭需求最近消息受控截断且进入上下文提示", () => {
+  const messages = Array.from({ length: 14 }, (_, index) => ({ role: index % 2 ? "assistant" : "user", content: `第${index}条${"很长".repeat(100)}` }));
+  messages.push({ role: "system", content: "不得进入提示" });
+  const input = outfitAssistant.requestText("换浅色裤子", "", true, {}, [], [], messages);
+  assert.ok(input.recentMessages.length <= 10);
+  assert.ok(input.recentMessages.reduce((sum, message) => sum + message.content.length, 0) <= 1000);
+  assert.equal(input.recentMessages.some((message) => message.role === "system"), false);
+  assert.match(outfitAssistant.promptForRequest(input), /最近对话/);
+});
+
+test("灵感页提供临时多轮消息流并保留截图、确认和私密历史", () => {
   const fs = require("node:fs");
   const js = fs.readFileSync(new URL("../miniprogram/pages/inspiration/index.js", import.meta.url), "utf8");
   const wxml = fs.readFileSync(new URL("../miniprogram/pages/inspiration/index.wxml", import.meta.url), "utf8");
-  assert.match(js, /startLink\(\)/);
+  assert.match(js, /async startLink\(/);
   assert.match(js, /listInspirations/);
   assert.match(js, /confirmInspiration/);
-  assert.match(wxml, /粘贴分享文本/);
-  assert.match(wxml, /直接上传截图/);
+  assert.match(js, /understandOutfitRequest/);
+  assert.match(js, /recentMessages/);
+  assert.match(js, /onHide\(\) \{ this\.clearConversation\(\); \}/);
+  assert.match(js, /sessionVersion/);
+  assert.match(wxml, /发需求或粘贴小红书链接/);
+  assert.match(wxml, /bindtap="chooseScreenshot"/);
   assert.match(wxml, /私密历史/);
-  assert.match(wxml, /matchLevel/);
-  assert.doesNotMatch(js, /understandOutfitRequest|contextPreferences|fallbackReason/);
-  assert.doesNotMatch(wxml, /穿搭助手|太冷|换个颜色/);
+  assert.match(wxml, /穿搭助手/);
+  assert.match(wxml, /catchtap="keepItem"/);
+  assert.match(wxml, /catchtap="replaceItem"/);
+});
+
+test("公网 Demo 自动读取固定账号且不携带真实登录凭据或开放写操作", () => {
+  const fs = require("node:fs");
+  const demoSource = fs.readFileSync(new URL("../public/demo/app.js", import.meta.url), "utf8");
+  const apiSource = fs.readFileSync(new URL("../uniCloud-aliyun/cloudfunctions/wardrobe-api/index.js", import.meta.url), "utf8");
+  assert.match(demoSource, /\/api\/demo\/bootstrap/);
+  assert.match(demoSource, /loadReadonlyAccount\(\)/);
+  assert.match(demoSource, /renderWardrobe\(data\.items\)/);
+  assert.match(demoSource, /只读演示已关闭上传、保存和修改操作/);
+  assert.doesNotMatch(demoSource, /Authorization|Bearer|auth\/login|password|recoveryCode/);
+  assert.match(apiSource, /path\.startsWith\("\/api\/demo\/"\) && method !== "GET"/);
+  assert.match(apiSource, /公开演示只允许读取/);
+  assert.match(apiSource, /!isPublicDemo && allowOrigin/);
+  assert.doesNotMatch(apiSource, /DEMO_READONLY_PASSWORD|DEMO_READONLY_TOKEN/);
 });
 
 test("视觉供应商默认百炼，存在合并配置时选择 LYRouter", () => {
@@ -549,6 +672,27 @@ test("结构化设计细节优先匹配同组细节，旧衣物仍回退名称",
   assert.deepEqual(result.matches[0].candidates.map((entry) => entry.item.id), ["confirmed-same", "legacy-name"]);
 });
 
+test("灵感重匹配保留指定衣物并排除当前不满意衣物", () => {
+  const slot = { slot: "top", category: "上衣", name: "通勤上衣", color: "白色", season: "多季", thickness: "适中", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] };
+  const items = [
+    { id: "white", name: "白色衬衫", category: "上衣", color: "白色", season: "多季", thickness: "适中", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] },
+    { id: "pink", name: "粉色衬衫", category: "上衣", color: "粉色", season: "多季", thickness: "适中", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] }
+  ];
+  const replaced = inspiration.matchWardrobe([slot], items, { excludedItemIds: ["white"], preferredColors: ["粉色"] });
+  assert.equal(replaced.matches[0].candidates[0].item.id, "pink");
+  const locked = inspiration.matchWardrobe([slot], items, { lockedItemIds: ["pink"] });
+  assert.equal(locked.matches[0].candidates[0].item.id, "pink");
+  assert.equal(locked.matches[0].matchMode, "locked");
+  const changedCategory = inspiration.matchWardrobe([slot], [
+    ...items,
+    { id: "pants", name: "粉色长裤", category: "裤子", color: "粉色", season: "多季", thickness: "适中", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] }
+  ], { excludedCategories: ["上衣"], preferredCategories: ["裤子"] });
+  assert.equal(changedCategory.matches[0].candidates[0].item.id, "pants");
+  const excludedWithoutReplacement = inspiration.matchWardrobe([slot], items, { excludedCategories: ["上衣"] });
+  assert.equal(excludedWithoutReplacement.matches[0].matchMode, "excluded");
+  assert.equal(excludedWithoutReplacement.matches[0].missing, true);
+});
+
 test("灵感确认页展示季节厚薄设计细节受控风格与匹配建议", () => {
   const js = require("node:fs").readFileSync(new URL("../miniprogram/pages/inspiration/index.js", import.meta.url), "utf8");
   const wxml = require("node:fs").readFileSync(new URL("../miniprogram/pages/inspiration/index.wxml", import.meta.url), "utf8");
@@ -558,10 +702,9 @@ test("灵感确认页展示季节厚薄设计细节受控风格与匹配建议",
   assert.match(wxml, />季节</);
   assert.match(wxml, />厚薄</);
   assert.match(wxml, />设计细节</);
-  assert.match(wxml, /item\.advice/);
-  assert.match(wxml, /candidate\.suggestion/);
-  assert.match(wxml, /candidate\.matchLabel/);
-  assert.doesNotMatch(wxml, /wx:if="\{\{item\.missing\}\}">\{\{item\.advice\}\}/);
+  assert.match(wxml, /group\.advice/);
+  assert.match(wxml, /group\.selected\.matchLabel/);
+  assert.match(wxml, /group\.selected\.reasonsText/);
 });
 
 test("衣物录入详情和两个 Schema 贯通可选设计细节字段", () => {
@@ -1951,7 +2094,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
   else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-18-qwen37-json-budget-v76");
+  assert.equal(health.body.buildId, "2026-08-19-contextual-occasion-agent-v81");
   assert.deepEqual(health.body.outfitPlans, { enabled: true, mode: "private" });
   assert.deepEqual(health.body.multiGarment, { enabled: true, maxItems: 3, personPhotos: false });
   assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
@@ -2534,7 +2677,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-18-qwen37-json-budget-v76");
+  assert.equal(failedRecognition.body.buildId, "2026-08-19-contextual-occasion-agent-v81");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));
@@ -2749,6 +2892,8 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     pattern: "纯色",
     material: "棉混纺",
     designDetails: ["泡泡袖", "公主袖"],
+    formality: "商务",
+    functionTags: ["透气", "弹力", "伪造标签"],
     styles: ["通勤"],
     scenes: ["通勤", "休闲"],
     price: 188
@@ -2756,6 +2901,8 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(updatedItem.status, 200);
   assert.equal(updatedItem.body.name, "修改后的浅紫衬衫");
   assert.deepEqual(updatedItem.body.designDetails, ["泡泡袖"]);
+  assert.equal(updatedItem.body.formality, "商务");
+  assert.deepEqual(updatedItem.body.functionTags, ["透气", "弹力"]);
   assert.equal(updatedItem.body.image_key, purchasedItem.image_key);
   assert.equal(updatedItem.body.wear_count, purchasedItem.wear_count);
 
@@ -2791,6 +2938,15 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   const inspirationReopened = readResponse(await main(makeEvent(`/api/inspirations/${inspirationId}`, "GET", null, authorization)));
   assert.equal(inspirationReopened.body.status, "ready");
   assert.equal(Array.isArray(inspirationReopened.body.matches), true);
+  const firstInspirationCandidateId = inspirationReopened.body.matches[0].candidates[0]?.item.id;
+  const inspirationRematched = readResponse(await main(makeEvent(`/api/inspirations/${inspirationId}/rematch`, "POST", {
+    preferences: { preferredColors: ["浅紫色"], styles: ["通勤"] },
+    excludedItemIds: firstInspirationCandidateId ? [firstInspirationCandidateId] : [],
+    lockedItemIds: []
+  }, authorization)));
+  assert.equal(inspirationRematched.status, 200);
+  assert.equal(inspirationRematched.body.status, "ready");
+  assert.equal(inspirationRematched.body.matches[0].candidates.some((candidate) => candidate.item.id === firstInspirationCandidateId), false);
   const inspirationDeleted = readResponse(await main(makeEvent(`/api/inspirations/${inspirationId}`, "DELETE", {}, authorization)));
   assert.equal(inspirationDeleted.status, 204);
   const inspirationHistoryAfterDelete = readResponse(await main(makeEvent("/api/inspirations", "GET", null, authorization)));
@@ -2858,6 +3014,57 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
     sourceType: "user_screenshot", mimeType: "image/jpeg", idempotencyKey: "delete-with-account"
   }, authorization)));
   assert.equal(inspirationBeforeAccountDeletion.status, 201);
+
+  // 面试 Demo 只通过服务端绑定用户读取数据，不返回 JWT，也不接受任何写请求。
+  process.env.DEMO_READONLY_USER_ID = String(login.body.user.id);
+  const demoBootstrap = readResponse(await main(makeEvent(
+    "/api/demo/bootstrap?start=2026-08-01T00%3A00%3A00.000Z&end=2026-09-01T00%3A00%3A00.000Z"
+  )));
+  assert.equal(demoBootstrap.status, 200);
+  assert.equal(demoBootstrap.body.readonly, true);
+  assert.equal(demoBootstrap.body.user.username, "tester");
+  assert.equal(Array.isArray(demoBootstrap.body.items), true);
+  assert.equal(Array.isArray(demoBootstrap.body.outfitPlans), true);
+  assert.equal(Array.isArray(demoBootstrap.body.wearLogs), true);
+  assert.equal("token" in demoBootstrap.body, false);
+  const demoWrite = readResponse(await main(makeEvent("/api/demo/bootstrap", "POST", {})));
+  assert.equal(demoWrite.status, 405);
+  const demoSession = readResponse(await main(makeEvent("/api/demo/session", "GET")));
+  assert.equal(demoSession.status, 200);
+  assert.equal(demoSession.body.user.demoSession, true);
+  assert.equal(typeof demoSession.body.token, "string");
+  const demoAuthorization = { authorization: `Bearer ${demoSession.body.token}` };
+  const demoAssistant = readResponse(await main(makeEvent("/api/outfit-assistant/understand", "POST", {
+    message: "约会想穿得休闲一点", recentMessages: [{ role: "user", content: "明天见朋友" }],
+    followupUsed: false, idempotencyKey: "scoped-demo-chat"
+  }, demoAuthorization)));
+  assert.equal(demoAssistant.status, 200);
+  assert.equal(demoAssistant.body.preferences.scene, "约会");
+  const demoInspiration = readResponse(await main(makeEvent("/api/inspirations", "POST", {
+    sourceType: "user_screenshot", mimeType: "image/jpeg", idempotencyKey: "scoped-demo-inspiration"
+  }, demoAuthorization)));
+  assert.equal(demoInspiration.status, 201);
+  await memoryDatabase.collection("wr_inspiration_records").doc(demoInspiration.body.record.id).update({
+    status: "ready",
+    confirmed_slots: [{ slot: "top", category: "上衣", name: "通勤上衣", color: "白色", season: "多季", thickness: "适中", pattern: "纯色", styles: ["通勤"], scenes: ["通勤"] }]
+  });
+  const demoRematch = readResponse(await main(makeEvent(`/api/inspirations/${demoInspiration.body.record.id}/rematch`, "POST", {
+    preferences: { styles: ["通勤"] }, lockedItemIds: [], excludedItemIds: []
+  }, demoAuthorization)));
+  assert.equal(demoRematch.status, 200);
+  assert.equal(Array.isArray(demoRematch.body.matches), true);
+  const blockedDemoDeletion = readResponse(await main(makeEvent("/api/auth/delete-request", "POST", {}, demoAuthorization)));
+  assert.equal(blockedDemoDeletion.status, 403);
+  delete process.env.DEMO_READONLY_USER_ID;
+  const previousLyrouterConfig = process.env.LYROUTER_CONFIG;
+  process.env.LYROUTER_CONFIG = JSON.stringify({ du: "tester" });
+  const mergedConfigDemo = readResponse(await main(makeEvent(
+    "/api/demo/bootstrap?start=2026-08-01T00%3A00%3A00.000Z&end=2026-09-01T00%3A00%3A00.000Z"
+  )));
+  assert.equal(mergedConfigDemo.status, 200);
+  assert.equal(mergedConfigDemo.body.user.username, "tester");
+  if (previousLyrouterConfig === undefined) delete process.env.LYROUTER_CONFIG;
+  else process.env.LYROUTER_CONFIG = previousLyrouterConfig;
 
   // 注销后旧 JWT 也必须立即失效，不能只阻止下一次登录。
   const accountDeletion = readResponse(await main(makeEvent("/api/auth/delete-request", "POST", {}, authorization)));

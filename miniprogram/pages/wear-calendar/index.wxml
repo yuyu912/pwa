@@ -65,15 +65,5 @@
       </view>
     </view>
 
-    <view class="calendar-shortcuts">
-      <view class="calendar-shortcut report-shortcut" hover-class="shortcut-pressed" hover-stay-time="80" bindtap="openReport">
-        <image class="paper-shape" src="/assets/home-paper-wardrobe.png" mode="scaleToFill" />
-        <view class="shortcut-copy"><text class="shortcut-kicker">REPORT</text><text class="report-entry-title">本月衣橱报表</text><text class="report-entry-copy">看看衣物与品类使用分布</text></view>
-      </view>
-      <view class="calendar-shortcut reward-shortcut" hover-class="shortcut-pressed" hover-stay-time="80" bindtap="openRewards">
-        <image class="paper-shape" src="/assets/home-paper-record.png" mode="scaleToFill" />
-        <view class="shortcut-copy"><text class="shortcut-kicker">GROWTH</text><text class="report-entry-title">星星与成长</text><text class="report-entry-copy">回看打卡和连续天数</text></view>
-      </view>
-    </view>
   </block>
 </view>

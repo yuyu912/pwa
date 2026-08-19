@@ -21,6 +21,8 @@
     "pattern": { "bsonType": "string" },
     "material": { "bsonType": "string" },
     "design_details": { "bsonType": "array", "arrayType": "string", "description": "用户确认的标志性设计细节" },
+    "formality": { "bsonType": "string", "description": "用户确认的正式度：休闲、轻商务、商务、半正式、正式、运动或户外" },
+    "function_tags": { "bsonType": "array", "arrayType": "string", "description": "用户确认的功能标签，不由图片识别保证" },
     "styles": { "bsonType": "array", "arrayType": "string" },
     "scenes": { "bsonType": "array", "arrayType": "string" },
     "price": { "description": "可选价格" },

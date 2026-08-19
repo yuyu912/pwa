@@ -140,6 +140,10 @@
       <text>设计细节</text>
       <input value="{{form.designDetailsText}}" data-field="designDetailsText" bindinput="onFieldInput" placeholder="荷叶边、泡泡袖、蕾丝等，用逗号分隔"/>
     </label>
+    <view class="two-column">
+      <label class="field"><text>正式度</text><picker range="{{formalities}}" value="{{formalityIndex}}" bindchange="onFormalityChange"><view class="picker-value">{{form.formality || '未设置'}} <text>›</text></view></picker></label>
+      <label class="field"><text>功能标签</text><input value="{{form.functionTagsText}}" data-field="functionTagsText" bindinput="onFieldInput" placeholder="透气、速干、防风等"/></label>
+    </view>
     <view class="field">
       <text>风格标签</text>
       <text class="tag-help">可多选，最多 3 项</text>

@@ -4,5 +4,7 @@
  */
 module.exports = {
   USE_MOCK: false,
+  // 面试演示使用正式账号登录，展示完整的衣橱编辑与业务闭环。
+  DEMO_READONLY: false,
   API_BASE_URL: "https://fc-mp-cbf1a3d9-43f4-417f-8d75-271d0a0ddc92.next.bspapp.com/wardrobe-api"
 };

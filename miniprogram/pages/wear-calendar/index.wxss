@@ -16,7 +16,7 @@
 .history-kicker { color: #ad7782; font-size: 18rpx; font-weight: 600; letter-spacing: 2rpx; }
 .history-number { color: #8d5662; font-size: 44rpx; font-weight: 700; }
 .history-unit,
-.history-meta { color: #857a80; font-size: 20rpx; }
+.history-meta { color: #8f7d78; font-size: 20rpx; }
 .history-meta { display: block; margin-top: 5rpx; }
 .history-item-scroll { min-width: 0; flex: 1; white-space: nowrap; }
 .history-item-row { display: inline-flex; align-items: flex-end; gap: 5rpx; padding-right: 8rpx; }
@@ -34,18 +34,6 @@
 .favorite-placeholder { width: 170rpx; height: 142rpx; flex: 0 0 170rpx; }
 .favorite-placeholder { display: flex; align-items: center; justify-content: center; color: #9b6b78; font-size: 34rpx; }
 .favorite-empty { min-height: 156rpx; }
-
-.calendar-shortcuts { display: grid; grid-template-columns: 1.04fr .96fr; align-items: start; gap: 14rpx; margin-top: 24rpx; }
-.calendar-shortcut { position: relative; height: 220rpx; overflow: hidden; transition: transform .18s ease, opacity .18s ease; }
-.shortcut-pressed { opacity: .88; transform: scale(.975); }
-.reward-shortcut { height: 206rpx; margin-top: 15rpx; }
-.paper-shape { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
-.shortcut-copy { position: relative; z-index: 1; display: flex; height: 100%; padding: 34rpx 28rpx 26rpx; flex-direction: column; box-sizing: border-box; }
-.reward-shortcut .shortcut-copy { padding-left: 25rpx; }
-.shortcut-kicker { color: #9b86b5; font-size: 18rpx; letter-spacing: 3rpx; }
-.report-entry-title, .report-entry-copy { display: block; }
-.report-entry-title { margin-top: 15rpx; color: #554b47; font-size: 27rpx; font-weight: 700; line-height: 1.28; }
-.report-entry-copy { margin-top: 9rpx; color: #8d817c; font-size: 20rpx; line-height: 1.42; }
 
 .calendar-card { position: relative; margin-top: 24rpx; padding: 30rpx 14rpx 22rpx; }
 .calendar-tape { position: absolute; top: -9rpx; left: 50%; width: 112rpx; height: 28rpx; border-radius: 4rpx; background: rgba(226, 210, 232, .58); transform: translateX(-50%) rotate(-1deg); }
@@ -67,29 +55,29 @@
 .day-garment,
 .day-garment-placeholder { width: 100%; height: 100%; }
 .day-garment-placeholder { display: flex; align-items: center; justify-content: center; color: rgba(139, 93, 104, .72); font-size: 18rpx; }
-.record-dot { position: absolute; right: 4rpx; bottom: 4rpx; z-index: 4; min-width: 25rpx; height: 25rpx; padding: 0 4rpx; border-radius: 999rpx; background: #e9e0f2; color: #755c91; font-size: 16rpx; line-height: 25rpx; text-align: center; box-sizing: border-box; }
+.record-dot { position: absolute; right: 4rpx; bottom: 4rpx; z-index: 4; min-width: 25rpx; height: 25rpx; padding: 0 4rpx; border-radius: 999rpx; background: #f1dfe2; color: #8c5963; font-size: 16rpx; line-height: 25rpx; text-align: center; box-sizing: border-box; }
 .selected .record-dot { background: #fffaf2; }
 
 .day-section { margin-top: 31rpx; }
-.section-kicker { display: block; color: #a08caf; font-size: 18rpx; letter-spacing: 3rpx; }
+.section-kicker { display: block; color: #a76f7b; font-size: 18rpx; letter-spacing: 3rpx; }
 .section-title { display: block; margin: 5rpx 0 16rpx; color: #554b47; font-size: 30rpx; font-weight: 700; }
 .empty-day-copy { text-align: center; }
 .outfit-card { margin-bottom: 17rpx; padding: 23rpx 21rpx 25rpx; transition: transform .18s ease, opacity .18s ease; }
 .outfit-card-pressed { opacity: .9; transform: scale(.985); }
 .outfit-card:nth-child(odd) { border-radius: 26rpx 43rpx 30rpx 45rpx / 40rpx 28rpx 42rpx 30rpx; }
-.outfit-card-openable { border-color: rgba(155, 135, 192, .28); }
+.outfit-card-openable { border-color: rgba(189,115,129,.28); }
 .outfit-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14rpx; }
 .outfit-heading { min-width: 0; flex: 1; }
 .outfit-status { flex: 0 0 auto; }
 .outfit-title { display: block; overflow: hidden; color: #504744; font-size: 29rpx; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.outfit-count { display: block; padding: 7rpx 14rpx; border-radius: 999rpx; background: #eee7f5; color: #725a8e; font-size: 20rpx; }
-.outfit-open-note { display: block; margin-top: 7rpx; color: #856fa0; font-size: 18rpx; text-align: center; }
+.outfit-count { display: block; padding: 7rpx 14rpx; border-radius: 999rpx; background: #f1dfe2; color: #815963; font-size: 20rpx; }
+.outfit-open-note { display: block; margin-top: 7rpx; color: #9b6671; font-size: 18rpx; text-align: center; }
 .outfit-note { display: block; margin-top: 12rpx; color: #776d79; font-size: 22rpx; }
 .outfit-items { display: flex; gap: 14rpx; margin-top: 18rpx; padding-top: 17rpx; border-top: 2rpx dashed rgba(166, 146, 179, .2); overflow-x: auto; }
 .outfit-item { width: 142rpx; flex: 0 0 142rpx; }
-.item-image, .item-placeholder { width: 136rpx; height: 136rpx; border: 2rpx solid rgba(158, 140, 173, .13); border-radius: 29rpx 20rpx 32rpx 23rpx / 22rpx 31rpx 20rpx 29rpx; box-sizing: border-box; }
+.item-image, .item-placeholder { width: 136rpx; height: 136rpx; border: 2rpx solid rgba(189,115,129,.13); border-radius: 29rpx 20rpx 32rpx 23rpx / 22rpx 31rpx 20rpx 29rpx; box-sizing: border-box; }
 .item-image { background: #fffdf8; }
-.item-placeholder { background: #eee7f5; color: #9278aa; font-size: 37rpx; line-height: 132rpx; text-align: center; }
+.item-placeholder { background: #f1dfe2; color: #a76f7b; font-size: 37rpx; line-height: 132rpx; text-align: center; }
 .item-name, .item-meta, .inactive-label { display: block; margin-top: 6rpx; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-name { color: #51484b; font-size: 21rpx; font-weight: 700; }
 .item-meta { color: #8b8186; font-size: 19rpx; }

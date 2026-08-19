@@ -31,6 +31,12 @@ const candidateMarkup = fs.readFileSync(new URL("../miniprogram/pages/candidate/
 const loginSource = fs.readFileSync(new URL("../miniprogram/pages/login/index.js", import.meta.url), "utf8");
 const loginMarkup = fs.readFileSync(new URL("../miniprogram/pages/login/index.wxml", import.meta.url), "utf8");
 const apiSource = fs.readFileSync(new URL("../miniprogram/services/api.js", import.meta.url), "utf8");
+const configSource = fs.readFileSync(new URL("../miniprogram/config.js", import.meta.url), "utf8");
+const sessionSource = fs.readFileSync(new URL("../miniprogram/services/session.js", import.meta.url), "utf8");
+const homeMarkup = fs.readFileSync(new URL("../miniprogram/pages/home/index.wxml", import.meta.url), "utf8");
+const itemDetailMarkup = fs.readFileSync(new URL("../miniprogram/pages/item-detail/index.wxml", import.meta.url), "utf8");
+const accountMarkup = fs.readFileSync(new URL("../miniprogram/pages/account/index.wxml", import.meta.url), "utf8");
+const galleryMarkup = fs.readFileSync(new URL("../miniprogram/pages/outfit-gallery/index.wxml", import.meta.url), "utf8");
 let wardrobePage;
 vm.runInNewContext(wardrobeSource, {
   require: (specifier) => specifier.includes("wardrobe-filter") ? { filterWardrobe, countAdvancedFilters } : {},
@@ -171,7 +177,60 @@ test("搭配生成优先选择符合用户场景的上装和下装", () => {
   const result = structuredClone(recommend(outfitItems, outfitWeather, "通勤"));
   assert.deepEqual(result.items.map((item) => item.id), ["2", "4"]);
   assert.equal(result.complete, true);
-  assert.match(result.reason, /适合通勤/);
+  assert.match(result.reason, /通勤场景/);
+});
+
+test("约会场景优先浪漫设计裙装而不是同色休闲裤装", () => {
+  const result = structuredClone(recommend([
+    { id: "casual-top", name: "蓝色上衣", category: "上衣", color: "蓝色", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["休闲"] },
+    { id: "casual-pants", name: "浅蓝牛仔裤", category: "裤子", color: "浅蓝", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["休闲"] },
+    { id: "date-dress", name: "花边收腰连衣裙", category: "连衣裙", color: "黄色", season: "多季", thickness: "适中", designDetails: ["花边", "收腰"], styles: ["优雅"], scenes: ["约会"] }
+  ], outfitWeather, "约会"));
+  assert.deepEqual(result.items.map((item) => item.id), ["date-dress"]);
+  assert.match(result.reason, /先按约会场景选择衣物/);
+});
+
+test("用户明确要正式风格时不再沿用休闲场景的休闲组合", () => {
+  const result = structuredClone(recommend([
+    { id: "casual-top", name: "蓝色休闲上衣", category: "上衣", color: "蓝色", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["休闲"] },
+    { id: "casual-pants", name: "浅蓝休闲裤", category: "裤子", color: "浅蓝", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["休闲"] },
+    { id: "formal-top", name: "白色通勤衬衫", category: "上衣", color: "白色", season: "多季", thickness: "适中", formality: "正式", styles: ["通勤", "优雅"], scenes: ["通勤"] },
+    { id: "formal-pants", name: "黑色正装长裤", category: "裤子", color: "黑色", season: "多季", thickness: "适中", formality: "正式", styles: ["通勤"], scenes: ["通勤"] }
+  ], outfitWeather, "通勤", 0, { occasion: "商务会议", formalityPreference: "formal", styles: ["通勤", "优雅"] }));
+  assert.deepEqual(result.items.map((item) => item.id), ["formal-top", "formal-pants"]);
+  assert.match(result.reason, /通勤|优雅/);
+});
+
+test("正式场景没有足够正式衣物时报告缺口而不是用休闲款冒充", () => {
+  const result = structuredClone(recommend([
+    { id: "tee", name: "休闲T恤", category: "上衣", season: "多季", thickness: "适中", formality: "休闲", styles: ["休闲"], scenes: ["休闲"] },
+    { id: "jeans", name: "休闲牛仔裤", category: "裤子", season: "多季", thickness: "适中", formality: "休闲", styles: ["休闲"], scenes: ["休闲"] }
+  ], outfitWeather, "聚会", 0, { occasion: "正式活动", formalityPreference: "formal" }));
+  assert.deepEqual(result.items, []);
+  assert.match(result.missingText, /没有符合正式活动正式度/);
+  assert.match(result.reason, /没有用休闲衣物冒充正式穿搭/);
+});
+
+test("徒步场景优先用户确认过户外功能的衣物组合", () => {
+  const result = structuredClone(recommend([
+    { id: "plain-top", name: "普通上衣", category: "上衣", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["运动"] },
+    { id: "plain-pants", name: "普通长裤", category: "裤子", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["运动"] },
+    { id: "hike-top", name: "速干上衣", category: "上衣", season: "多季", thickness: "适中", formality: "户外", functionTags: ["透气", "速干"], styles: ["运动"], scenes: ["运动"] },
+    { id: "hike-pants", name: "弹力徒步裤", category: "裤子", season: "多季", thickness: "适中", formality: "户外", functionTags: ["弹力", "耐磨"], styles: ["运动"], scenes: ["运动"] }
+  ], outfitWeather, "运动", 0, { occasion: "徒步登山", formalityPreference: "outdoor" }));
+  assert.deepEqual(result.items.map((item) => item.id), ["hike-top", "hike-pants"]);
+});
+
+test("各场景先选择明确匹配的衣物组合再比较配色", () => {
+  for (const scene of ["通勤", "旅行", "聚会", "运动", "休闲"]) {
+    const result = structuredClone(recommend([
+      { id: `${scene}-top`, name: `${scene}上衣`, category: "上衣", color: "红色", season: "多季", thickness: "适中", scenes: [scene] },
+      { id: `${scene}-bottom`, name: `${scene}下装`, category: "裤子", color: "绿色", season: "多季", thickness: "适中", scenes: [scene] },
+      { id: "other-top", name: "同色上衣", category: "上衣", color: "蓝色", season: "多季", thickness: "适中", scenes: ["约会"] },
+      { id: "other-bottom", name: "同色裤子", category: "裤子", color: "浅蓝", season: "多季", thickness: "适中", scenes: ["约会"] }
+    ], outfitWeather, scene));
+    assert.deepEqual(result.items.map((item) => item.id), [`${scene}-top`, `${scene}-bottom`]);
+  }
 });
 
 test("换一套会在同类可选衣物中轮换", () => {
@@ -252,7 +311,7 @@ test("天气框架先于裙装偏好，冬天不返回不安全的夏季薄裙",
   assert.equal(result.items.some((item) => item.id === "summer-dress"), false);
   assert.deepEqual(result.items.map((item) => item.id), ["winter-top", "winter-pants", "winter-coat"]);
   assert.ok(result.missing.includes("当前天气下没有安全的连衣裙组合"));
-  assert.match(result.reason, /先通过天气安全筛选/);
+  assert.match(result.reason, /天气安全筛选/);
 });
 
 test("凉冷天气允许薄裙与足够保暖的厚外套组成安全叠穿", () => {
@@ -496,9 +555,45 @@ test("穿搭日历整卡打开穿着快照，单件点击仍进入衣物详情",
   assert.match(outfitDetailSource, /createLayer\(item, index, canvas/);
 });
 
-test("穿搭日历保留报表和成长入口并移除入口大箭头", () => {
-  assert.match(calendarMarkup, /bindtap="openReport"/);
-  assert.match(calendarMarkup, /bindtap="openRewards"/);
-  assert.match(calendarMarkup, /class="calendar-shortcuts"/);
-  assert.doesNotMatch(calendarMarkup, /class="row-arrow"/);
+test("穿搭日历不再展示报表和成长入口", () => {
+  assert.doesNotMatch(calendarMarkup, /bindtap="openReport"/);
+  assert.doesNotMatch(calendarMarkup, /bindtap="openRewards"/);
+  assert.doesNotMatch(calendarMarkup, /本月衣橱报表|星星与成长/);
+});
+
+test("体验版恢复正式账号模式并保留可回退的 Demo 基础设施", () => {
+  assert.match(configSource, /DEMO_READONLY:\s*false/);
+  assert.match(sessionSource, /config\.DEMO_READONLY/);
+  assert.match(apiSource, /\/api\/demo\/bootstrap/);
+  assert.match(apiSource, /\/api\/demo\/session/);
+  assert.match(homeMarkup, /<view class="add-row"><button bindtap="toAdd"/);
+  assert.doesNotMatch(homeMarkup, /wx:if="\{\{!demoReadonly\}\}"[^>]*><button bindtap="toAdd"/);
+  const inspirationMarkup = fs.readFileSync(new URL("../miniprogram/pages/inspiration/index.wxml", import.meta.url), "utf8");
+  assert.match(inspirationMarkup, /bindtap="sendMessage"/);
+  assert.match(inspirationMarkup, /bindtap="chooseScreenshot"/);
+  assert.match(wardrobeMarkup, /wx:if="\{\{!demoReadonly\}\}" class="shortcut-card canvas-shortcut"/);
+  assert.match(wardrobeMarkup, /wx:if="\{\{!demoReadonly\}\}" class="idle-entry"/);
+  assert.match(wardrobeMarkup, /wx:if="\{\{!demoReadonly\}\}" class="candidate-entry"/);
+  assert.match(itemDetailMarkup, /wx:if="\{\{!demoReadonly\}\}" class="management-actions"/);
+  assert.match(itemDetailMarkup, /wx:if="\{\{message\}\}" class="message">\{\{message\}\}<\/text>[\s\S]*bindtap="saveEdit"/);
+  assert.match(itemDetailMarkup, /wx:if="\{\{!demoReadonly\}\}" class="card section idle-section"/);
+  assert.match(itemDetailMarkup, /正式度/);
+  assert.match(itemDetailMarkup, /功能标签/);
+  assert.match(addItemMarkup, /bindchange="onFormalityChange"/);
+  assert.match(addItemMarkup, /functionTagsText/);
+  assert.match(accountMarkup, /wx:if="\{\{!demoReadonly\}\}" class="card entitlement-card"/);
+  assert.match(accountMarkup, /wx:if="\{\{!demoReadonly\}\}" class="logout-button"/);
+  assert.match(galleryMarkup, /wx:if="\{\{!demoReadonly\}\}" class="create-button"/);
+});
+
+test("小程序页面不再残留旧紫色主题值", () => {
+  const root = new URL("../miniprogram/", import.meta.url);
+  const styleSource = fs.readdirSync(root, { recursive: true })
+    .filter((name) => /\.(?:wxss|wxml)$/.test(String(name)))
+    .map((name) => fs.readFileSync(new URL(String(name).replaceAll("\\", "/"), root), "utf8"))
+    .join("\n");
+  assert.doesNotMatch(styleSource, /#(?:9b87c1|a98abc|a98abe|8062a3|927db6|eee7f5|f8f4ff|fbf7ff|f5effa|d7c6e2|876b98|b298c2|a08caf|856fa0|9278aa)\b/i);
+  assert.doesNotMatch(styleSource, /rgba\((?:161,\s*140,\s*190|155,\s*135,\s*19[23]|157,\s*136,\s*188|143,\s*119,\s*171)/i);
+  assert.match(styleSource, /#bd7381/i);
+  assert.match(styleSource, /#f1dfe2/i);
 });

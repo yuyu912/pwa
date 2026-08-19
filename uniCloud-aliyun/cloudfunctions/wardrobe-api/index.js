@@ -13,7 +13,7 @@ const { buildCityTrend, buildOutfitCandidates, buildStyleProfile } = require("./
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-18-qwen37-json-budget-v76";
+const BUILD_ID = "2026-08-19-contextual-occasion-agent-v81";
 const OUTFIT_VISION_MODEL = process.env.QWEN_VL_MODEL || "qwen3-vl-flash-2026-01-22";
 const OUTFIT_IMAGE_EDIT_MODEL = "qwen-image-2.0-pro-2026-06-22";
 const visionProvider = () => cloud._test.visionProviderConfig();
@@ -53,6 +53,8 @@ const sanitizeTags = (value, allowed = null, max = 4) => parseArray(value)
 const allowedCategories = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"];
 const allowedItemSources = ["single_item_upload", "multi_item_upload", "outfit_supplement"];
 const allowedScenes = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
+const allowedFormalities = ["休闲", "轻商务", "商务", "半正式", "正式", "运动", "户外"];
+const allowedFunctionTags = ["透气", "速干", "弹力", "防风", "防水", "保暖", "耐磨", "轻便", "防晒"];
 const allowedSeasons = ["春夏", "春秋", "秋冬", "多季"];
 const allowedThicknesses = ["薄", "适中", "厚"];
 const allowedIdleReasons = ["很少穿", "不合适", "重复", "风格变化", "其他"];
@@ -209,10 +211,12 @@ const parseBody = (event) => {
 const corsHeaders = (event) => {
   const headers = requestHeaders(event);
   const origin = headers.origin || "";
+  const isPublicDemo = String(event.path || "").startsWith("/api/demo/");
   const allowed = String(process.env.ALLOWED_ORIGINS || "*").split(",").map((item) => item.trim()).filter(Boolean);
   const allowOrigin = allowed.includes("*") ? "*" : allowed.includes(origin) ? origin : "";
   return {
-    ...(allowOrigin ? { "access-control-allow-origin": allowOrigin } : {}),
+    // uniCloud 已为公开 HTTP 路由添加 *；Demo 不重复写该头，避免浏览器收到两个值后拒绝响应。
+    ...(!isPublicDemo && allowOrigin ? { "access-control-allow-origin": allowOrigin } : {}),
     "access-control-allow-headers": "authorization, content-type, x-admin-token",
     "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "access-control-max-age": "600",
@@ -322,6 +326,10 @@ const tokenFor = (user) => {
   requiredEnv(["JWT_SECRET"]);
   return jwt.sign(publicUser(user), process.env.JWT_SECRET, { expiresIn: "7d" });
 };
+const demoTokenFor = (user) => {
+  requiredEnv(["JWT_SECRET"]);
+  return jwt.sign({ ...publicUser(user), role: "user", demoSession: true }, process.env.JWT_SECRET, { expiresIn: "12h" });
+};
 
 const requireUser = (event) => {
   requiredEnv(["JWT_SECRET"]);
@@ -338,7 +346,21 @@ const requireActiveUser = async (event) => {
   if (!user || user.status === "deletion_requested") {
     throw Object.assign(new Error("账号已停用，请联系处理账号删除申请。"), { status: 401 });
   }
-  return user;
+  return claims.demoSession ? { ...user, demoSession: true } : user;
+};
+const demoMutationAllowed = (method, path) => {
+  if (method === "GET") return true;
+  return [
+    ["POST", /^\/api\/uploads\/presign$/],
+    ["POST", /^\/api\/recognize$/],
+    ["POST", /^\/api\/tasks\/[^/]+\/(?:matting|multi-garments|hanger-removal|image-selection|recognition|retry)$/],
+    ["POST", /^\/api\/tasks\/[^/]+\/multi-garments\/selection$/],
+    ["POST", /^\/api\/items(?:\/manual)?$/],
+    ["POST", /^\/api\/outfit-assistant\/understand$/],
+    ["POST", /^\/api\/inspirations$/],
+    ["POST", /^\/api\/inspirations\/[^/]+\/(?:screenshot\/presign|analyze|rematch)$/],
+    ["PATCH", /^\/api\/inspirations\/[^/]+\/confirm$/]
+  ].some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path));
 };
 const requireCommunityAdmin = (user) => {
   if (user.role !== "admin") throw Object.assign(new Error("当前账号没有社区审核权限。"), { status: 403 });
@@ -355,6 +377,8 @@ const mapItem = (item) => ({
   ...item,
   id: String(item.id),
   designDetails: inspiration.normalizeDesignDetails(item.design_details ?? item.designDetails),
+  formality: allowedFormalities.includes(item.formality) ? item.formality : "",
+  functionTags: sanitizeTags(item.function_tags ?? item.functionTags, allowedFunctionTags, 6),
   styles: sanitizeTags(item.styles),
   scenes: sanitizeTags(item.scenes, allowedScenes),
   imageUrl: cloud.signedUrl(item.image_key, "GET", 3600)
@@ -444,6 +468,66 @@ const outfitPlanView = async (plan) => {
   };
 };
 
+const readonlyDemoIdentity = () => {
+  const userId = cleanText(process.env.DEMO_READONLY_USER_ID, 80);
+  if (userId) return { userId, username: "" };
+  try {
+    const merged = JSON.parse(String(process.env.LYROUTER_CONFIG || "{}"));
+    return { userId: "", username: cleanText(merged.du, 30) };
+  } catch {
+    return { userId: "", username: "" };
+  }
+};
+const readonlyDemoUser = async () => {
+  const identity = readonlyDemoIdentity();
+  if (!identity.userId && !identity.username) throw Object.assign(new Error("只读演示尚未启用。"), { status: 404 });
+  const user = identity.userId
+    ? await repository.getById("users", identity.userId)
+    : await repository.findOne("users", { username: identity.username });
+  if (!user || user.status === "deletion_requested") {
+    throw Object.assign(new Error("只读演示账号不可用。"), { status: 404 });
+  }
+  return user;
+};
+
+const readonlyDemoWearLogs = async (userId, start, end) => {
+  const startTime = Date.parse(start);
+  const endTime = Date.parse(end);
+  if (!start || !end || !Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime || endTime - startTime > 32 * 24 * 60 * 60 * 1000) {
+    throw Object.assign(new Error("请提供有效的月份时间范围。"), { status: 400 });
+  }
+  const range = repository.command().gte(start).and(repository.command().lt(end));
+  const logs = await repository.findMany("wearLogs", { user_id: userId, worn_at: range }, { orderBy: "worn_at", order: "asc", limit: 500 });
+  const itemIds = [...new Set(logs.map((log) => String(log.item_id)))];
+  const relatedItems = itemIds.length
+    ? await repository.findMany("clothing", { user_id: userId, _id: repository.command().in(itemIds) })
+    : [];
+  const outfitRecordIds = [...new Set(logs.map((log) => String(log.outfit_record_id || "")).filter(Boolean))];
+  const outfitRecords = outfitRecordIds.length
+    ? await repository.findMany("outfitRecords", { user_id: userId, _id: repository.command().in(outfitRecordIds) })
+    : [];
+  const outfitRecordsById = new Map(outfitRecords.map((record) => [String(record.id), record]));
+  const itemsById = new Map(relatedItems.map((item) => [String(item.id), item]));
+  return logs.map((log) => {
+    const item = itemsById.get(String(log.item_id));
+    const outfitRecordId = String(log.outfit_record_id || "");
+    const outfitRecord = outfitRecordsById.get(outfitRecordId);
+    return {
+      id: String(log.id),
+      outfitRecordId,
+      outfitTitle: outfitRecord?.title || (outfitRecordId ? "一套穿搭" : ""),
+      wornAt: log.worn_at,
+      scene: log.scene || "",
+      comfort: log.comfort || "",
+      note: log.note || "",
+      item: item ? {
+        id: String(item.id), name: item.name || "未命名衣物", category: item.category || "", color: item.color || "",
+        active: item.status === "active", imageUrl: cloud.signedUrl(item.image_key, "GET", 3600)
+      } : null
+    };
+  });
+};
+
 // 穿着历史必须读取当时保存的快照，不能依赖后来可能被改名、重排或删除的搭配方案。
 const outfitRecordView = async (record) => {
   const snapshots = Array.isArray(record.items) ? record.items : [];
@@ -488,7 +572,7 @@ const outfitRecordView = async (record) => {
   };
 };
 
-const inspirationView = async (record, includeMatches = false) => {
+const inspirationView = async (record, includeMatches = false, matchOptions = {}) => {
   const view = {
     id: String(record.id),
     sourceType: record.source_type,
@@ -507,13 +591,15 @@ const inspirationView = async (record, includeMatches = false) => {
   };
   if (!includeMatches || record.status !== "ready") return view;
   const items = await repository.findMany("clothing", { user_id: String(record.user_id), status: "active" }, { orderBy: "created_at", order: "desc", limit: 500 });
-  const result = inspiration.matchWardrobe(view.confirmedSlots, items);
+  const result = inspiration.matchWardrobe(view.confirmedSlots, items, matchOptions);
   view.matches = result.matches.map((group) => ({
     ...group,
     candidates: group.candidates.map((candidate) => ({
       score: candidate.score,
       reasons: candidate.reasons,
       suggestion: candidate.suggestion,
+      matchLevel: candidate.matchLevel,
+      matchLabel: candidate.matchLabel,
       item: mapItem(candidate.item)
     }))
   }));
@@ -1643,6 +1729,7 @@ const route = async (event) => {
       inspiration: { enabled: true, platform: "xiaohongshu", mode: "private_observe_only" },
       outfitAssistant: { enabled: true, mode: "single_followup_private" },
       outfitPlans: { enabled: true, mode: "private" },
+      readonlyDemo: { enabled: Boolean(readonlyDemoIdentity().userId || readonlyDemoIdentity().username), mode: "scoped_interactive" },
       multiGarment: { enabled: true, maxItems: 3, personPhotos: false },
       garmentSegmentationDiagnostic: {
         enabled: true,
@@ -1653,6 +1740,30 @@ const route = async (event) => {
       },
       imageEditIntervalMs: IMAGE_EDIT_INTERVAL_MS
     });
+  }
+
+  if (path.startsWith("/api/demo/") && method !== "GET") {
+    throw Object.assign(new Error("公开演示只允许读取。"), { status: 405 });
+  }
+  if (method === "GET" && path === "/api/demo/bootstrap") {
+    const demoUser = await readonlyDemoUser();
+    const demoUserId = String(demoUser.id);
+    const [items, plans, wearLogs] = await Promise.all([
+      repository.findMany("clothing", { user_id: demoUserId, status: "active" }, { orderBy: "created_at", order: "desc", limit: 100 }),
+      repository.findMany("outfitPlans", { user_id: demoUserId }, { orderBy: "updated_at", order: "desc", limit: 100 }),
+      readonlyDemoWearLogs(demoUserId, String(query.start || ""), String(query.end || ""))
+    ]);
+    return response(event, 200, {
+      readonly: true,
+      user: { username: demoUser.username || "Wardrobloom 用户" },
+      items: items.map(mapItem),
+      outfitPlans: await Promise.all(plans.map(outfitPlanView)),
+      wearLogs
+    });
+  }
+  if (method === "GET" && path === "/api/demo/session") {
+    const demoUser = await readonlyDemoUser();
+    return response(event, 200, { user: { ...publicUser(demoUser), role: "user", demoSession: true }, token: demoTokenFor(demoUser) });
   }
 
   if (method === "POST" && path === "/api/auth/register") {
@@ -1726,9 +1837,12 @@ const route = async (event) => {
 
   const user = await requireActiveUser(event);
   const userId = String(user.id);
+  if (user.demoSession && !demoMutationAllowed(method, path)) {
+    throw Object.assign(new Error("Demo 会话只允许录入衣物和匹配灵感。"), { status: 403 });
+  }
 
   if (method === "POST" && path === "/api/outfit-assistant/understand") {
-    const input = outfitAssistant.requestText(body.message, body.previousMessage, body.followupUsed, body.contextPreferences, body.currentCategories, body.currentOutfitFacts);
+    const input = outfitAssistant.requestText(body.message, body.previousMessage, body.followupUsed, body.contextPreferences, body.currentCategories, body.currentOutfitFacts, body.recentMessages);
     const idempotencyKey = cleanText(body.idempotencyKey, 80);
     if (!idempotencyKey) throw Object.assign(new Error("缺少穿搭需求的幂等标识。"), { status: 400 });
     const taskId = idempotentId("outfit-assistant", userId, idempotencyKey);
@@ -2029,6 +2143,22 @@ const route = async (event) => {
   if (method === "GET" && inspirationMatch) {
     const record = await requireOwnedInspiration(decodeURIComponent(inspirationMatch[1]), userId);
     return response(event, 200, await inspirationView(record, true));
+  }
+
+  const inspirationRematchMatch = path.match(/^\/api\/inspirations\/([^/]+)\/rematch$/);
+  if (method === "POST" && inspirationRematchMatch) {
+    const record = await requireOwnedInspiration(decodeURIComponent(inspirationRematchMatch[1]), userId);
+    if (record.status !== "ready") throw Object.assign(new Error("请先完成灵感识别和标签确认。"), { status: 409 });
+    const preferences = outfitAssistant.normalizePreferences({ ...(body.preferences || {}), mode: "modify", needsClarification: false }, true);
+    return response(event, 200, await inspirationView(record, true, {
+      styles: preferences.styles,
+      preferredCategories: preferences.preferredCategories,
+      excludedCategories: preferences.excludedCategories,
+      preferredColors: preferences.preferredColors,
+      excludedColors: preferences.excludedColors,
+      lockedItemIds: body.lockedItemIds,
+      excludedItemIds: body.excludedItemIds
+    }));
   }
 
   const inspirationScreenshotMatch = path.match(/^\/api\/inspirations\/([^/]+)\/screenshot\/presign$/);
@@ -2904,6 +3034,8 @@ const route = async (event) => {
         pattern: cleanText(body.pattern, 30),
         material: cleanText(body.material, 30),
         design_details: inspiration.normalizeDesignDetails(body.designDetails ?? body.design_details),
+        formality: allowedFormalities.includes(body.formality) ? body.formality : "",
+        function_tags: sanitizeTags(body.functionTags ?? body.function_tags, allowedFunctionTags, 6),
         styles: sanitizeTags(body.styles),
         scenes: sanitizeTags(body.scenes, allowedScenes),
         price: body.price === "" || body.price == null ? null : Number(body.price),
@@ -2951,6 +3083,8 @@ const route = async (event) => {
       pattern: cleanText(body.pattern, 30),
       material: cleanText(body.material, 30),
       design_details: inspiration.normalizeDesignDetails(body.designDetails ?? body.design_details),
+      formality: allowedFormalities.includes(body.formality) ? body.formality : "",
+      function_tags: sanitizeTags(body.functionTags ?? body.function_tags, allowedFunctionTags, 6),
       styles: sanitizeTags(body.styles),
       scenes: sanitizeTags(body.scenes, allowedScenes),
       price: body.price === "" || body.price == null ? null : Number(body.price),
@@ -3111,6 +3245,8 @@ const route = async (event) => {
       pattern: cleanText(body.pattern, 30),
       material: cleanText(body.material, 30),
       design_details: inspiration.normalizeDesignDetails(body.designDetails ?? body.design_details),
+      formality: allowedFormalities.includes(body.formality) ? body.formality : "",
+      function_tags: sanitizeTags(body.functionTags ?? body.function_tags, allowedFunctionTags, 6),
       styles: sanitizeTags(body.styles),
       scenes: sanitizeTags(body.scenes, allowedScenes),
       price

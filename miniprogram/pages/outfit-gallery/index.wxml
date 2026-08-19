@@ -1,7 +1,7 @@
 <view class="gallery-page">
   <view class="gallery-head">
     <view><text class="eyebrow">MY OUTFITS</text><text class="headline">我的搭配</text></view>
-    <button class="create-button" bindtap="createPlan">＋ 新建</button>
+    <button wx:if="{{!demoReadonly}}" class="create-button" bindtap="createPlan">＋ 新建</button>
   </view>
   <text class="intro">这里保存你在自主搭配画布中确认过的方案，点击卡片查看完整穿搭。</text>
 
@@ -10,7 +10,7 @@
   <view wx:elif="{{plans.length === 0}}" class="state-card empty-state">
     <text class="empty-title">还没有保存的搭配</text>
     <text class="empty-copy">从衣橱中选择衣物，自由组合并保存后，就会出现在这里。</text>
-    <button bindtap="createPlan">去创建第一套</button>
+    <button wx:if="{{!demoReadonly}}" bindtap="createPlan">去创建第一套</button>
   </view>
   <view wx:else class="outfit-grid">
     <view wx:for="{{plans}}" wx:key="id" class="outfit-card" data-id="{{item.id}}" bindtap="openPlan">

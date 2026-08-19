@@ -4,6 +4,7 @@ const { createBatch, updateBatchItem, nextBatchIndex, batchSummary } = require("
 const CATEGORIES = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"];
 const SEASONS = ["春夏", "春秋", "秋冬", "多季"];
 const THICKNESSES = ["薄", "适中", "厚"];
+const FORMALITIES = ["未设置", "休闲", "轻商务", "商务", "半正式", "正式", "运动", "户外"];
 const STYLES = ["韩系", "清新", "酷飒", "简约", "休闲", "通勤", "复古", "甜美", "运动", "街头", "优雅", "度假"];
 const SCENES = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
 const selectableOptions = (values, selected = []) => values.map((value) => ({ value, selected: selected.includes(value) }));
@@ -17,6 +18,8 @@ const emptyForm = () => ({
   pattern: "",
   material: "",
   designDetailsText: "",
+  formality: "",
+  functionTagsText: "",
   stylesText: "",
   scenesText: "",
   price: ""
@@ -42,11 +45,13 @@ Page({
     categories: CATEGORIES,
     seasons: SEASONS,
     thicknesses: THICKNESSES,
+    formalities: FORMALITIES,
     styleOptions: selectableOptions(STYLES),
     sceneOptions: selectableOptions(SCENES),
     categoryIndex: 0,
     seasonIndex: 0,
     thicknessIndex: 0,
+    formalityIndex: 0,
     imagePath: "",
     resultImage: "",
     originalCutoutUrl: "",
@@ -586,6 +591,8 @@ Page({
         pattern: tags.pattern || "",
         material: tags.material || "",
         designDetailsText: (tags.designDetails || []).join("、"),
+        formality: "",
+        functionTagsText: "",
         stylesText: (tags.styles || []).join("、"),
         scenesText: (tags.scenes || []).join("、"),
         price: ""
@@ -628,6 +635,10 @@ Page({
   onThicknessChange(event) {
     const index = Number(event.detail.value);
     this.setData({ thicknessIndex: index, "form.thickness": THICKNESSES[index] });
+  },
+  onFormalityChange(event) {
+    const formalityIndex = Number(event.detail.value);
+    this.setData({ formalityIndex, "form.formality": FORMALITIES[formalityIndex] === "未设置" ? "" : FORMALITIES[formalityIndex] });
   },
 
   async useManualMode() {
@@ -711,6 +722,8 @@ Page({
       pattern: form.pattern,
       material: form.material,
       designDetails: listFromText(form.designDetailsText, 6),
+      formality: form.formality,
+      functionTags: listFromText(form.functionTagsText, 6),
       styles: this.data.styleOptions.filter((item) => item.selected).map((item) => item.value),
       scenes: this.data.sceneOptions.filter((item) => item.selected).map((item) => item.value),
       price: form.price
@@ -776,7 +789,7 @@ Page({
 
   continueAdding() {
     this.setData({
-      categoryIndex: 0, seasonIndex: 0, thicknessIndex: 0,
+      categoryIndex: 0, seasonIndex: 0, thicknessIndex: 0, formalityIndex: 0,
       imagePath: "", resultImage: "", originalCutoutUrl: "", hangerEditUrl: "", selectedImage: "original", hangerEditBusy: false,
       mimeType: "image/jpeg", fileSize: 0, taskId: "", draftId: "", manualUpload: null, manualUploaded: false,
       stage: "idle", stageText: "", errorText: "", isDemo: false, manualMode: false, aiProgress: null, mattingQualityFailed: false,

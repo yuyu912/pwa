@@ -45,18 +45,18 @@
       <image class="paper-shape" src="/assets/home-paper-record.png" mode="scaleToFill" />
       <view class="shortcut-copy"><text class="shortcut-kicker">SAVED</text><text class="shortcut-title">我的搭配</text><text class="shortcut-note">查看保存过的搭配方案</text></view>
     </view>
-    <view class="shortcut-card canvas-shortcut" bindtap="openOutfitCanvas">
+    <view wx:if="{{!demoReadonly}}" class="shortcut-card canvas-shortcut" bindtap="openOutfitCanvas">
       <image class="paper-shape" src="/assets/home-paper-wardrobe.png" mode="scaleToFill" />
       <view class="shortcut-copy"><text class="shortcut-kicker">CANVAS</text><text class="shortcut-title">自主搭配画布</text><text class="shortcut-note">用真实衣物自由组合</text></view>
     </view>
   </view>
 
-  <view class="idle-entry" bindtap="openIdleItems">
+  <view wx:if="{{!demoReadonly}}" class="idle-entry" bindtap="openIdleItems">
     <image class="paper-shape" src="/assets/home-paper-link.png" mode="scaleToFill" />
     <view class="idle-copy"><text class="idle-entry-title">私人闲置清单</text><text class="idle-entry-note">仅你可见，不会公开、交换或出租</text></view>
   </view>
 
-  <view class="candidate-entry" bindtap="openCandidate">
+  <view wx:if="{{!demoReadonly}}" class="candidate-entry" bindtap="openCandidate">
     <view class="candidate-copy"><text class="candidate-kicker">BEFORE BUYING</text><text class="candidate-title">购买前拍照查重</text><text class="candidate-note">拍下准备购买的衣服，看看衣橱里有没有相似款</text></view>
     <text class="candidate-action">去查一查</text>
   </view>

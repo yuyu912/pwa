@@ -2,9 +2,10 @@ const config = require("../config");
 const mock = require("./mock");
 const session = require("./session");
 
-function request(path, method = "GET", data = {}) {
+let demoSessionPromise = null;
+
+function requestOnce(path, method = "GET", data = {}, token = "") {
   if (!config.API_BASE_URL) return Promise.reject(new Error("尚未配置 uniCloud HTTP 地址。"));
-  const token = getApp().globalData.token;
   return new Promise((resolve, reject) => {
     wx.request({
       url: `${config.API_BASE_URL}${path}`,
@@ -19,7 +20,12 @@ function request(path, method = "GET", data = {}) {
           multi_garment_detection: "多件衣物定位",
           qwen_recognition: "千问识别"
         };
-        const message = response.data?.error || `请求失败（${response.statusCode}）`;
+        const rawError = response.data?.error;
+        const errorCode = typeof rawError === "object" ? rawError?.code : "";
+        const errorMessage = typeof rawError === "object" ? rawError?.message : rawError;
+        const message = errorCode === "PrePayResourceExhausted"
+          ? "测试服务资源已耗尽，请在 uniCloud 控制台恢复云函数资源后重试。"
+          : String(errorMessage || `请求失败（${response.statusCode}）`);
         const stage = stageNames[response.data?.aiTaskStage] || response.data?.aiTaskStage;
         const provider = [
           response.data?.providerCode,
@@ -35,13 +41,50 @@ function request(path, method = "GET", data = {}) {
         ].filter(Boolean).join("；");
         // 只显示安全的阶段、错误码、HTTP 状态和请求号；密钥与供应商完整响应不会返回小程序。
         const requestError = new Error(trace ? `${message}（${trace}）` : message);
-        requestError.code = response.data?.providerCode || "";
+        requestError.code = response.data?.providerCode || errorCode || "";
         reject(requestError);
       },
       fail() { reject(new Error("网络请求失败，请检查测试环境地址和网络。")); }
     });
   });
 }
+
+async function demoSession() {
+  if (!demoSessionPromise) {
+    demoSessionPromise = requestOnce("/api/demo/session").then((result) => {
+      session.save(result);
+      return result;
+    }).catch((error) => { demoSessionPromise = null; throw error; });
+  }
+  return demoSessionPromise;
+}
+
+async function request(path, method = "GET", data = {}) {
+  if (config.DEMO_READONLY && !path.startsWith("/api/demo/")) {
+    const demo = await demoSession();
+    return requestOnce(path, method, data, demo.token);
+  }
+  return requestOnce(path, method, data, getApp().globalData.token);
+}
+
+const demoCache = new Map();
+function monthRange() {
+  const today = new Date();
+  return {
+    start: new Date(today.getFullYear(), today.getMonth(), 1).toISOString(),
+    end: new Date(today.getFullYear(), today.getMonth() + 1, 1).toISOString()
+  };
+}
+async function demoBootstrap(start, end) {
+  const range = start && end ? { start, end } : monthRange();
+  const key = `${range.start}|${range.end}`;
+  if (!demoCache.has(key)) {
+    demoCache.set(key, request(`/api/demo/bootstrap?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`));
+  }
+  try { return await demoCache.get(key); }
+  catch (error) { demoCache.delete(key); throw error; }
+}
+const readonlyError = () => Promise.reject(new Error("Demo 会话不允许执行此操作。"));
 
 function uploadBinary(uploadUrl, filePath, mimeType) {
   return new Promise((resolve, reject) => {
@@ -92,11 +135,12 @@ module.exports = {
   login,
   register,
   registerOutfitGuest,
-  getMe: () => config.USE_MOCK ? Promise.resolve(mock.getMe()) : request("/api/auth/me"),
-  getEntitlement: () => config.USE_MOCK ? Promise.resolve(mock.getEntitlement()) : request("/api/entitlements/me"),
+  getMe: async () => config.DEMO_READONLY ? { user: { ...(await demoBootstrap()).user, demoReadonly: true } } : config.USE_MOCK ? mock.getMe() : request("/api/auth/me"),
+  getEntitlement: () => config.DEMO_READONLY ? Promise.resolve(null) : config.USE_MOCK ? Promise.resolve(mock.getEntitlement()) : request("/api/entitlements/me"),
   getPlans: () => config.USE_MOCK ? Promise.resolve(mock.getPlans()) : request("/api/plans"),
-  listItems: () => config.USE_MOCK ? Promise.resolve(mock.listItems()) : request("/api/items"),
+  listItems: async () => config.DEMO_READONLY ? (await demoBootstrap()).items : config.USE_MOCK ? mock.listItems() : request("/api/items"),
   getItem: async (id) => {
+    if (config.DEMO_READONLY) return (await demoBootstrap()).items.find((item) => String(item.id) === String(id)) || null;
     if (config.USE_MOCK) return mock.getItem(id);
     return request(`/api/items/${encodeURIComponent(id)}`);
   },
@@ -109,6 +153,7 @@ module.exports = {
   createInspirationScreenshotUpload: (id, data) => request(`/api/inspirations/${encodeURIComponent(id)}/screenshot/presign`, "POST", data),
   analyzeInspiration: (id) => request(`/api/inspirations/${encodeURIComponent(id)}/analyze`, "POST"),
   confirmInspiration: (id, data) => request(`/api/inspirations/${encodeURIComponent(id)}/confirm`, "PATCH", data),
+  rematchInspiration: (id, data) => request(`/api/inspirations/${encodeURIComponent(id)}/rematch`, "POST", data),
   listInspirations: () => request("/api/inspirations"),
   getInspiration: (id) => request(`/api/inspirations/${encodeURIComponent(id)}`),
   deleteInspiration: (id) => request(`/api/inspirations/${encodeURIComponent(id)}`, "DELETE"),
@@ -129,12 +174,12 @@ module.exports = {
   markItemIdle: (id, data) => config.USE_MOCK ? Promise.resolve(mock.markItemIdle(id, data)) : request(`/api/items/${id}/idle`, "POST", data),
   restoreIdleItem: (id) => config.USE_MOCK ? Promise.resolve(mock.restoreIdleItem(id)) : request(`/api/items/${id}/idle`, "DELETE"),
   saveItemListing: (id, data) => config.USE_MOCK ? Promise.resolve(mock.saveItemListing(id, data)) : request(`/api/items/${id}/listing`, "PUT", data),
-  getWearLogs: (id) => config.USE_MOCK ? Promise.resolve(mock.getWearLogs(id)) : request(`/api/items/${id}/wear-logs`),
-  getMonthlyWearLogs: (start, end) => config.USE_MOCK
+  getWearLogs: async (id) => config.DEMO_READONLY ? (await demoBootstrap()).wearLogs.filter((log) => String(log.item?.id || log.itemId) === String(id)) : config.USE_MOCK ? mock.getWearLogs(id) : request(`/api/items/${id}/wear-logs`),
+  getMonthlyWearLogs: async (start, end) => config.DEMO_READONLY ? (await demoBootstrap(start, end)).wearLogs : config.USE_MOCK
     ? Promise.resolve(mock.getMonthlyWearLogs(start, end))
     : request(`/api/wear-logs?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
-  getOutfitRecord: (id) => request(`/api/outfit-records/${encodeURIComponent(id)}`),
-  listOutfitPlans: () => request("/api/outfit-plans"),
+  getOutfitRecord: (id) => config.DEMO_READONLY ? Promise.reject(new Error("请使用日历中的只读穿搭快照。")) : request(`/api/outfit-records/${encodeURIComponent(id)}`),
+  listOutfitPlans: async () => config.DEMO_READONLY ? (await demoBootstrap()).outfitPlans : request("/api/outfit-plans"),
   createOutfitPlan: (data) => request("/api/outfit-plans", "POST", data),
   updateOutfitPlan: (id, data) => request(`/api/outfit-plans/${encodeURIComponent(id)}`, "PUT", data),
   renameOutfitPlan: (id, title) => request(`/api/outfit-plans/${encodeURIComponent(id)}`, "PATCH", { title }),
@@ -167,6 +212,6 @@ module.exports = {
   closeOutfitRequest: (id) => request(`/api/outfit-requests/${encodeURIComponent(id)}/close`, "POST"),
   getOutfitResults: (id) => request(`/api/outfit-requests/${encodeURIComponent(id)}/results`),
   reportOutfitReply: (id, reason) => request(`/api/outfit-responses/${encodeURIComponent(id)}/report`, "POST", { reason }),
-  requestAccountDeletion: () => request("/api/auth/delete-request", "POST"),
+  requestAccountDeletion: () => config.DEMO_READONLY ? readonlyError() : request("/api/auth/delete-request", "POST"),
   submitComplaint: (data) => request("/api/complaints", "POST", data)
 };

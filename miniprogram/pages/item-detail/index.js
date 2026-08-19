@@ -1,7 +1,9 @@
 const api = require("../../services/api");
+const config = require("../../config");
 const CATEGORIES = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"];
 const SEASONS = ["春夏", "春秋", "秋冬", "多季"];
 const THICKNESSES = ["薄", "适中", "厚"];
+const FORMALITIES = ["未设置", "休闲", "轻商务", "商务", "半正式", "正式", "运动", "户外"];
 const IDLE_REASONS = ["很少穿", "不合适", "重复", "风格变化", "其他"];
 const listFromText = (value, max = 4) => String(value || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean).slice(0, max);
 
@@ -15,6 +17,8 @@ function editFormFromItem(item) {
     pattern: item?.pattern || "",
     material: item?.material || "",
     designDetailsText: (item?.designDetails || []).join("、"),
+    formality: item?.formality || "",
+    functionTagsText: (item?.functionTags || []).join("、"),
     stylesText: (item?.styles || []).join("、"),
     scenesText: (item?.scenes || []).join("、"),
     price: item?.price ?? ""
@@ -26,6 +30,7 @@ function normalizeItem(item) {
   return item ? {
     ...item,
     designDetails: item.designDetails || item.design_details || [],
+    functionTags: item.functionTags || item.function_tags || [],
     wearCount: Number(item.wearCount ?? item.wear_count ?? 0),
     idleStatus: item.idleStatus || item.idle_status || "active",
     idleReason: item.idleReason || item.idle_reason || "",
@@ -47,6 +52,7 @@ function formatWearLog(log) {
 Page({
   data: {
     item: null,
+    demoReadonly: config.DEMO_READONLY,
     imageLoadFailed: false,
     scenes: ["通勤", "休闲", "约会", "旅行", "聚会", "运动"],
     comforts: ["舒适", "一般", "不舒适", "待确认"],
@@ -61,9 +67,11 @@ Page({
     categories: CATEGORIES,
     seasons: SEASONS,
     thicknesses: THICKNESSES,
+    formalities: FORMALITIES,
     categoryIndex: 0,
     seasonIndex: 0,
     thicknessIndex: 0,
+    formalityIndex: 0,
     editForm: {},
     message: "",
     idleReasons: IDLE_REASONS,
@@ -100,7 +108,8 @@ Page({
       editForm: editFormFromItem(item),
       categoryIndex: Math.max(0, CATEGORIES.indexOf(item.category)),
       seasonIndex: Math.max(0, SEASONS.indexOf(item.season)),
-      thicknessIndex: Math.max(0, THICKNESSES.indexOf(item.thickness))
+      thicknessIndex: Math.max(0, THICKNESSES.indexOf(item.thickness)),
+      formalityIndex: Math.max(0, FORMALITIES.indexOf(item.formality || "未设置"))
     });
   },
   cancelEdit() { this.setData({ editing: false, message: "" }); },
@@ -117,6 +126,10 @@ Page({
     const thicknessIndex = Number(event.detail.value);
     this.setData({ thicknessIndex, "editForm.thickness": THICKNESSES[thicknessIndex] });
   },
+  onEditFormality(event) {
+    const formalityIndex = Number(event.detail.value);
+    this.setData({ formalityIndex, "editForm.formality": FORMALITIES[formalityIndex] === "未设置" ? "" : FORMALITIES[formalityIndex] });
+  },
   async saveEdit() {
     if (!this.data.item || this.data.saving) return;
     const form = this.data.editForm;
@@ -132,6 +145,8 @@ Page({
         pattern: form.pattern,
         material: form.material,
         designDetails: listFromText(form.designDetailsText, 6),
+        formality: form.formality,
+        functionTags: listFromText(form.functionTagsText, 6),
         styles: listFromText(form.stylesText),
         scenes: listFromText(form.scenesText),
         price: form.price

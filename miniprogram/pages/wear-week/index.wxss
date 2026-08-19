@@ -21,7 +21,7 @@
 .week-kicker { color: #ad7782; font-size: 18rpx; font-weight: 600; letter-spacing: 2rpx; }
 .week-number { color: #8d5662; font-size: 44rpx; font-weight: 700; }
 .week-unit,
-.week-meta { color: #857a80; font-size: 20rpx; }
+.week-meta { color: #8f7d78; font-size: 20rpx; }
 .week-meta { display: block; margin-top: 5rpx; }
 .week-item-scroll { min-width: 0; flex: 1; white-space: nowrap; }
 .week-item-row { display: inline-flex; align-items: flex-end; gap: 5rpx; padding-right: 8rpx; }

@@ -1,8 +1,9 @@
 const api = require("../../services/api");
 const session = require("../../services/session");
+const config = require("../../config");
 
 Page({
-  data: { user: null, userInitial: "W", entitlement: null, loading: true, deleting: false, message: "", error: "" },
+  data: { demoReadonly: config.DEMO_READONLY, user: null, userInitial: "W", entitlement: null, loading: true, deleting: false, message: "", error: "" },
   async onShow() {
     if (this.getTabBar()) this.getTabBar().setData({ selected: 3 });
     const restored = session.restore();
@@ -12,7 +13,7 @@ Page({
       if (!result?.user?.username) throw new Error("账户信息不完整。");
       session.save({ user: result.user, token: restored.token });
       this.setData({ user: result.user, userInitial: String(result.user.username).slice(0, 1).toUpperCase(), loading: false, error: "" });
-      try { this.setData({ entitlement: await api.getEntitlement() }); } catch {}
+      if (!config.DEMO_READONLY) try { this.setData({ entitlement: await api.getEntitlement() }); } catch {}
     } catch (error) {
       this.setData({ loading: false, error: error.message || "账户信息加载失败。" });
     }

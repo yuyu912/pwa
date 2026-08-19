@@ -19,7 +19,7 @@
   </block>
   <block wx:else>
     <view class="privacy card"><text class="privacy-title">你可以控制</text><text>选择 1 至 5 件衣物并提出问题。链接只给受邀好友使用，7 天后自动失效，也可提前关闭。</text></view>
-    <view class="card restore-card"><text class="label">查看已经创建的请求</text><input class="restore-input" value="{{restoreCode}}" bindinput="onRestoreCode" placeholder="请粘贴“搭配:…”完整口令" placeholder-style="color:#8b8298;" maxlength="160"/><button class="secondary" bindtap="pasteRestoreCode">从剪贴板粘贴口令</button><button class="primary" bindtap="openByInviteCode">查看好友回复</button></view>
+    <view class="card restore-card"><text class="label">查看已经创建的请求</text><input class="restore-input" value="{{restoreCode}}" bindinput="onRestoreCode" placeholder="请粘贴“搭配:…”完整口令" placeholder-style="color:#947f82;" maxlength="160"/><button class="secondary" bindtap="pasteRestoreCode">从剪贴板粘贴口令</button><button class="primary" bindtap="openByInviteCode">查看好友回复</button></view>
     <text class="label">选择要分享的衣物（{{selectedIds.length}} / 5）</text>
     <view wx:if="{{items.length === 0}}" class="empty">先添加衣物，才能请好友帮搭。</view>
     <view wx:else class="item-grid"><view wx:for="{{items}}" wx:key="id" class="choose-item {{item.selected ? 'picked' : ''}}" data-id="{{item.id}}" bindtap="toggleItem"><image src="{{item.imageUrl}}" mode="aspectFit"/><text>{{item.name}}</text><text>{{item.selected ? '已选择' : '点击选择'}}</text></view></view>

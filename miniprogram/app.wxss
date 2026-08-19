@@ -9,13 +9,13 @@ button { border-radius: 30rpx 22rpx 32rpx 24rpx / 24rpx 31rpx 22rpx 29rpx; }
 button::after { border: 0; }
 
 .page { padding: 32rpx; }
-.card { background: #fffaf1; border: 2rpx solid rgba(161, 140, 190, 0.16); border-radius: 34rpx 25rpx 37rpx 28rpx / 28rpx 36rpx 25rpx 35rpx; padding: 28rpx; box-shadow: 0 9rpx 25rpx rgba(95, 75, 62, 0.06); }
-.eyebrow { color: #927db6; font-size: 24rpx; letter-spacing: 2rpx; }
+.card { background: #fffaf1; border: 2rpx solid rgba(189,115,129,0.16); border-radius: 34rpx 25rpx 37rpx 28rpx / 28rpx 36rpx 25rpx 35rpx; padding: 28rpx; box-shadow: 0 9rpx 25rpx rgba(95, 75, 62, 0.06); }
+.eyebrow { color: #a76f7b; font-size: 24rpx; letter-spacing: 2rpx; }
 .muted { color: #8d817c; font-size: 26rpx; line-height: 1.6; }
 .status { display: inline-flex; padding: 8rpx 16rpx; border-radius: 999rpx; font-size: 22rpx; }
-.status.mock { background: #eee6f7; color: #80679f; }
-.primary { background: #9b87c1; color: #fff; }
-.secondary { background: #eee7f5; color: #725d91; }
+.status.mock { background: #f1dfe2; color: #8c5963; }
+.primary { background: #bd7381; color: #fff; }
+.secondary { background: #f1dfe2; color: #815963; }
 .empty { text-align: center; padding: 90rpx 24rpx; color: #91847e; }
 
 /* Wardrobloom 主流程视觉主题：提高选择器优先级，覆盖旧版配色但不改变功能布局。 */
@@ -35,7 +35,7 @@ button::after { border: 0; }
 .weather-page .card,
 .today-outfit-page .scene-field,
 .today-outfit-page .outfit-card {
-  border-color: #ddd1e6;
+  border-color: #ead4d8;
   background: #fffaf2;
 }
 
@@ -46,10 +46,10 @@ button::after { border: 0; }
 }
 
 .weather-page .hero {
-  border: 2rpx solid rgba(150, 130, 183, 0.2);
+  border: 2rpx solid rgba(189,115,129,0.2);
   border-radius: 48rpx 31rpx 53rpx 38rpx / 34rpx 50rpx 32rpx 47rpx;
-  background: #eee8f4;
-  box-shadow: 0 10rpx 27rpx rgba(94, 75, 112, 0.07);
+  background: #f1dfe2;
+  box-shadow: 0 10rpx 27rpx rgba(110,74,78,0.07);
 }
 
 .weather-page .weather-reading {
@@ -62,7 +62,7 @@ button::after { border: 0; }
 .weather-page .label,
 .today-outfit-page .strip-reading,
 .today-outfit-page .scene-picker {
-  color: #806b9d;
+  color: #8c5963;
 }
 
 .weather-page .manual-panel,
@@ -72,42 +72,42 @@ button::after { border: 0; }
 }
 
 .weather-page .condition-option {
-  border-color: #e2d8e9;
-  background: #f8f2fa;
+  border-color: #ead4d8;
+  background: #f7e9eb;
 }
 
 .weather-page .condition-option.selected {
-  border-color: #aa94c8;
-  background: #e9e0f3;
-  color: #705b8b;
+  border-color: #c98b97;
+  background: #f1dfe2;
+  color: #815963;
 }
 
 .weather-page .temperature-button {
-  border-color: #d9cce5;
+  border-color: #ead4d8;
   background: #fffaf5;
 }
 
 .weather-page .item-pill,
 .today-outfit-page .tags text {
-  background: #ece4f3;
-  color: #735f8c;
+  background: #f1dfe2;
+  color: #815963;
 }
 
 .weather-page .primary,
 .today-outfit-page .primary,
 .inspiration-page .primary {
-  background: #9b87c1;
+  background: #bd7381;
 }
 
 .today-outfit-page .weather-strip {
-  border-color: #d9cce6;
+  border-color: #ead4d8;
   border-radius: 38rpx 24rpx 41rpx 29rpx / 27rpx 40rpx 25rpx 36rpx;
-  background: #ebe3f4;
+  background: #f1dfe2;
 }
 
 .today-outfit-page .outfit-art {
   border-radius: 34rpx 23rpx 37rpx 26rpx / 25rpx 36rpx 23rpx 34rpx;
-  background: #eee7f4;
+  background: #f1dfe2;
 }
 
 .today-outfit-page .item-photo {
@@ -116,26 +116,26 @@ button::after { border: 0; }
 
 .today-outfit-page .secondary,
 .inspiration-page .secondary {
-  background: #eee7f5;
-  color: #725d91;
+  background: #f1dfe2;
+  color: #815963;
 }
 
 .inspiration-page .tabs {
-  border-color: #ded2e6;
+  border-color: #ead4d8;
   border-radius: 35rpx 24rpx 38rpx 27rpx / 26rpx 37rpx 23rpx 34rpx;
   background: rgba(255, 250, 242, 0.76);
 }
 
 .inspiration-page .tab.active {
-  color: #715c8d;
-  background: #e9e1f2;
+  color: #815963;
+  background: #f1dfe2;
 }
 
 .inspiration-page .card,
 .wardrobe-page .card,
 .calendar-page .card,
 .login-page .card {
-  border: 2rpx solid rgba(155, 135, 192, 0.16);
+  border: 2rpx solid rgba(189,115,129,0.16);
   border-radius: 39rpx 27rpx 43rpx 30rpx / 29rpx 41rpx 26rpx 38rpx;
   background: #fffaf2;
   box-shadow: 0 9rpx 25rpx rgba(95, 75, 62, 0.06);
@@ -145,7 +145,7 @@ button::after { border: 0; }
 .inspiration-page .field input,
 .wardrobe-page .search-card input,
 .login-page input {
-  background: #f5eff8;
+  background: #f7e9eb;
 }
 
 .wardrobe-page .headline,
@@ -162,32 +162,32 @@ button::after { border: 0; }
 
 .wardrobe-page .filter-summary > view,
 .calendar-page .summary-card {
-  border: 2rpx solid rgba(155, 135, 192, 0.14);
+  border: 2rpx solid rgba(189,115,129,0.14);
   border-radius: 31rpx 22rpx 34rpx 24rpx / 23rpx 33rpx 21rpx 31rpx;
   background: #fffaf2;
 }
 
 .wardrobe-page .canvas-entry {
   border-radius: 36rpx 24rpx 39rpx 27rpx / 27rpx 38rpx 24rpx 35rpx;
-  background: #f0e9f5;
+  background: #f1dfe2;
 }
 
 .wardrobe-page .canvas-entry-title,
 .wardrobe-page .canvas-entry-arrow {
-  color: #725e8d;
+  color: #815963;
 }
 
 .gallery-page .eyebrow,
 .detail-page .eyebrow,
 .canvas-page .eyebrow {
-  color: #927db6;
+  color: #a76f7b;
 }
 
 .gallery-page .create-button,
 .canvas-page .tool-card button,
 .canvas-page .new-plan {
-  background: #eae2f3;
-  color: #715d8c;
+  background: #f1dfe2;
+  color: #815963;
 }
 
 .gallery-page .state-card,
@@ -201,7 +201,7 @@ button::after { border: 0; }
 .canvas-page .wear-form,
 .canvas-page .picker-section,
 .canvas-page .plans-section {
-  border-color: #ddd1e6;
+  border-color: #ead4d8;
   background-color: #fffaf2;
 }
 
@@ -216,9 +216,9 @@ button::after { border: 0; }
 .gallery-page .preview-canvas,
 .detail-page .outfit-display,
 .canvas-page .outfit-canvas {
-  border-color: #d9cce5;
+  border-color: #ead4d8;
   background-color: #fffaf4;
-  background-image: linear-gradient(rgba(157, 136, 188, 0.07) 1rpx, transparent 1rpx), linear-gradient(90deg, rgba(157, 136, 188, 0.07) 1rpx, transparent 1rpx);
+  background-image: linear-gradient(rgba(189,115,129,0.07) 1rpx, transparent 1rpx), linear-gradient(90deg, rgba(189,115,129,0.07) 1rpx, transparent 1rpx);
 }
 
 .detail-page .outfit-display,
@@ -231,18 +231,18 @@ button::after { border: 0; }
 .canvas-page .wear-form textarea,
 .canvas-page .picker-visual,
 .canvas-page .plan-row {
-  background: #f1eaf5;
+  background: #f1dfe2;
 }
 
 .canvas-page .canvas-layer.selected {
-  border-color: #9b87c1;
+  border-color: #bd7381;
   background: rgba(235, 225, 244, 0.22);
 }
 
 .canvas-page .primary-actions .plan-save,
 .canvas-page .form-actions .confirm-wear,
 .canvas-page .category.active {
-  background: #9b87c1;
+  background: #bd7381;
 }
 
 /* 全局 Tab 页面为底部手绘导航预留安全区，避免最后一项被遮挡。 */
