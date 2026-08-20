@@ -47,6 +47,60 @@ test("穿搭助手多轮说不想穿裙子时清除旧裙装偏好", () => {
   assert.equal(changed.scene, "约会");
 });
 
+test("穿搭助手已有运动上下文时不因鞋子补充语重复追问", () => {
+  const sport = outfitAssistant.inferPreferencesFromText({ current: "我想要运动风", followupUsed: false });
+  const input = outfitAssistant.requestText(
+    "不考虑鞋子",
+    "我想要运动风",
+    false,
+    sport,
+    [],
+    [],
+    [{ role: "user", content: "我想要运动风" }]
+  );
+  const result = outfitAssistant.reconcilePreferences(input, {
+    mode: "modify",
+    action: "recommend",
+    needsClarification: true,
+    question: "今天主要是什么场合，或者想要什么风格？"
+  });
+  assert.equal(result.scene, "运动");
+  assert.deepEqual(result.styles, ["运动"]);
+  assert.equal(result.formalityPreference, "athletic");
+  assert.equal(result.needsClarification, false);
+  assert.equal(result.question, "");
+  assert.equal(outfitAssistant.ALLOWED_CATEGORIES.includes("鞋子"), false);
+});
+
+test("穿搭助手根据当前搭配事实回答有没有裤子并保留运动上下文", () => {
+  const sport = outfitAssistant.inferPreferencesFromText({ current: "我晚上要去运动，给我推荐衣服", followupUsed: false });
+  const facts = [
+    { name: "短袖T恤", category: "上衣", color: "浅绿色", reasons: ["符合运动场景"] },
+    { name: "条纹系带阔腿裤", category: "裤子", color: "浅灰蓝", reasons: ["符合运动场景"] },
+    { name: "黑色立领拉链外套", category: "外套", color: "黑色", reasons: ["适合早晚温差"] }
+  ];
+  const input = outfitAssistant.requestText(
+    "有没有裤子呢",
+    "我晚上要去运动，给我推荐衣服",
+    false,
+    sport,
+    facts.map((item) => item.category),
+    facts,
+    [{ role: "user", content: "我晚上要去运动，给我推荐衣服" }]
+  );
+  const result = outfitAssistant.reconcilePreferences(input, {
+    mode: "modify",
+    action: "recommend",
+    needsClarification: true,
+    question: "今天主要是什么场合，或者想要什么风格？"
+  });
+  assert.equal(result.action, "answer");
+  assert.equal(result.scene, "运动");
+  assert.equal(result.needsClarification, false);
+  assert.equal(result.question, "");
+  assert.match(result.reply, /有.*条纹系带阔腿裤/);
+});
+
 test("穿搭助手多轮反馈保留旧条件并只修改用户指出的部分", () => {
   const current = outfitAssistant.normalizePreferences({ mode: "new", scene: "约会", styles: ["优雅"], preferred_categories: ["连衣裙"], preferred_colors: ["白色"] }, false);
   const relaxed = outfitAssistant.inferPreferencesFromText({ current: "不要这么正式，轻松一点", contextPreferences: current, currentCategories: ["连衣裙"] });
@@ -71,7 +125,41 @@ test("穿搭助手以本轮正式要求覆盖历史休闲措辞", () => {
   assert.equal(formal.mode, "modify");
   assert.equal(formal.scene, "聚会");
   assert.equal(formal.occasion, "商务饭局");
+  assert.equal(formal.formalityPreference, "semi_formal");
   assert.deepEqual(formal.styles, ["通勤", "优雅"]);
+});
+
+test("朋友聚会中的正式一点按上下文升一级而不是跳到最高正式", () => {
+  const current = outfitAssistant.normalizePreferences({
+    mode: "new", scene: "聚会", occasion: "朋友聚会", formality_preference: "smart_casual",
+    preferred_categories: ["裤子"], excluded_categories: ["连衣裙"], preferred_colors: ["粉色"], warmth_preference: "warmer"
+  }, false);
+  const input = outfitAssistant.requestText("要正式一点的穿搭", "我晚上要去朋友聚会", false, current, [], [], []);
+  const reconciled = outfitAssistant.reconcilePreferences(input, {
+    mode: "modify", action: "recommend", scene: "通勤", occasion: "朋友聚会",
+    formality_preference: "formal", styles: ["通勤", "优雅"],
+    preferred_categories: ["连衣裙"], excluded_categories: [], preferred_colors: ["黑色"], warmth_preference: "normal"
+  });
+  assert.equal(reconciled.mode, "modify");
+  assert.equal(reconciled.scene, "聚会");
+  assert.equal(reconciled.occasion, "朋友聚会");
+  assert.equal(reconciled.formalityPreference, "semi_formal");
+  assert.deepEqual(reconciled.styles, ["优雅"]);
+  assert.deepEqual(reconciled.preferredCategories, ["裤子"]);
+  assert.deepEqual(reconciled.excludedCategories, ["连衣裙"]);
+  assert.deepEqual(reconciled.preferredColors, ["粉色"]);
+  assert.equal(reconciled.warmthPreference, "warmer");
+  assert.equal(reconciled.needsClarification, false);
+  const raisedAgain = outfitAssistant.inferPreferencesFromText({ current: "再正式一点", contextPreferences: reconciled });
+  assert.equal(raisedAgain.formalityPreference, "formal");
+  assert.equal(raisedAgain.occasion, "朋友聚会");
+});
+
+test("明确的高正式场合仍使用最高正式等级", () => {
+  const formal = outfitAssistant.inferPreferencesFromText({ current: "参加正式晚宴，要非常正式" });
+  assert.equal(formal.occasion, "正式活动");
+  assert.equal(formal.formalityPreference, "formal");
+  assert.deepEqual(formal.styles, ["优雅"]);
 });
 
 test("穿搭助手连续多轮保留正式偏好并叠加新限制", () => {
@@ -90,6 +178,7 @@ test("穿搭助手连续多轮保留正式偏好并叠加新限制", () => {
   });
   assert.equal(dinner.scene, "聚会");
   assert.equal(dinner.occasion, "商务饭局");
+  assert.equal(dinner.formalityPreference, "semi_formal");
   assert.deepEqual(dinner.styles, ["通勤", "优雅"]);
   assert.equal(noDress.scene, "聚会");
   assert.deepEqual(noDress.styles, ["通勤", "优雅"]);
@@ -122,7 +211,7 @@ test("模型在修改轮返回空数组时不得清空已确认上下文", () =>
 
 test("穿搭助手区分常见子场景、正式度和户外活动", () => {
   const cases = [
-    ["见领导吃饭，要正式一点", "聚会", "商务饭局", "formal"],
+    ["见领导吃饭，要正式一点", "聚会", "商务饭局", "semi_formal"],
     ["参加朋友婚礼", "聚会", "婚礼宾客", "semi_formal"],
     ["明天有面试", "通勤", "面试", "business"],
     ["周末去徒步", "运动", "徒步登山", "outdoor"],
@@ -147,10 +236,10 @@ test("正式程度独立于大场景并在后续对话中保留", () => {
   const warmer = outfitAssistant.inferPreferencesFromText({ current: "晚上怕冷", contextPreferences: date, followupUsed: true });
   assert.equal(date.scene, "约会");
   assert.equal(date.occasion, "约会");
-  assert.equal(date.formalityPreference, "formal");
+  assert.equal(date.formalityPreference, "semi_formal");
   assert.equal(warmer.scene, "约会");
   assert.equal(warmer.occasion, "约会");
-  assert.equal(warmer.formalityPreference, "formal");
+  assert.equal(warmer.formalityPreference, "semi_formal");
   assert.equal(warmer.warmthPreference, "warmer");
 });
 
@@ -168,6 +257,20 @@ test("穿搭助手能区分解释、换一套和继续修改", () => {
   const casual = outfitAssistant.inferPreferencesFromText({ current: "不要这么正式，轻松一点", contextPreferences: current });
   assert.equal(casual.action, "recommend");
   assert.deepEqual(casual.styles, ["休闲", "简约"]);
+});
+
+test("完整重选保留场景偏好但退出上一轮衣物级限制", () => {
+  const current = outfitAssistant.normalizePreferences({ mode: "new", scene: "聚会", styles: ["休闲"] }, false);
+  const reset = outfitAssistant.inferPreferencesFromText({
+    current: "从衣柜里完整找出一套适合的衣服",
+    contextPreferences: current,
+    currentOutfitFacts: [{ name: "当前裤子", category: "裤子" }]
+  });
+  assert.equal(reset.mode, "modify");
+  assert.equal(reset.action, "reroll");
+  assert.equal(reset.scene, "聚会");
+  assert.deepEqual(reset.styles, ["休闲"]);
+  assert.equal(reset.needsClarification, false);
 });
 
 test("穿搭助手只对临时上游故障启用本地降级", () => {
@@ -228,6 +331,11 @@ test("灵感页提供临时多轮消息流并保留截图、确认和私密历�
   assert.match(js, /confirmInspiration/);
   assert.match(js, /understandOutfitRequest/);
   assert.match(js, /recentMessages/);
+  assert.match(js, /outfitDirectives\.applyItemDirectives/);
+  assert.match(js, /replacementCategories/);
+  assert.match(js, /replacementCategories: selection\.replacementCategories \|\| \[\]/);
+  assert.match(js, /settleItemSelection/);
+  assert.match(js, /rematchInspiration\(version, pendingSelection\)/);
   assert.match(js, /onHide\(\) \{ this\.clearConversation\(\); \}/);
   assert.match(js, /sessionVersion/);
   assert.match(wxml, /发需求或粘贴小红书链接/);
@@ -2109,7 +2217,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   if (previousWorkspaceId === undefined) delete process.env.DASHSCOPE_WORKSPACE_ID;
   else process.env.DASHSCOPE_WORKSPACE_ID = previousWorkspaceId;
   assert.equal(health.status, 200);
-  assert.equal(health.body.buildId, "2026-08-19-verified-context-shoe-agent-v82");
+  assert.equal(health.body.buildId, "2026-08-20-relative-formality-agent-v87");
   assert.deepEqual(health.body.outfitPlans, { enabled: true, mode: "private" });
   assert.deepEqual(health.body.multiGarment, { enabled: true, maxItems: 3, personPhotos: false });
   assert.equal(health.body.models.garmentSegmentation, "aitryon-parsing-v1");
@@ -2692,7 +2800,7 @@ test("uniCloud 云函数可迁移、登录、读取衣橱并事务记录穿着",
   assert.equal(failedRecognition.body.providerCode, "AccessDenied");
   assert.equal(failedRecognition.body.providerStatus, 403);
   assert.equal(failedRecognition.body.providerMessage, "fixture access denied");
-  assert.equal(failedRecognition.body.buildId, "2026-08-19-verified-context-shoe-agent-v82");
+  assert.equal(failedRecognition.body.buildId, "2026-08-20-relative-formality-agent-v87");
   assert.match(failedRecognition.body.requestId, /^[a-f0-9]{8}$/);
   cloudServices.sourceHash = async () => "c".repeat(64);
   const retriedRecognition = readResponse(await main(makeEvent(`/api/tasks/${failedUpload.body.taskId}/retry`, "POST", {}, authorization)));

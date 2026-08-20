@@ -2,7 +2,7 @@
 
 const ALLOWED_SCENES = ["休闲", "通勤", "约会", "旅行", "聚会", "运动"];
 const ALLOWED_STYLES = ["韩系", "清新", "酷飒", "简约", "休闲", "通勤", "复古", "甜美", "运动", "街头", "优雅", "度假"];
-const ALLOWED_CATEGORIES = ["上衣", "裤子", "半身裙", "外套", "连衣裙", "鞋子"];
+const ALLOWED_CATEGORIES = ["上衣", "裤子", "半身裙", "外套", "连衣裙"];
 const ALLOWED_OCCASIONS = ["日常", "上课", "逛街", "通勤", "商务会议", "面试", "商务饭局", "约会", "婚礼宾客", "正式活动", "朋友聚会", "家庭聚会", "旅行观光", "城市漫步", "海边度假", "徒步登山", "露营", "跑步", "健身", "球类运动", "骑行", "滑雪", "水上运动", "毕业典礼", "演出观展", "亲子出行"];
 const ALLOWED_FORMALITIES = ["casual", "smart_casual", "business", "semi_formal", "formal", "athletic", "outdoor"];
 const OCCASION_SCENES = {
@@ -17,6 +17,19 @@ const OCCASION_DEFAULT_FORMALITY = {
   "家庭聚会": "smart_casual", "旅行观光": "casual", "城市漫步": "casual", "海边度假": "casual", "徒步登山": "outdoor",
   "露营": "outdoor", "跑步": "athletic", "健身": "athletic", "球类运动": "athletic", "骑行": "outdoor", "滑雪": "outdoor", "水上运动": "athletic", "毕业典礼": "semi_formal",
   "演出观展": "smart_casual", "亲子出行": "casual"
+};
+
+const raiseFormality = (current = {}, occasion = "") => {
+  const baseline = current.formalityPreference || OCCASION_DEFAULT_FORMALITY[occasion] || "smart_casual";
+  return {
+    casual: "smart_casual",
+    smart_casual: "semi_formal",
+    business: "semi_formal",
+    semi_formal: "formal",
+    formal: "formal",
+    athletic: "smart_casual",
+    outdoor: "smart_casual"
+  }[baseline] || "semi_formal";
 };
 
 const cleanText = (value, max = 200) => String(value || "").trim().slice(0, max);
@@ -52,6 +65,18 @@ const shouldFallbackToRules = (error = {}) => {
   if ([502, 503, 504].includes(providerStatus)) return true;
   return ["billing_maintenance", "vision_timeout", "vision_upstream_error"].includes(code);
 };
+
+const hasMeaningfulPreferences = (preferences = {}) => Boolean(
+  preferences.occasion
+  || (preferences.scene && preferences.scene !== "休闲")
+  || (preferences.formalityPreference && preferences.formalityPreference !== "smart_casual")
+  || (preferences.styles || []).length
+  || (preferences.preferredCategories || []).length
+  || (preferences.excludedCategories || []).length
+  || (preferences.preferredColors || []).length
+  || (preferences.excludedColors || []).length
+  || (preferences.warmthPreference && preferences.warmthPreference !== "normal")
+);
 
 function normalizePreferences(raw = {}, followupUsed = false, current = {}) {
   const mode = raw.mode === "new" || !Object.keys(current || {}).length ? "new" : "modify";
@@ -106,6 +131,19 @@ function outfitExplanation(input = {}, current = {}) {
   return `这套用了${itemText}，${reasons.length ? `主要因为${reasons.join("；")}` : `优先满足${current.scene || "休闲"}场景并通过当前天气筛选`}。`;
 }
 
+function currentOutfitCategoryAnswer(input = {}) {
+  const text = cleanText(input.current, 300).replace(/[\s，。！!]/g, "");
+  const match = text.match(/^(?:(?:当前)?(?:这套|这身|搭配)(?:里|里面)?|里面)?有(?:没有)?(上衣|裤子|半身裙|外套|连衣裙)(?:吗|呢|呀|啊|[？?])?$/);
+  if (!match) return "";
+  const facts = cleanOutfitFacts(input.currentOutfitFacts);
+  if (!facts.length) return "";
+  const category = match[1];
+  const matchedItems = facts.filter((item) => item.category === category);
+  if (!matchedItems.length) return `当前这套里没有${category}。如果你想换成${category}搭配，可以直接告诉我。`;
+  const itemNames = matchedItems.map((item) => item.name || `${item.color || ""}${item.category}`).filter(Boolean);
+  return `有，这套里已经有${itemNames.join("、")}。`;
+}
+
 function inferPreferencesFromText(input = {}) {
   const recent = cleanRecentMessages(input.recentMessages).map((message) => message.content).join(" ");
   const currentText = cleanText(input.current, 300);
@@ -144,28 +182,38 @@ function inferPreferencesFromText(input = {}) {
   ];
   const sceneMatch = occasionMatch ? [OCCASION_SCENES[occasionMatch[0]], []] : sceneRules.find(([, words]) => includesAny(words));
   const asksWhy = includesAny(["为什么", "为什么推荐", "推荐理由", "怎么搭", "合适吗"]);
-  const asksReroll = includesAny(["换一套", "再来一套", "下一套", "换个搭配"]);
-  const isNew = !Object.keys(current).length || includesAny(["重新推荐", "重新搭配", "换个场合", "另一套需求"]);
-  const styles = ALLOWED_STYLES.filter((style) => constraintText.includes(style)).slice(0, 3);
+  const asksReroll = includesAny(["换一套", "再来一套", "下一套", "换个搭配", "完整找一套", "完整找出一套", "整套重新推荐", "整套重新搭配", "全部重新搭", "全部重选", "从衣柜里完整"]);
+  const categoryAnswer = currentOutfitCategoryAnswer(input);
+  const isNew = !Object.keys(current).length || includesAny(["重新开始", "清空所有条件", "换个场合", "另一套需求"]);
+  const mentionedStyles = ALLOWED_STYLES.filter((style) => constraintText.includes(style)).slice(0, 3);
+  let styles = [...mentionedStyles];
   if (constraintText.includes("温柔") && !styles.includes("甜美")) styles.push("甜美");
   if (includesAny(["隆重", "精致", "有气质"]) && !styles.includes("优雅")) styles.push("优雅");
-  if (includesAny(["正式", "得体", "稳重"]) && !includesAny(["不要这么正式", "别太正式"])) {
-    if (!styles.includes("通勤")) styles.push("通勤");
+  const relaxFormality = includesAny(["不要这么正式", "别太正式", "轻松一点", "随意一点"]);
+  const raiseFormalityOneLevel = includesAny(["正式一点", "正式一些", "正式些", "更正式", "再正式", "稍微正式"]);
+  const requestsFormal = includesAny(["正式", "得体", "稳重"]) && !relaxFormality;
+  if (requestsFormal) {
+    // “正式一点”是在上一轮基础上调整：保留已确认风格，只移除直接冲突的“休闲”，并按场景补充标签。
+    if (!mentionedStyles.length) styles = (current.styles || []).filter((style) => style !== "休闲").slice(0, 2);
+    const formalOccasion = occasionMatch?.[0] || current.occasion || "";
+    const businessStyleContext = ["商务会议", "面试", "商务饭局"].includes(formalOccasion);
+    if (businessStyleContext && !styles.includes("通勤")) styles.push("通勤");
     if (!styles.includes("优雅")) styles.push("优雅");
   }
   if (includesAny(["清爽", "清新自然"]) && !styles.includes("清新")) styles.push("清新");
-  if (includesAny(["不要这么正式", "别太正式", "轻松一点", "随意一点"])) styles.splice(0, styles.length, "休闲", "简约");
-  const explicitFormality = includesAny(["不要这么正式", "别太正式", "轻松一点", "随意一点"]) ? "casual"
-    : includesAny(["黑领结", "非常正式", "隆重正式"]) ? "formal"
+  if (relaxFormality) styles.splice(0, styles.length, "休闲", "简约");
+  const explicitFormality = relaxFormality ? "casual"
+    : includesAny(["黑领结", "非常正式", "隆重正式", "正式晚宴", "颁奖", "典礼"]) ? "formal"
       : includesAny(["半正式", "鸡尾酒会"]) ? "semi_formal"
-        : includesAny(["正式", "得体", "稳重"]) ? "formal"
+        : raiseFormalityOneLevel ? raiseFormality(current, occasionMatch?.[0] || current.occasion)
+          : requestsFormal ? "semi_formal"
           : includesAny(["商务", "职业", "专业感"]) ? "business"
             : includesAny(["户外", "徒步", "登山", "露营"]) ? "outdoor"
               : includesAny(["运动", "跑步", "健身", "打球"]) ? "athletic" : "";
   const formalityPreference = explicitFormality || (!Object.keys(current).length && occasionMatch ? OCCASION_DEFAULT_FORMALITY[occasionMatch[0]] : "");
   const excludedCategories = [];
   [["半身裙", ["不要裙子", "不穿裙子", "不想穿裙子", "不想要裙子", "别推荐裙子", "不要半身裙"]], ["连衣裙", ["不要裙子", "不穿裙子", "不想穿裙子", "不想要裙子", "别推荐裙子", "不要连衣裙"]],
-    ["裤子", ["不要裤子", "不穿裤子"]], ["外套", ["不要外套", "不穿外套"]], ["鞋子", ["不要鞋", "不换鞋"]]
+    ["裤子", ["不要裤子", "不穿裤子"]], ["外套", ["不要外套", "不穿外套"]]
   ].forEach(([category, words]) => { if (includesAny(words)) excludedCategories.push(category); });
   const preferredCategories = [];
   if (!excludedCategories.includes("连衣裙") && constraintText.includes("连衣裙")) preferredCategories.push("连衣裙");
@@ -178,10 +226,12 @@ function inferPreferencesFromText(input = {}) {
   const warmthPreference = includesAny(["怕冷", "暖和", "保暖", "穿厚点"]) ? "warmer"
     : includesAny(["怕热", "凉快", "清凉", "穿薄点"]) ? "cooler" : "normal";
   const hasConstraint = Boolean(sceneMatch || occasionMatch || formalityPreference || styles.length || preferredCategories.length || excludedCategories.length || preferredColors.length || excludedColors.length || warmthPreference !== "normal");
+  const unresolvedItemReference = Boolean(/这件|这个|它/.test(input.current || "") && input.currentCategories?.length);
   const scene = sceneMatch ? sceneMatch[0] : "休闲";
-  const action = asksWhy ? "answer" : asksReroll ? "reroll" : "recommend";
-  const needsClarification = action === "recommend" && !input.followupUsed && !hasConstraint;
-  const clarificationQuestion = /这件|这个|它/.test(input.current || "") && input.currentCategories?.length
+  const action = asksWhy || categoryAnswer ? "answer" : asksReroll ? "reroll" : "recommend";
+  const needsClarification = action === "recommend" && !input.followupUsed
+    && (unresolvedItemReference || (!hasConstraint && !hasMeaningfulPreferences(current)));
+  const clarificationQuestion = unresolvedItemReference
     ? `你想调整${input.currentCategories.join("、")}中的哪一件？也可以直接点衣物下方的“换掉”。`
     : "今天主要是什么场合，或者想要什么风格？";
   return normalizePreferences({
@@ -196,7 +246,7 @@ function inferPreferencesFromText(input = {}) {
     warmthPreference: warmthPreference !== "normal" ? warmthPreference : undefined, needsClarification,
     question: needsClarification ? clarificationQuestion : "",
     summary: `${isNew ? "已理解你的需求" : "已按你的意见调整"}：${occasionMatch?.[0] || current.occasion || (sceneMatch ? scene : current.scene) || "休闲"}${styles.length ? `、${styles.join("、")}` : ""}`,
-    reply: asksWhy ? outfitExplanation(input, current) : asksReroll ? "可以，我保留刚才的条件，换一套真实衣橱搭配。" : ""
+    reply: categoryAnswer || (asksWhy ? outfitExplanation(input, current) : asksReroll ? "可以，我保留刚才的条件，换一套真实衣橱搭配。" : "")
   }, input.followupUsed, current);
 }
 
@@ -216,16 +266,24 @@ function reconcilePreferences(input = {}, raw = {}) {
     if (field === "warmthPreference") return rules.warmthPreference !== "normal";
     return false;
   };
-  fields.forEach((field) => {
-    const changedByCurrentTurn = hasContext ? !same(rules[field], current[field]) : initialSignal(field);
+  const ruleChanges = fields.map((field) => hasContext ? !same(rules[field], current[field]) : initialSignal(field));
+  const ruleChangedState = ruleChanges.some(Boolean);
+  fields.forEach((field, index) => {
+    const changedByCurrentTurn = ruleChanges[index];
     if (changedByCurrentTurn) result[field] = rules[field];
+    else if (hasContext && ruleChangedState) result[field] = current[field];
   });
   // 格式正确不代表语义正确：规则明确识别到“为什么/换一套/新限制”时，动作也要复核。
-  const ruleChangedState = fields.some((field) => hasContext ? !same(rules[field], current[field]) : initialSignal(field));
   if (rules.action !== "recommend" || ruleChangedState) result.action = rules.action;
+  const categoryAnswer = currentOutfitCategoryAnswer(input);
+  if (categoryAnswer) result.reply = categoryAnswer;
   if (rules.needsClarification) {
     result.needsClarification = true;
     result.question = rules.question;
+  } else if (ruleChangedState || hasMeaningfulPreferences(current)) {
+    // 已有受控状态足以推荐时，不能让模型再次退回通用追问。
+    result.needsClarification = false;
+    result.question = "";
   }
   return normalizePreferences({ ...result, mode: rules.mode }, input.followupUsed, input.contextPreferences);
 }
@@ -246,7 +304,7 @@ function requestText(message, previousMessage = "", followupUsed = false, contex
 }
 
 function promptForRequest(input) {
-  return `你是穿搭对话状态解析器，不选择或编造衣物。只返回JSON：{mode,action,scene,occasion,formality_preference,styles,preferred_categories,excluded_categories,preferred_colors,excluded_colors,warmth_preference,needsClarification,question,summary,reply}。action只能为recommend、answer、reroll：修改需求用recommend；询问当前搭配原因或是否合适用answer；只要求换一套且不改条件用reroll。answer时只能依据“当前搭配事实”回答，reply不超过80字，不得补充事实中没有的衣物、材质、品牌或效果；recommend和reroll可用一句自然话确认用户修改。mode只能为new或modify：用户明确重新开始才用new；对上一套提出更休闲、更正式、换品类、不要某颜色、太冷太热等意见必须用modify，并在当前状态基础上返回修改后的完整状态。scene是兼容用大场景，只能为休闲、通勤、约会、旅行、聚会、运动之一。occasion是具体场景，只能从${ALLOWED_OCCASIONS.join("、")}中选一个；“正式”是正式程度，不等于通勤，领导饭局应为商务饭局/聚会，婚礼应为婚礼宾客/聚会，徒步露营应归户外。formality_preference只能为casual、smart_casual、business、semi_formal、formal、athletic、outdoor之一。styles只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3项；“不要这么正式”应删除优雅/通勤并改为休闲或简约。preferred_categories和excluded_categories只能从上衣、裤子、半身裙、外套、连衣裙、鞋子中选；用户说裙子或裙装但未细分时返回连衣裙和半身裙。颜色使用简短中文；warmth_preference只能为warmer、cooler、normal。无法确定“这件”指哪件时才追问；其他已明确任一条件时不要机械追问。最近对话：${JSON.stringify(input.recentMessages || [])}；当前受控状态：${JSON.stringify(input.contextPreferences || {})}；当前搭配事实：${JSON.stringify(input.currentOutfitFacts || [])}；首次输入：${input.previous || "无"}；本次输入：${input.current}；followupUsed=${input.followupUsed}`;
+  return `你是穿搭对话状态解析器，不选择或编造衣物。只返回JSON：{mode,action,scene,occasion,formality_preference,styles,preferred_categories,excluded_categories,preferred_colors,excluded_colors,warmth_preference,needsClarification,question,summary,reply}。action只能为recommend、answer、reroll：修改需求用recommend；询问当前搭配原因、是否合适或当前搭配里有没有某类衣物用answer；只要求换一套且不改条件用reroll。answer时只能依据“当前搭配事实”回答，reply不超过80字，不得补充事实中没有的衣物、材质、品牌或效果；recommend和reroll可用一句自然话确认用户修改。mode只能为new或modify：用户明确重新开始才用new；对上一套提出更休闲、更正式、换品类、不要某颜色、太冷太热等意见必须用modify，并在当前状态基础上返回修改后的完整状态。“正式一点、更正式、再正式”等相对表达要基于当前正式度升一级，不得直接重置成formal；只有非常正式、正式晚宴、典礼等明确高正式需求才使用formal。scene是兼容用大场景，只能为休闲、通勤、约会、旅行、聚会、运动之一。occasion是具体场景，只能从${ALLOWED_OCCASIONS.join("、")}中选一个；“正式”是正式程度，不等于通勤，领导饭局应为商务饭局/聚会，婚礼应为婚礼宾客/聚会，徒步露营应归户外。formality_preference只能为casual、smart_casual、business、semi_formal、formal、athletic、outdoor之一。styles只能从韩系、清新、酷飒、简约、休闲、通勤、复古、甜美、运动、街头、优雅、度假中选最多3项；“不要这么正式”应删除优雅/通勤并改为休闲或简约。preferred_categories和excluded_categories只能从${ALLOWED_CATEGORIES.join("、")}中选；用户说裙子或裙装但未细分时返回连衣裙和半身裙。颜色使用简短中文；warmth_preference只能为warmer、cooler、normal。无法确定“这件”指哪件时才追问；其他已明确任一条件时不要机械追问。最近对话：${JSON.stringify(input.recentMessages || [])}；当前受控状态：${JSON.stringify(input.contextPreferences || {})}；当前搭配事实：${JSON.stringify(input.currentOutfitFacts || [])}；首次输入：${input.previous || "无"}；本次输入：${input.current}；followupUsed=${input.followupUsed}`;
 }
 
 module.exports = { ALLOWED_CATEGORIES, ALLOWED_FORMALITIES, ALLOWED_OCCASIONS, ALLOWED_SCENES, ALLOWED_STYLES, cleanRecentMessages, inferPreferencesFromText, normalizePreferences, promptForRequest, reconcilePreferences, requestText, shouldFallbackToRules };

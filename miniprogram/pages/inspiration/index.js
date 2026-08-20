@@ -1,6 +1,7 @@
 const api = require("../../services/api");
 const config = require("../../config");
 const weatherService = require("../../services/weather");
+const outfitDirectives = require("../../utils/outfit-directives");
 
 const statusText = { resolving: "正在读取公开信息", screenshot_required: "链接暂时无法读取，请上传截图", ready_to_analyze: "图片已准备好", analyzing: "AI 正在识别一套主穿搭", awaiting_confirmation: "请确认识别标签", ready: "已按当前衣橱完成匹配", failed: "本次识别未完成，可补充截图重试" };
 const mimeFromPath = (path) => /\.png(?:$|\?)/i.test(path) ? "image/png" : /\.webp(?:$|\?)/i.test(path) ? "image/webp" : "image/jpeg";
@@ -21,7 +22,7 @@ const preferenceTags = (preferences = {}) => [...new Set([
   preferences.warmthPreference === "warmer" ? "更保暖" : preferences.warmthPreference === "cooler" ? "更清凉" : ""
 ].filter(Boolean))];
 const relaxOptionsFor = (preferences = {}, recommendation = {}) => {
-  if (!recommendation.missingText || /鞋子/.test(recommendation.missingText)) return [];
+  if (!recommendation.missingText) return [];
   const options = [];
   const nextFormality = { formal: ["semi_formal", "放宽为半正式"], semi_formal: ["business", "放宽为商务"], business: ["smart_casual", "放宽为得体休闲"] }[preferences.formalityPreference];
   if (nextFormality) options.push({ key: "formality", value: nextFormality[0], label: nextFormality[1] });
@@ -136,41 +137,66 @@ Page({
   currentOutfitFacts() { return (this.context.currentItems || []).map((item) => ({ name: item.name, category: item.category, color: item.color, reasons: item.reasons || [] })); },
   previousUserMessage() { const users = this.data.messages.filter((message) => message.role === "user" && message.type === "text"); return users.length > 1 ? users[users.length - 2].text : ""; },
   applyItemDirectives(text) {
-    const locked = new Set(this.context.lockedItemIds || []); const excluded = new Set(this.context.excludedItemIds || []);
-    for (const clause of String(text).split(/[，,。；;、]/).map((part) => part.trim()).filter(Boolean)) {
-      for (const item of this.context.currentItems || []) {
-        if (!clause.includes(item.category) && !clause.includes(item.name)) continue;
-        if (/(保留|留下|不要换)/.test(clause)) { locked.add(String(item.id)); excluded.delete(String(item.id)); }
-        if (/(换掉|替换|不要|不喜欢)/.test(clause) && !/(不要换)/.test(clause)) { excluded.add(String(item.id)); locked.delete(String(item.id)); }
-      }
-    }
-    this.context.lockedItemIds = [...locked]; this.context.excludedItemIds = [...excluded];
+    return outfitDirectives.applyItemDirectives(text, this.context.currentItems, this.context.lockedItemIds, this.context.excludedItemIds);
   },
   async handleText(text, version) {
     const progressId = this.startProgress("正在理解你的需求…");
     try {
       const result = await api.understandOutfitRequest({ message: text, previousMessage: this.previousUserMessage(), followupUsed: this.context.followupUsed, contextPreferences: this.context.preferences, currentCategories: (this.context.currentItems || []).map((item) => item.category), currentOutfitFacts: this.currentOutfitFacts(), recentMessages: this.recentMessages().slice(0, -1), idempotencyKey: idempotencyKey("chat") });
       if (!this.isCurrent(version)) return;
-      const preferences = result.preferences || defaultPreferences(); this.context.preferences = preferences; this.context.followupUsed = this.context.followupUsed || preferences.needsClarification; this.applyItemDirectives(text);
+      const preferences = result.preferences || defaultPreferences();
+      const directives = this.applyItemDirectives(text);
+      if (["replace_category", "replace_all", "reset_selection"].includes(directives.selectionAction)) {
+        // 衣物级动作由当前真实衣物 ID 决定，不能被模型误判成问答或通用追问。
+        preferences.action = "recommend";
+        preferences.needsClarification = false;
+        preferences.question = "";
+        preferences.reply = directives.selectionAction === "replace_category"
+          ? `好的，保留其他衣物，只替换当前${directives.replacementCategories.join("和")}。`
+          : directives.selectionAction === "replace_all"
+            ? "可以，保留场景和风格条件，整套换一组真实衣物。"
+            : "好的，解除上一轮的衣物锁定，按当前场景重新选一整套。";
+        this.context.offset = 0;
+      }
+      this.context.preferences = preferences; this.context.followupUsed = this.context.followupUsed || preferences.needsClarification;
       if (preferences.needsClarification) return this.addAssistant(preferences.question);
       if (preferences.action === "answer") return this.addAssistant(preferences.reply || "我只能依据当前真实衣物和已显示的推荐理由回答。");
-      if (preferences.action === "reroll") { this.context.offset += 1; (this.context.currentItems || []).forEach((item) => { if (!this.context.lockedItemIds.includes(String(item.id))) this.context.excludedItemIds.push(String(item.id)); }); }
+      let pendingSelection = directives;
+      if (preferences.action === "reroll") {
+        this.context.offset += 1;
+        pendingSelection = {
+          ...directives,
+          excludedItemIds: [...new Set([...(directives.excludedItemIds || []), ...(this.context.currentItems || []).filter((item) => !(directives.lockedItemIds || []).includes(String(item.id))).map((item) => String(item.id))])]
+        };
+      }
       if (preferences.reply) this.addAssistant(preferences.reply);
       if (preferences.action === "recommend") this.showPreferenceState();
-      if (this.context.mode === "inspiration" && this.context.currentRecordId) await this.rematchInspiration(version); else await this.recommendFromText(version);
+      if (this.context.mode === "inspiration" && this.context.currentRecordId) await this.rematchInspiration(version, pendingSelection); else await this.recommendFromText(version, pendingSelection);
     } catch (error) { if (this.isCurrent(version)) this.addAssistant(error.message || "这次没有理解成功，请换一种说法再试。"); }
     finally { if (this.isCurrent(version)) this.endProgress(progressId); }
   },
-  async recommendFromText(version) {
+  async recommendFromText(version, pendingSelection = null) {
     const location = weatherService.loadLocation();
     if (!location) return this.addAssistant("需要先设置所在地区，我才能通过天气安全筛选。请到天气页选择地区后再回来重新开始对话。");
     const [weatherData, items] = await Promise.all([api.getWeather(location.districtCode || location.cityCode || location.provinceCode), api.listItems()]);
     if (!this.isCurrent(version)) return;
     const weather = weatherService.effectiveWeather(weatherData, location);
-    const preferences = { ...this.context.preferences, lockedItemIds: this.context.lockedItemIds, excludedItemIds: [...new Set(this.context.excludedItemIds)] };
+    const stableSelection = { currentItems: this.context.currentItems, lockedItemIds: this.context.lockedItemIds, excludedItemIds: this.context.excludedItemIds };
+    const selection = pendingSelection || stableSelection;
+    const preferences = {
+      ...this.context.preferences,
+      lockedItemIds: selection.lockedItemIds || [],
+      excludedItemIds: [...new Set(selection.excludedItemIds || [])],
+      replacementCategories: selection.replacementCategories || []
+    };
     const recommendation = weatherService.recommend(items, weather, preferences.scene || "休闲", this.context.offset, preferences);
-    this.context.mode = "outfit"; this.context.currentItems = (recommendation.items || []).map((item) => ({ ...item, reasons: [recommendation.reason] }));
-    this.appendMessage({ role: "assistant", type: "outfit", actionable: true, items: this.context.currentItems, reason: recommendation.reason, missingText: recommendation.missingText, relaxOptions: relaxOptionsFor(preferences, recommendation) });
+    const nextItems = (recommendation.items || []).map((item) => ({ ...item, reasons: [recommendation.reason] }));
+    const settled = outfitDirectives.settleItemSelection(stableSelection, selection, nextItems, recommendation.complete);
+    this.context.mode = "outfit";
+    this.context.currentItems = settled.currentItems;
+    this.context.lockedItemIds = settled.lockedItemIds;
+    this.context.excludedItemIds = settled.excludedItemIds;
+    this.appendMessage({ role: "assistant", type: "outfit", actionable: true, items: settled.committed ? nextItems : [], reason: recommendation.reason, missingText: recommendation.missingText, relaxOptions: relaxOptionsFor(preferences, recommendation) });
   },
   async relaxPreference(event) {
     if (this.data.busy) return;
@@ -191,13 +217,18 @@ Page({
     catch (error) { if (this.isCurrent(version)) this.addAssistant(error.message || "放宽后仍没有找到合适的完整搭配。"); }
     finally { if (this.isCurrent(version)) this.setData({ busy: false }); }
   },
-  async rematchInspiration(version) {
-    const record = await api.rematchInspiration(this.context.currentRecordId, { preferences: this.context.preferences, lockedItemIds: this.context.lockedItemIds, excludedItemIds: [...new Set(this.context.excludedItemIds)] });
-    if (this.isCurrent(version)) this.appendInspirationRecommendation(recordView(record));
+  async rematchInspiration(version, pendingSelection = null) {
+    const stableSelection = { currentItems: this.context.currentItems, lockedItemIds: this.context.lockedItemIds, excludedItemIds: this.context.excludedItemIds };
+    const selection = pendingSelection || stableSelection;
+    const record = await api.rematchInspiration(this.context.currentRecordId, { preferences: this.context.preferences, lockedItemIds: selection.lockedItemIds || [], excludedItemIds: [...new Set(selection.excludedItemIds || [])] });
+    if (this.isCurrent(version)) this.appendInspirationRecommendation(recordView(record), selection);
   },
-  appendInspirationRecommendation(record) {
+  appendInspirationRecommendation(record, pendingSelection = null) {
     const items = (record.matches || []).map((group) => group.selected ? ({ ...group.selected.item, reasons: group.selected.reasons || [], slot: group.slot }) : null).filter(Boolean);
-    this.context.mode = "inspiration"; this.context.currentRecordId = record.id; this.context.currentItems = items; this.setData({ record });
+    const stableSelection = { currentItems: this.context.currentItems, lockedItemIds: this.context.lockedItemIds, excludedItemIds: this.context.excludedItemIds };
+    const selection = pendingSelection || stableSelection;
+    const settled = outfitDirectives.settleItemSelection(stableSelection, selection, items, items.length > 0 && !(record.missing || []).length);
+    this.context.mode = "inspiration"; this.context.currentRecordId = record.id; this.context.currentItems = settled.currentItems; this.context.lockedItemIds = settled.lockedItemIds; this.context.excludedItemIds = settled.excludedItemIds; this.setData({ record });
     this.appendMessage({ role: "assistant", type: "inspiration", actionable: true, matches: record.matches || [], missingText: (record.missing || []).join("、") });
   },
   keepItem(event) { this.updateItemChoice(event.currentTarget.dataset.itemId, false); },

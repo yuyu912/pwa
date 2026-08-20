@@ -295,7 +295,7 @@ const SCENE_PROFILES = {
   "通勤": { styles: ["通勤", "简约", "优雅"], details: ["收腰", "束腰", "系带"], categories: ["衬衫", "针织衫", "裤子", "半身裙", "外套"] },
   "旅行": { styles: ["休闲", "简约", "度假", "运动"], details: [], categories: ["上衣", "T恤", "针织衫", "裤子", "外套"] },
   "聚会": { styles: ["优雅", "甜美", "酷飒", "复古", "街头"], details: ["荷叶边", "花边", "蕾丝", "镂空", "蝴蝶结", "收腰", "露肩", "一字肩"], categories: ["连衣裙", "半身裙", "外套"] },
-  "运动": { styles: ["运动", "休闲"], details: [], categories: ["上衣", "T恤", "裤子", "外套", "鞋子"] },
+  "运动": { styles: ["运动", "休闲"], details: [], categories: ["上衣", "T恤", "裤子", "外套"] },
   "休闲": { styles: ["休闲", "简约", "清新", "韩系"], details: [], categories: ["上衣", "T恤", "针织衫", "裤子", "半身裙"] }
 };
 const OCCASION_PROFILES = {
@@ -314,25 +314,19 @@ const OCCASION_PROFILES = {
   "旅行观光": { styles: ["休闲", "简约", "度假"], categories: ["上衣", "裤子", "外套"], functions: ["轻便", "透气"] },
   "城市漫步": { styles: ["休闲", "街头", "清新"], categories: ["上衣", "裤子", "外套"], functions: ["轻便", "透气"] },
   "海边度假": { styles: ["度假", "清新", "甜美"], categories: ["连衣裙", "上衣", "裤子", "半身裙"], functions: ["透气", "轻便", "防晒"] },
-  "徒步登山": { styles: ["运动", "休闲"], categories: ["上衣", "裤子", "外套", "鞋子"], functions: ["透气", "速干", "弹力", "防风", "防水", "耐磨"] },
-  "露营": { styles: ["运动", "休闲", "度假"], categories: ["上衣", "裤子", "外套", "鞋子"], functions: ["防风", "防水", "保暖", "耐磨"] },
-  "跑步": { styles: ["运动"], categories: ["上衣", "裤子", "鞋子"], functions: ["透气", "速干", "弹力", "轻便"] },
-  "健身": { styles: ["运动"], categories: ["上衣", "裤子", "鞋子"], functions: ["透气", "速干", "弹力"] },
-  "球类运动": { styles: ["运动"], categories: ["上衣", "裤子", "鞋子"], functions: ["透气", "速干", "弹力", "轻便"] },
-  "骑行": { styles: ["运动", "休闲"], categories: ["上衣", "裤子", "外套", "鞋子"], functions: ["透气", "速干", "弹力", "防风", "轻便"] },
-  "滑雪": { styles: ["运动"], categories: ["上衣", "裤子", "外套", "鞋子"], functions: ["防风", "防水", "保暖", "耐磨"] },
-  "水上运动": { styles: ["运动", "度假"], categories: ["上衣", "裤子", "鞋子"], functions: ["速干", "弹力", "轻便", "防晒"] },
+  "徒步登山": { styles: ["运动", "休闲"], categories: ["上衣", "裤子", "外套"], functions: ["透气", "速干", "弹力", "防风", "防水", "耐磨"] },
+  "露营": { styles: ["运动", "休闲", "度假"], categories: ["上衣", "裤子", "外套"], functions: ["防风", "防水", "保暖", "耐磨"] },
+  "跑步": { styles: ["运动"], categories: ["上衣", "裤子"], functions: ["透气", "速干", "弹力", "轻便"] },
+  "健身": { styles: ["运动"], categories: ["上衣", "裤子"], functions: ["透气", "速干", "弹力"] },
+  "球类运动": { styles: ["运动"], categories: ["上衣", "裤子"], functions: ["透气", "速干", "弹力", "轻便"] },
+  "骑行": { styles: ["运动", "休闲"], categories: ["上衣", "裤子", "外套"], functions: ["透气", "速干", "弹力", "防风", "轻便"] },
+  "滑雪": { styles: ["运动"], categories: ["上衣", "裤子", "外套"], functions: ["防风", "防水", "保暖", "耐磨"] },
+  "水上运动": { styles: ["运动", "度假"], categories: ["上衣", "裤子"], functions: ["速干", "弹力", "轻便", "防晒"] },
   "毕业典礼": { styles: ["优雅", "通勤", "简约"], categories: ["连衣裙", "上衣", "裤子", "半身裙", "外套"], functions: [] },
   "演出观展": { styles: ["优雅", "复古", "酷飒", "清新"], categories: ["连衣裙", "上衣", "裤子", "半身裙"], functions: [] },
   "亲子出行": { styles: ["休闲", "简约", "清新"], categories: ["上衣", "裤子", "外套"], functions: ["轻便", "透气", "弹力"] }
 };
 const FORMALITY_LEVELS = { "休闲": 0, "轻商务": 1, "商务": 2, "半正式": 3, "正式": 4 };
-const SHOE_REQUIRED_OCCASIONS = new Set(["徒步登山", "露营", "跑步", "健身", "球类运动", "骑行", "滑雪", "水上运动"]);
-
-function requiresShoes(preferences = {}) {
-  return SHOE_REQUIRED_OCCASIONS.has(preferences.occasion)
-    || ["athletic", "outdoor"].includes(preferences.formalityPreference);
-}
 
 function sceneProfileScore(item, scene) {
   const profile = SCENE_PROFILES[scene] || SCENE_PROFILES["休闲"];
@@ -495,7 +489,56 @@ function scoreCombination(items, scene, weather, preferences = {}) {
   return { score, reasons, sceneTier: sceneFit.tier, sceneMatches: sceneFit.explicitMatches, preferenceMatches: styleMatches + formalityMatches + occasionMatches, formalityMatches };
 }
 
-function buildCombinations(tops, bottoms, dresses, outerwear, shoes, weather, scene, preferences = {}) {
+function coreCombinationKey(items) {
+  return items
+    .filter((item) => !["外套", "夹克", "风衣"].includes(item.category))
+    .map((item) => String(item.id))
+    .sort()
+    .join("|");
+}
+
+function hasFullyDifferentCore(left, right) {
+  const leftIds = new Set(coreCombinationKey(left).split("|").filter(Boolean));
+  const rightIds = new Set(coreCombinationKey(right).split("|").filter(Boolean));
+  return leftIds.size > 0 && rightIds.size > 0 && [...leftIds].every((id) => !rightIds.has(id));
+}
+
+function prioritizeDistinctCoreCombinations(combinations, limit = 72) {
+  const unique = [];
+  const seenCores = new Set();
+  combinations.forEach((combination) => {
+    const key = coreCombinationKey(combination.items);
+    if (!key || seenCores.has(key) || unique.length >= limit) return;
+    seenCores.add(key);
+    unique.push(combination);
+  });
+  return unique;
+}
+
+function strictFormalityRequired(preference) {
+  return ["business", "semi_formal", "formal"].includes(preference);
+}
+
+const cleanItemIds = (values) => new Set((values || []).map((value) => String(value)).filter(Boolean));
+
+function includesReplacementCategories(items, replacementCategories) {
+  return [...replacementCategories].every((category) => items.some((item) => item.category === category));
+}
+
+function categoryCandidates(items, categories, preferences = {}) {
+  const lockedItemIds = cleanItemIds(preferences.lockedItemIds);
+  const replacementCategories = new Set(preferences.replacementCategories || []);
+  const matched = items.filter((item) => categories.includes(item.category));
+  const required = matched.filter((item) => lockedItemIds.has(String(item.id)) || replacementCategories.has(item.category));
+  return [...new Map([...matched.slice(0, 12), ...required].map((item) => [String(item.id), item])).values()];
+}
+
+function combinationFormalitySafe(items, preference) {
+  return !strictFormalityRequired(preference)
+    || items.every((item) => formalityMatch(item, preference) > 0);
+}
+
+function buildCombinations(tops, bottoms, dresses, outerwear, weather, scene, preferences = {}) {
   const bases = dresses.map((dress) => [dress]);
   tops.forEach((top) => bottoms.forEach((bottom) => bases.push([top, bottom])));
   const combinations = [];
@@ -507,41 +550,76 @@ function buildCombinations(tops, bottoms, dresses, outerwear, shoes, weather, sc
       outerwear.forEach((item) => combinations.push([...base, item]));
     } else combinations.push(base);
   });
-  const completeCombinations = requiresShoes(preferences)
-    ? combinations.flatMap((items) => shoes.map((shoe) => [...items, shoe]))
-    : combinations;
-  const weatherSafe = completeCombinations.filter((items) => combinationWeatherSafe(items, weather, preferences));
+  const weatherSafe = combinations.filter((items) => combinationWeatherSafe(items, weather, preferences));
+  const formalitySafe = weatherSafe.filter((items) => combinationFormalitySafe(items, preferences.formalityPreference));
+  const lockedItemIds = cleanItemIds(preferences.lockedItemIds);
+  const locked = lockedItemIds.size
+    ? formalitySafe.filter((items) => [...lockedItemIds].every((id) => items.some((item) => String(item.id) === id)))
+    : formalitySafe;
+  const replacementCategories = new Set(preferences.replacementCategories || []);
+  const weatherReplacementSafe = replacementCategories.size
+    ? weatherSafe.filter((items) => includesReplacementCategories(items, replacementCategories))
+    : weatherSafe;
+  const formalityReplacementSafe = replacementCategories.size
+    ? formalitySafe.filter((items) => includesReplacementCategories(items, replacementCategories))
+    : formalitySafe;
+  const replacementSafe = replacementCategories.size
+    ? locked.filter((items) => includesReplacementCategories(items, replacementCategories))
+    : locked;
   const preferredCategories = new Set(preferences.preferredCategories || []);
   const preferred = preferredCategories.size
-    ? weatherSafe.filter((items) => items.some((item) => preferredCategories.has(item.category)))
+    ? replacementSafe.filter((items) => items.some((item) => preferredCategories.has(item.category)))
     : [];
-  const preferredPool = preferred.length ? preferred : weatherSafe;
-  const lockedItemIds = new Set(preferences.lockedItemIds || []);
-  const locked = lockedItemIds.size
-    ? preferredPool.filter((items) => [...lockedItemIds].every((id) => items.some((item) => item.id === id)))
-    : [];
-  // 锁定单品和目标品类都只在天气安全组合内生效；目标无安全候选时才降级。
-  const scored = (locked.length ? locked : preferredPool).map((items) => ({ items, ...scoreCombination(items, scene, weather, preferences) }));
+  const candidatePool = preferred.length ? preferred : replacementSafe;
+  // 硬条件必须在排序前全部通过；品类偏好只在硬条件安全池内优先，不能反过来挡掉合格组合。
+  const scored = candidatePool.map((items) => ({ items, ...scoreCombination(items, scene, weather, preferences) }));
   // 用户本轮明确提出的风格比旧场景标签更具体；有匹配衣物时，先满足该反馈，再比较场景和天气内的协调分。
-  return scored.sort((left, right) => right.preferenceMatches - left.preferenceMatches || right.sceneTier - left.sceneTier || right.sceneMatches - left.sceneMatches || right.score - left.score || left.items.map((item) => item.id).join("|").localeCompare(right.items.map((item) => item.id).join("|")))
-    .slice(0, 3);
+  const sorted = scored.sort((left, right) => right.preferenceMatches - left.preferenceMatches || right.sceneTier - left.sceneTier || right.sceneMatches - left.sceneMatches || right.score - left.score || left.items.map((item) => item.id).join("|").localeCompare(right.items.map((item) => item.id).join("|")));
+  return {
+    ranked: sorted,
+    weatherSafeCount: weatherSafe.length,
+    formalitySafeCount: formalitySafe.length,
+    lockedSafeCount: locked.length,
+    replacementWeatherSafeCount: weatherReplacementSafe.length,
+    replacementFormalitySafeCount: formalityReplacementSafe.length,
+    replacementSafeCount: replacementSafe.length
+  };
+}
+
+function replacementFailureReason(replacementCategories, counts, preferences = {}) {
+  const categoryText = [...replacementCategories].join("或");
+  const measure = [...replacementCategories].every((category) => ["裤子", "半身裙", "连衣裙"].includes(category)) ? "条" : "件";
+  const candidateText = `${counts.candidateCount}${measure}未被排除的${categoryText}`;
+  if (!counts.candidateCount) return `当前衣橱没有可用于本轮替换的其他${categoryText}，因此保留了上一套搭配。`;
+  if (!counts.suitableCount) return `系统找到了${candidateText}，但都没有通过当前温度和用户明确排除条件的单件筛选，因此保留了上一套搭配。`;
+  if (!counts.weatherSafeCount) return `系统找到了${candidateText}，其中${counts.suitableCount}${measure}通过单件筛选，但与当前保留衣物组成整套后都没有通过今日温度和温差校验，因此保留了上一套搭配。`;
+  if (!counts.formalitySafeCount) return `系统找到了${candidateText}，也能组成天气安全的搭配，但没有一套达到${preferences.occasion || "当前场景"}要求的正式度，因此保留了上一套搭配。`;
+  return `系统找到了${candidateText}，但没有一套能同时保留当前其他衣物并完成${categoryText}替换，因此保留了上一套搭配。`;
 }
 
 function recommend(items, weather, scene = "休闲", offset = 0, preferences = {}) {
   // 先建立天气安全候选，再在安全框架内处理场景、风格、颜色和用户偏好。
   const excludedCategories = new Set(preferences.excludedCategories || []);
   const excludedColors = new Set((preferences.excludedColors || []).map(colorKey));
-  const excludedItemIds = new Set(preferences.excludedItemIds || []);
-  const suitable = items.filter((item) => isExtremeWeatherCompatible(item, weather)
+  const excludedItemIds = cleanItemIds(preferences.excludedItemIds);
+  const lockedItemIds = cleanItemIds(preferences.lockedItemIds);
+  const replacementCategories = new Set(preferences.replacementCategories || []);
+  const replacementCandidates = items.filter((item) => replacementCategories.has(item.category)
+    && item.category !== "鞋子"
     && !excludedCategories.has(item.category)
-    && !excludedItemIds.has(item.id)
+    && !excludedItemIds.has(String(item.id))
     && !excludedColors.has(colorKey(item.color)));
+  const suitable = items.filter((item) => item.category !== "鞋子"
+    && isExtremeWeatherCompatible(item, weather)
+    && !excludedCategories.has(item.category)
+    && !excludedItemIds.has(String(item.id))
+    && !excludedColors.has(colorKey(item.color)));
+  const suitableReplacementCount = suitable.filter((item) => replacementCategories.has(item.category)).length;
   const ranked = sceneFirst(suitable, scene);
-  const dresses = ranked.filter((item) => item.category === "连衣裙").slice(0, 12);
-  const tops = ranked.filter((item) => ["上衣", "T恤", "衬衫", "针织衫"].includes(item.category)).slice(0, 12);
-  const bottoms = ranked.filter((item) => ["裤子", "半身裙"].includes(item.category)).slice(0, 12);
-  const outerwear = ranked.filter((item) => ["外套", "夹克", "风衣"].includes(item.category)).slice(0, 12);
-  const shoes = ranked.filter((item) => item.category === "鞋子").slice(0, 12);
+  const dresses = categoryCandidates(ranked, ["连衣裙"], preferences);
+  const tops = categoryCandidates(ranked, ["上衣", "T恤", "衬衫", "针织衫"], preferences);
+  const bottoms = categoryCandidates(ranked, ["裤子", "半身裙"], preferences);
+  const outerwear = categoryCandidates(ranked, ["外套", "夹克", "风衣"], preferences);
   const missing = [];
   if (!dresses.length && (!tops.length || !bottoms.length)) {
     if (!tops.length && !bottoms.length) missing.push("适合当前温度的衣物");
@@ -549,37 +627,72 @@ function recommend(items, weather, scene = "休闲", offset = 0, preferences = {
     if (!bottoms.length) missing.push("下装或连衣裙");
   }
   if (outerwearMode(weather) === "required" && !outerwear.length) missing.push("外套");
-  if (requiresShoes(preferences) && !shoes.length) missing.push(`适合${preferences.occasion || scene}的鞋子`);
-  const combinations = buildCombinations(tops, bottoms, dresses, outerwear, shoes, weather, scene, preferences);
-  const selected = combinations.length ? combinations[offset % combinations.length] : null;
+  const candidateResult = buildCombinations(tops, bottoms, dresses, outerwear, weather, scene, preferences);
+  const combinations = prioritizeDistinctCoreCombinations(candidateResult.ranked, 72);
+  const currentCoreItemIds = cleanItemIds(preferences.currentCoreItemIds);
+  const excludedCoreKeys = new Set(preferences.excludedCoreKeys || []);
+  const differentFromCurrent = currentCoreItemIds.size
+    ? combinations.filter((combination) => [...currentCoreItemIds].every((id) => !coreCombinationKey(combination.items).split("|").includes(id)))
+    : combinations;
+  const unseen = differentFromCurrent.filter((combination) => !excludedCoreKeys.has(coreCombinationKey(combination.items)));
+  const selectable = unseen.length ? unseen : differentFromCurrent;
+  const selected = selectable.length ? selectable[offset % selectable.length] : null;
   const occasionText = preferences.occasion || `${scene}场景`;
   const selectedCandidateItems = selected?.items || [];
-  const strictFormality = ["business", "semi_formal", "formal"].includes(preferences.formalityPreference);
-  const formalityGap = strictFormality && selectedCandidateItems.length && Number(selected?.formalityMatches || 0) < selectedCandidateItems.length;
-  const selectedItems = formalityGap ? [] : selectedCandidateItems;
+  const strictFormality = strictFormalityRequired(preferences.formalityPreference);
+  const formalityGap = strictFormality && candidateResult.weatherSafeCount > 0 && candidateResult.formalitySafeCount === 0;
+  const lockedGap = lockedItemIds.size > 0 && candidateResult.formalitySafeCount > 0 && candidateResult.lockedSafeCount === 0;
+  const replacementGap = replacementCategories.size > 0 && candidateResult.replacementSafeCount === 0;
+  const replacementDiagnostics = {
+    categories: [...replacementCategories],
+    candidateCount: replacementCandidates.length,
+    suitableCount: suitableReplacementCount,
+    weatherSafeCount: candidateResult.replacementWeatherSafeCount,
+    formalitySafeCount: candidateResult.replacementFormalitySafeCount,
+    lockedSafeCount: candidateResult.replacementSafeCount
+  };
+  const selectedItems = selectedCandidateItems;
+  const selectedCoreKey = selected ? coreCombinationKey(selected.items) : "";
+  const alternativeCount = selected
+    ? combinations.filter((combination) => coreCombinationKey(combination.items) !== selectedCoreKey && hasFullyDifferentCore(selected.items, combination.items)).length
+    : 0;
+  const suitableBreakdown = {
+    tops: suitable.filter((item) => ["上衣", "T恤", "衬衫", "针织衫"].includes(item.category)).length,
+    bottoms: suitable.filter((item) => ["裤子", "半身裙"].includes(item.category)).length,
+    dresses: suitable.filter((item) => item.category === "连衣裙").length,
+    outerwear: suitable.filter((item) => ["外套", "夹克", "风衣"].includes(item.category)).length
+  };
   const sceneMatchedCount = selected?.sceneMatches || 0;
   const coordinationReasons = selected?.reasons.filter((reason) => !["颜色关系较弱", "多件图案视觉重点较多", "核心风格缺少呼应"].includes(reason)).slice(0, 3) || [];
   const preferredCategories = preferences.preferredCategories || [];
   const preferredCategoryMatched = selectedItems.some((item) => preferredCategories.includes(item.category));
   if (preferredCategoryMatched) coordinationReasons.unshift(`优先满足你想穿的${preferredCategories.join("或")}`);
-  else if (preferredCategories.length && combinations.length) missing.push(`当前天气下没有安全的${preferredCategories.join("或")}组合`);
-  if (formalityGap) missing.push(`衣橱里没有符合${occasionText}正式度的完整搭配`);
-  if (!selected) missing.push("符合当前天气框架的完整搭配");
+  else if (preferredCategories.length && selected) coordinationReasons.unshift(`当前天气和正式度下没有安全的${preferredCategories.join("或")}组合，先提供其他完整搭配`);
+  if (replacementGap) missing.push(`能保留当前其他衣物的其他${[...replacementCategories].join("或")}`);
+  else if (formalityGap) missing.push(`衣橱里没有符合${occasionText}正式度的完整搭配`);
+  else if (lockedGap) missing.push("能保留当前其他衣物的安全替换组合");
+  if (!selected && !replacementGap && !formalityGap && !lockedGap) missing.push("符合当前天气框架的完整搭配");
   return {
     items: selectedItems,
     outfitCount: combinations.length,
+    alternativeCount,
+    selectedCoreKey,
     suitableCount: suitable.length,
+    suitableBreakdown,
+    replacementDiagnostics,
     missing,
     // WXML 不能直接调用 Array.join，提前生成展示文本，避免只出现空的“还缺什么”卡片。
     missingText: missing.join("、"),
     complete: missing.length === 0 && Boolean(selected),
-    reason: formalityGap
+    reason: replacementGap
+      ? replacementFailureReason(replacementCategories, replacementDiagnostics, preferences)
+      : formalityGap
       ? `当前衣橱没有同时符合${occasionText}正式度和天气条件的完整组合，因此没有用休闲衣物冒充正式穿搭。`
+      : lockedGap
+      ? `当前衣橱没有能保留当前其他衣物、同时通过天气条件的替换组合，因此没有返回原来的衣物或偷偷改掉已保留单品。`
       : selected
       ? `${sceneMatchedCount === selectedItems.length ? `先按${occasionText}选择衣物，再通过天气安全筛选` : `衣橱没有整套明确标注为${occasionText}的衣物，已结合现有场景、正式度、风格和功能标签选择接近款并通过天气安全筛选`}${coordinationReasons.length ? `；${coordinationReasons.join("；")}` : ""}。`
-      : requiresShoes(preferences) && !shoes.length
-        ? `服装部分会继续按${occasionText}和天气筛选，但衣橱里还没有鞋子，因此暂不把它称为完整穿搭。请先在衣橱录入鞋子。`
-        : `当前衣橱没有通过今日温度、温差和风雨条件的完整组合，未返回不安全的替代穿搭。`
+      : `当前衣橱没有通过今日温度、温差和风雨条件的完整组合，未返回不安全的替代穿搭。`
   };
 }
 

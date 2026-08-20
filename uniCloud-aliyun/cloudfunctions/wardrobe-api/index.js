@@ -13,7 +13,7 @@ const { buildCityTrend, buildOutfitCandidates, buildStyleProfile } = require("./
 
 const now = () => new Date().toISOString();
 // 每次关键云端修复更新构建号；健康检查可以确认服务空间实际运行的是哪一版代码。
-const BUILD_ID = "2026-08-19-verified-context-shoe-agent-v82";
+const BUILD_ID = "2026-08-20-relative-formality-agent-v87";
 const OUTFIT_VISION_MODEL = process.env.QWEN_VL_MODEL || "qwen3-vl-flash-2026-01-22";
 const OUTFIT_IMAGE_EDIT_MODEL = "qwen-image-2.0-pro-2026-06-22";
 const visionProvider = () => cloud._test.visionProviderConfig();

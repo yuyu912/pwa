@@ -16,7 +16,7 @@
       <text class="temperature-range">可调整范围 −30°C 至 50°C</text>
       <button class="restore" bindtap="restoreLiveWeather">恢复实时天气</button>
     </view>
-    <view class="card"><text class="label">衣橱适配结果</text><text class="title">找到 {{recommendation.suitableCount}} 件适合今天的衣物</text><view wx:if="{{recommendation.items.length}}" class="item-list"><text wx:for="{{recommendation.items}}" wx:key="id" class="item-pill">{{item.name}}</text></view><text wx:else class="body">暂未找到完整搭配。</text></view>
+    <view class="card"><text class="label">衣橱适配结果</text><text class="title">单件天气初筛通过 {{recommendation.suitableCount}} 件</text><text class="body">上装 {{recommendation.suitableBreakdown.tops}} · 下装 {{recommendation.suitableBreakdown.bottoms}} · 连衣裙 {{recommendation.suitableBreakdown.dresses}} · 外套 {{recommendation.suitableBreakdown.outerwear}}</text><text class="body" wx:if="{{recommendation.items.length}}">天气安全完整候选 {{recommendation.outfitCount}} 套</text><view wx:if="{{recommendation.items.length}}" class="item-list"><text wx:for="{{recommendation.items}}" wx:key="id" class="item-pill">{{item.name}}</text></view><text wx:else class="body">暂未找到完整搭配。</text></view>
     <view wx:if="{{recommendation.missing.length}}" class="card warning"><text class="label">还缺什么</text><text class="body">{{recommendation.missingText}}</text></view>
     <button class="primary" bindtap="toOutfit">按这个天气搭配</button>
     </block>

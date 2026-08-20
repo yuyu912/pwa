@@ -15,6 +15,10 @@ vm.runInNewContext(weatherSource, {
   require: () => ({ areaList: { province_list: {}, city_list: {}, county_list: {} } })
 });
 const { colorRelationship, recommend } = weatherModule.exports;
+const directiveSource = fs.readFileSync(new URL("../miniprogram/utils/outfit-directives.js", import.meta.url), "utf8");
+const directiveModule = { exports: {} };
+vm.runInNewContext(directiveSource, { module: directiveModule, exports: directiveModule.exports, String, Set, Array });
+const { applyItemDirectives, settleItemSelection } = directiveModule.exports;
 const capsuleSource = fs.readFileSync(new URL("../miniprogram/utils/capsule-plan.js", import.meta.url), "utf8");
 const capsuleModule = { exports: {} };
 vm.runInNewContext(capsuleSource, { module: capsuleModule, exports: capsuleModule.exports, Number, Array });
@@ -38,6 +42,9 @@ const homeMarkup = fs.readFileSync(new URL("../miniprogram/pages/home/index.wxml
 const itemDetailMarkup = fs.readFileSync(new URL("../miniprogram/pages/item-detail/index.wxml", import.meta.url), "utf8");
 const accountMarkup = fs.readFileSync(new URL("../miniprogram/pages/account/index.wxml", import.meta.url), "utf8");
 const galleryMarkup = fs.readFileSync(new URL("../miniprogram/pages/outfit-gallery/index.wxml", import.meta.url), "utf8");
+const todayOutfitMarkup = fs.readFileSync(new URL("../miniprogram/pages/today-outfit/index.wxml", import.meta.url), "utf8");
+const todayOutfitSource = fs.readFileSync(new URL("../miniprogram/pages/today-outfit/index.js", import.meta.url), "utf8");
+const weatherMarkup = fs.readFileSync(new URL("../miniprogram/pages/weather/index.wxml", import.meta.url), "utf8");
 let wardrobePage;
 vm.runInNewContext(wardrobeSource, {
   require: (specifier) => specifier.includes("wardrobe-filter") ? { filterWardrobe, countAdvancedFilters } : {},
@@ -218,7 +225,54 @@ test("正式场景没有足够正式衣物时报告缺口而不是用休闲款�
   assert.match(result.reason, /没有用休闲衣物冒充正式穿搭/);
 });
 
-test("徒步场景优先用户确认过户外功能的衣物组合", () => {
+test("正式组合逐件校验且不能用一件高分正装抵消休闲单品", () => {
+  const result = structuredClone(recommend([
+    { id: "formal-top", name: "正式西装上衣", category: "上衣", season: "多季", thickness: "适中", formality: "正式", styles: ["通勤"], scenes: ["通勤"] },
+    { id: "casual-jeans", name: "休闲牛仔裤", category: "裤子", season: "多季", thickness: "适中", formality: "休闲", styles: ["休闲"], scenes: ["休闲"] }
+  ], outfitWeather, "通勤", 0, { occasion: "商务会议", formalityPreference: "formal" }));
+  assert.deepEqual(result.items, []);
+  assert.match(result.missingText, /没有符合商务会议正式度/);
+});
+
+test("聚会半正式应跳过不合格裤装并主动推荐合格裙装", () => {
+  const result = structuredClone(recommend([
+    { id: "casual-top", name: "聚会休闲上衣", category: "上衣", season: "多季", thickness: "适中", formality: "休闲", styles: ["优雅"], scenes: ["聚会"] },
+    { id: "casual-pants", name: "聚会休闲长裤", category: "裤子", season: "多季", thickness: "适中", formality: "休闲", styles: ["优雅"], scenes: ["聚会"] },
+    { id: "formal-dress", name: "收腰连衣裙", category: "连衣裙", season: "多季", thickness: "适中", formality: "半正式", styles: ["优雅"], scenes: ["约会"] }
+  ], { temperature: 25, low: 24, high: 26, condition: "晴" }, "聚会", 0, {
+    occasion: "朋友聚会", formalityPreference: "semi_formal", styles: ["优雅"]
+  }));
+  assert.deepEqual(result.items.map((item) => item.id), ["formal-dress"]);
+  assert.equal(result.complete, true);
+  assert.doesNotMatch(result.missingText, /没有符合朋友聚会正式度/);
+});
+
+test("裙装软偏好不应挡掉正式度合格的裤装", () => {
+  const result = structuredClone(recommend([
+    { id: "casual-dress", name: "休闲连衣裙", category: "连衣裙", season: "多季", thickness: "适中", formality: "休闲", styles: ["优雅"], scenes: ["聚会"] },
+    { id: "formal-top", name: "半正式衬衫", category: "上衣", season: "多季", thickness: "适中", formality: "半正式", styles: ["优雅"], scenes: ["聚会"] },
+    { id: "formal-pants", name: "半正式长裤", category: "裤子", season: "多季", thickness: "适中", formality: "半正式", styles: ["优雅"], scenes: ["聚会"] }
+  ], { temperature: 25, low: 24, high: 26, condition: "晴" }, "聚会", 0, {
+    occasion: "朋友聚会", formalityPreference: "semi_formal", styles: ["优雅"], preferredCategories: ["连衣裙", "半身裙"]
+  }));
+  assert.deepEqual(result.items.map((item) => item.id), ["formal-top", "formal-pants"]);
+  assert.equal(result.complete, true);
+  assert.match(result.reason, /没有安全的连衣裙或半身裙组合/);
+});
+
+test("锁定衣物硬要求优先于想穿连衣裙软偏好", () => {
+  const result = structuredClone(recommend([
+    { id: "locked-top", name: "保留半正式衬衫", category: "上衣", season: "多季", thickness: "适中", formality: "半正式", styles: ["优雅"], scenes: ["聚会"] },
+    { id: "formal-pants", name: "半正式长裤", category: "裤子", season: "多季", thickness: "适中", formality: "半正式", styles: ["优雅"], scenes: ["聚会"] },
+    { id: "formal-dress", name: "半正式连衣裙", category: "连衣裙", season: "多季", thickness: "适中", formality: "半正式", styles: ["优雅"], scenes: ["聚会"] }
+  ], { temperature: 25, low: 24, high: 26, condition: "晴" }, "聚会", 0, {
+    occasion: "朋友聚会", formalityPreference: "semi_formal", preferredCategories: ["连衣裙"], lockedItemIds: ["locked-top"]
+  }));
+  assert.deepEqual(result.items.map((item) => item.id), ["locked-top", "formal-pants"]);
+  assert.equal(result.complete, true);
+});
+
+test("徒步场景优先户外功能衣物但不把鞋子放进推荐", () => {
   const result = structuredClone(recommend([
     { id: "plain-top", name: "普通上衣", category: "上衣", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["运动"] },
     { id: "plain-pants", name: "普通长裤", category: "裤子", season: "多季", thickness: "适中", styles: ["休闲"], scenes: ["运动"] },
@@ -226,17 +280,27 @@ test("徒步场景优先用户确认过户外功能的衣物组合", () => {
     { id: "hike-pants", name: "弹力徒步裤", category: "裤子", season: "多季", thickness: "适中", formality: "户外", functionTags: ["弹力", "耐磨"], styles: ["运动"], scenes: ["运动"] },
     { id: "hike-shoes", name: "防滑徒步鞋", category: "鞋子", season: "多季", thickness: "适中", formality: "户外", functionTags: ["防水", "耐磨"], styles: ["运动"], scenes: ["运动"] }
   ], outfitWeather, "运动", 0, { occasion: "徒步登山", formalityPreference: "outdoor" }));
-  assert.deepEqual(result.items.map((item) => item.id), ["hike-top", "hike-pants", "hike-shoes"]);
+  assert.deepEqual(result.items.map((item) => item.id), ["hike-top", "hike-pants"]);
+  assert.equal(result.items.some((item) => item.category === "鞋子"), false);
 });
 
-test("户外或运动场景没有鞋子时不冒充完整穿搭", () => {
+test("户外或运动场景没有鞋子时仍返回服装搭配", () => {
   const result = structuredClone(recommend([
     { id: "sport-top", name: "速干上衣", category: "上衣", season: "多季", thickness: "适中", formality: "运动", functionTags: ["透气", "速干"], scenes: ["运动"] },
     { id: "sport-pants", name: "弹力长裤", category: "裤子", season: "多季", thickness: "适中", formality: "运动", functionTags: ["弹力"], scenes: ["运动"] }
   ], outfitWeather, "运动", 0, { occasion: "跑步", formalityPreference: "athletic" }));
-  assert.deepEqual(result.items, []);
-  assert.match(result.missingText, /适合跑步的鞋子/);
-  assert.match(result.reason, /还没有鞋子/);
+  assert.deepEqual(result.items.map((item) => item.id), ["sport-top", "sport-pants"]);
+  assert.doesNotMatch(result.missingText, /鞋子/);
+  assert.equal(result.complete, true);
+});
+
+test("水上运动不把鞋子设为完整穿搭硬门槛", () => {
+  const result = structuredClone(recommend([
+    { id: "swim-top", name: "速干防晒上衣", category: "上衣", season: "春夏", thickness: "薄", formality: "运动", functionTags: ["速干", "防晒"], styles: ["运动"], scenes: ["运动"] },
+    { id: "swim-bottom", name: "弹力运动短裤", category: "裤子", season: "春夏", thickness: "薄", formality: "运动", functionTags: ["速干", "弹力"], styles: ["运动"], scenes: ["运动"] }
+  ], { temperature: 27, low: 25, high: 29, condition: "晴" }, "运动", 0, { occasion: "水上运动", formalityPreference: "athletic" }));
+  assert.deepEqual(result.items.map((item) => item.id), ["swim-top", "swim-bottom"]);
+  assert.doesNotMatch(result.missingText, /鞋子/);
 });
 
 test("各场景先选择明确匹配的衣物组合再比较配色", () => {
@@ -255,7 +319,85 @@ test("换一套会在同类可选衣物中轮换", () => {
   const first = structuredClone(recommend(outfitItems, outfitWeather, "休闲", 0));
   const second = structuredClone(recommend(outfitItems, outfitWeather, "休闲", 1));
   assert.notDeepEqual(second.items.map((item) => item.id), first.items.map((item) => item.id));
-  assert.ok(second.outfitCount <= 3);
+  assert.ok(second.outfitCount >= 2);
+});
+
+test("天气搭配换一套必须同时更换分体搭配的上衣和下装", () => {
+  const weather = { temperature: 27, low: 22, high: 32, condition: "晴" };
+  const wardrobe = [
+    { id: "top-a", name: "休闲上衣A", category: "上衣", season: "春夏", thickness: "薄", scenes: ["休闲"] },
+    { id: "bottom-a", name: "休闲长裤A", category: "裤子", season: "春夏", thickness: "薄", scenes: ["休闲"] },
+    { id: "coat-a", name: "薄外套A", category: "外套", season: "春夏", thickness: "薄", scenes: ["休闲"] },
+    { id: "coat-b", name: "薄外套B", category: "外套", season: "春夏", thickness: "薄", scenes: ["休闲"] },
+    { id: "top-b", name: "备用上衣B", category: "上衣", season: "春夏", thickness: "薄", scenes: ["约会"] },
+    { id: "bottom-b", name: "备用长裤B", category: "裤子", season: "春夏", thickness: "薄", scenes: ["约会"] }
+  ];
+  const first = structuredClone(recommend(wardrobe, weather, "休闲", 0));
+  const coreIds = (result) => result.items.filter((item) => item.category !== "外套").map((item) => item.id).sort();
+  const second = structuredClone(recommend(wardrobe, weather, "休闲", 0, {
+    currentCoreItemIds: coreIds(first),
+    excludedCoreKeys: [first.selectedCoreKey]
+  }));
+  assert.equal(first.complete, true);
+  assert.equal(second.complete, true);
+  assert.equal(coreIds(second).some((id) => coreIds(first).includes(id)), false);
+});
+
+test("天气搭配没有第二组完整不同核心衣物时不把单换上衣冒充换一套", () => {
+  const result = structuredClone(recommend([
+    { id: "top-a", name: "休闲上衣A", category: "上衣", season: "多季", thickness: "薄", scenes: ["休闲"] },
+    { id: "top-b", name: "休闲上衣B", category: "上衣", season: "多季", thickness: "薄", scenes: ["休闲"] },
+    { id: "only-bottom", name: "唯一安全下装", category: "裤子", season: "多季", thickness: "薄", scenes: ["休闲"] }
+  ], { temperature: 25, low: 23, high: 27, condition: "晴" }, "休闲", 0));
+  assert.equal(result.complete, true);
+  assert.equal(result.alternativeCount, 0);
+  assert.match(todayOutfitMarkup, /wx:if="\{\{recommendation\.alternativeCount > 0\}\}"[^>]*>换一套<\/button>/);
+  assert.match(todayOutfitMarkup, /当前天气下暂无第二套完整不同搭配/);
+});
+
+test("天气搭配根据当前套装连续寻找未看过且整套不同的下一套", () => {
+  const tops = Array.from({ length: 4 }, (_, index) => ({
+    id: `rotation-top-${index}`,
+    name: `轮换上衣${index}`,
+    category: "上衣",
+    season: "多季",
+    thickness: "薄",
+    scenes: ["休闲"]
+  }));
+  const bottoms = Array.from({ length: 4 }, (_, index) => ({
+    id: `rotation-bottom-${index}`,
+    name: `轮换下装${index}`,
+    category: "裤子",
+    season: "多季",
+    thickness: "薄",
+    scenes: ["休闲"]
+  }));
+  const wardrobe = [...tops, ...bottoms];
+  const weather = { temperature: 25, low: 23, high: 27, condition: "晴" };
+  const outfits = [structuredClone(recommend(wardrobe, weather, "休闲", 0))];
+  const coreIds = (result) => result.items.map((item) => item.id).sort();
+  const seen = new Set([outfits[0].selectedCoreKey]);
+  for (let index = 0; index < 7; index += 1) {
+    const current = outfits[outfits.length - 1];
+    const next = structuredClone(recommend(wardrobe, weather, "休闲", 0, {
+      currentCoreItemIds: coreIds(current),
+      excludedCoreKeys: [...seen]
+    }));
+    assert.equal(coreIds(current).some((id) => coreIds(next).includes(id)), false);
+    outfits.push(next);
+    seen.add(next.selectedCoreKey);
+  }
+  assert.ok(seen.size > 3);
+  assert.equal(new Set(outfits.map((result) => coreIds(result).join("|"))).size, outfits.length);
+  assert.match(todayOutfitSource, /seenCoreKeys/);
+  assert.match(todayOutfitSource, /currentCoreItemIds/);
+});
+
+test("天气页区分单件初筛数量和可轮换完整搭配数量", () => {
+  assert.match(weatherMarkup, /单件天气初筛通过/);
+  assert.match(weatherMarkup, /天气安全完整候选.*recommendation\.outfitCount.*套/);
+  assert.match(weatherMarkup, /上装.*suitableBreakdown\.tops.*下装.*suitableBreakdown\.bottoms.*连衣裙.*suitableBreakdown\.dresses.*外套.*suitableBreakdown\.outerwear/);
+  assert.doesNotMatch(weatherMarkup, /找到 \{\{recommendation\.suitableCount\}\} 件适合今天的衣物/);
 });
 
 test("今日穿搭优先颜色口诀协调且保留单一图案重点", () => {
@@ -328,8 +470,8 @@ test("天气框架先于裙装偏好，冬天不返回不安全的夏季薄裙",
   }));
   assert.equal(result.items.some((item) => item.id === "summer-dress"), false);
   assert.deepEqual(result.items.map((item) => item.id), ["winter-top", "winter-pants", "winter-coat"]);
-  assert.ok(result.missing.includes("当前天气下没有安全的连衣裙组合"));
-  assert.match(result.reason, /天气安全筛选/);
+  assert.equal(result.complete, true);
+  assert.match(result.reason, /没有安全的连衣裙组合/);
 });
 
 test("凉冷天气允许薄裙与足够保暖的厚外套组成安全叠穿", () => {
@@ -393,6 +535,174 @@ test("多轮反馈可以锁定一件真实衣物并排除另一件", () => {
   assert.equal(result.items.some((item) => item.id === "keep-top"), true);
   assert.equal(result.items.some((item) => item.id === "old-pants"), false);
   assert.equal(result.items.some((item) => item.id === "new-pants"), true);
+});
+
+test("文字要求只换裤子时排除当前裤子并锁定其他衣物", () => {
+  const currentItems = [
+    { id: "keep-top", name: "短袖T恤", category: "上衣" },
+    { id: "old-pants", name: "条纹系带阔腿裤", category: "裤子" },
+    { id: "keep-coat", name: "黑色立领拉链外套", category: "外套" }
+  ];
+  for (const text of ["换一条裤子推荐", "有没有别的适合的裤子"]) {
+    const result = applyItemDirectives(text, currentItems, [], []);
+    assert.deepEqual([...result.excludedItemIds], ["old-pants"], text);
+    assert.deepEqual([...result.lockedItemIds].sort(), ["keep-coat", "keep-top"], text);
+    assert.deepEqual([...result.replacementCategories], ["裤子"], text);
+  }
+});
+
+test("局部替换没有可用裤子时不得放弃锁定衣物返回另一套", () => {
+  const items = [
+    { id: "keep-top", name: "当前上衣", category: "上衣", color: "白色", season: "多季", thickness: "薄", scenes: ["运动"] },
+    { id: "other-top", name: "其他上衣", category: "上衣", color: "粉色", season: "多季", thickness: "薄", scenes: ["运动"] },
+    { id: "keep-coat", name: "当前外套", category: "外套", color: "黑色", season: "冬季", thickness: "厚", scenes: ["运动"] },
+    { id: "old-pants", name: "当前裤子", category: "裤子", color: "蓝色", season: "多季", thickness: "薄", scenes: ["运动"] },
+    { id: "other-pants", name: "其他裤子", category: "裤子", color: "黑色", season: "多季", thickness: "薄", scenes: ["运动"] }
+  ];
+  const result = structuredClone(recommend(items, { temperature: 30, low: 28, high: 32, condition: "晴" }, "运动", 0, {
+    lockedItemIds: ["keep-top", "keep-coat"], excludedItemIds: ["old-pants"]
+  }));
+  assert.deepEqual(result.items, []);
+  assert.match(result.missingText, /保留当前其他衣物/);
+});
+
+test("局部换裤子会遍历第十三件以后的裤子并补回排名靠后的锁定衣物", () => {
+  const casualTops = Array.from({ length: 12 }, (_, index) => ({
+    id: `casual-top-${index}`,
+    name: `休闲上衣${index}`,
+    category: "上衣",
+    season: "多季",
+    thickness: "薄",
+    formality: "休闲",
+    scenes: ["聚会"]
+  }));
+  const casualPants = Array.from({ length: 12 }, (_, index) => ({
+    id: `casual-pants-${index}`,
+    name: `休闲裤${index}`,
+    category: "裤子",
+    season: "多季",
+    thickness: "适中",
+    formality: "休闲",
+    scenes: ["聚会"]
+  }));
+  const casualCoats = Array.from({ length: 12 }, (_, index) => ({
+    id: `casual-coat-${index}`,
+    name: `休闲外套${index}`,
+    category: "外套",
+    season: "多季",
+    thickness: "薄",
+    formality: "休闲",
+    scenes: ["聚会"]
+  }));
+  const items = [
+    ...casualTops,
+    { id: 901, name: "保留半正式上衣", category: "上衣", season: "多季", thickness: "薄", formality: "半正式", scenes: ["聚会"] },
+    ...casualPants,
+    { id: 301, name: "第十三条合适牛仔裤", category: "裤子", season: "多季", thickness: "适中", formality: "半正式", scenes: ["聚会"] },
+    ...casualCoats,
+    { id: 902, name: "保留半正式外套", category: "外套", season: "多季", thickness: "薄", formality: "半正式", scenes: ["聚会"] },
+    { id: 300, name: "当前裤子", category: "裤子", season: "多季", thickness: "适中", formality: "半正式", scenes: ["聚会"] }
+  ];
+  const result = structuredClone(recommend(items, { temperature: 27, low: 22, high: 32, condition: "晴" }, "聚会", 0, {
+    occasion: "朋友聚会",
+    formalityPreference: "semi_formal",
+    lockedItemIds: ["901", "902"],
+    excludedItemIds: ["300"],
+    replacementCategories: ["裤子"]
+  }));
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.items.map((item) => String(item.id)), ["901", "301", "902"]);
+  assert.equal(result.replacementDiagnostics.candidateCount, 13);
+  assert.equal(result.replacementDiagnostics.lockedSafeCount > 0, true);
+});
+
+test("局部换裤子失败会说明候选裤子在哪一层被筛掉", () => {
+  const result = structuredClone(recommend([
+    { id: "top", name: "保留上衣", category: "上衣", season: "多季", thickness: "薄", scenes: ["休闲"] },
+    { id: "coat", name: "保留外套", category: "外套", season: "多季", thickness: "厚", scenes: ["休闲"] },
+    { id: "old-pants", name: "当前裤子", category: "裤子", season: "多季", thickness: "薄", scenes: ["休闲"] },
+    { id: "jeans-a", name: "牛仔裤A", category: "裤子", season: "多季", thickness: "适中", scenes: ["休闲"] },
+    { id: "jeans-b", name: "牛仔裤B", category: "裤子", season: "多季", thickness: "适中", scenes: ["休闲"] }
+  ], { temperature: 30, low: 28, high: 32, condition: "晴" }, "休闲", 0, {
+    lockedItemIds: ["top", "coat"],
+    excludedItemIds: ["old-pants"],
+    replacementCategories: ["裤子"]
+  }));
+  assert.equal(result.complete, false);
+  assert.equal(result.replacementDiagnostics.candidateCount, 2);
+  assert.equal(result.replacementDiagnostics.suitableCount, 2);
+  assert.match(result.reason, /2条未被排除的裤子/);
+  assert.match(result.reason, /保留当前其他衣物/);
+});
+
+test("完整重选会清除局部锁定而换一套会排除当前整套", () => {
+  const currentItems = [
+    { id: "top", name: "当前上衣", category: "上衣" },
+    { id: "pants", name: "当前裤子", category: "裤子" },
+    { id: "coat", name: "当前外套", category: "外套" }
+  ];
+  const reset = applyItemDirectives("从衣柜里完整找出一套适合的衣服", currentItems, ["top", "coat"], ["pants"]);
+  assert.equal(reset.selectionAction, "reset_selection");
+  assert.deepEqual([...reset.lockedItemIds], []);
+  assert.deepEqual([...reset.excludedItemIds], []);
+
+  const reroll = applyItemDirectives("换一套看看", currentItems, ["top"], ["pants"]);
+  assert.equal(reroll.selectionAction, "replace_all");
+  assert.deepEqual([...reroll.lockedItemIds], []);
+  assert.deepEqual([...reroll.excludedItemIds].sort(), ["coat", "pants", "top"]);
+});
+
+test("局部替换失败时回滚临时锁定并保留上一套成功搭配", () => {
+  const stable = {
+    currentItems: [{ id: "top" }, { id: "old-pants" }, { id: "coat" }],
+    lockedItemIds: [],
+    excludedItemIds: []
+  };
+  const pending = { lockedItemIds: ["top", "coat"], excludedItemIds: ["old-pants"] };
+  const settled = settleItemSelection(stable, pending, [], false);
+  assert.equal(settled.committed, false);
+  assert.deepEqual([...settled.currentItems], stable.currentItems);
+  assert.deepEqual([...settled.lockedItemIds], []);
+  assert.deepEqual([...settled.excludedItemIds], []);
+});
+
+test("局部替换成功后才提交新衣物和对应锁定状态", () => {
+  const stable = {
+    currentItems: [{ id: "top" }, { id: "old-pants" }, { id: "coat" }],
+    lockedItemIds: [],
+    excludedItemIds: []
+  };
+  const pending = { lockedItemIds: ["top", "coat"], excludedItemIds: ["old-pants"] };
+  const nextItems = [{ id: "top" }, { id: "new-pants" }, { id: "coat" }];
+  const settled = settleItemSelection(stable, pending, nextItems, true);
+  assert.equal(settled.committed, true);
+  assert.deepEqual([...settled.currentItems], nextItems);
+  assert.deepEqual([...settled.lockedItemIds], ["top", "coat"]);
+  assert.deepEqual([...settled.excludedItemIds], ["old-pants"]);
+});
+
+test("局部替换失败后完整重选可以解除限制并恢复完整结果", () => {
+  const items = [
+    { id: "top", name: "当前上衣", category: "上衣", color: "白色", season: "多季", thickness: "薄", scenes: ["聚会"] },
+    { id: "pants", name: "唯一裤子", category: "裤子", color: "蓝色", season: "多季", thickness: "薄", scenes: ["聚会"] }
+  ];
+  const weather = { temperature: 25, low: 22, high: 27, condition: "晴" };
+  const first = structuredClone(recommend(items, weather, "聚会"));
+  const stable = { currentItems: first.items, lockedItemIds: [], excludedItemIds: [] };
+  assert.equal(first.complete, true);
+
+  const replace = applyItemDirectives("换一条裤子", stable.currentItems, stable.lockedItemIds, stable.excludedItemIds);
+  const failed = structuredClone(recommend(items, weather, "聚会", 0, replace));
+  const rolledBack = settleItemSelection(stable, replace, failed.items, failed.complete);
+  assert.equal(failed.complete, false);
+  assert.equal(rolledBack.committed, false);
+  assert.deepEqual([...rolledBack.currentItems].map((item) => item.id), ["top", "pants"]);
+
+  const reset = applyItemDirectives("从衣柜里完整找出一套适合的衣服", rolledBack.currentItems, rolledBack.lockedItemIds, rolledBack.excludedItemIds);
+  const recovered = structuredClone(recommend(items, weather, "聚会", 0, reset));
+  const committed = settleItemSelection(rolledBack, reset, recovered.items, recovered.complete);
+  assert.equal(committed.committed, true);
+  assert.deepEqual([...committed.currentItems].map((item) => item.id), ["top", "pants"]);
 });
 
 test("缺少下装时不把单件上衣伪装成完整天气穿搭", () => {
